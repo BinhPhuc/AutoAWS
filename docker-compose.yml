@@ -1,0 +1,25 @@
+# Local dev stack: backend (FastAPI, :8000) + frontend (nginx serving the Vite build, :5173).
+# Usage: cp backend/.env.example backend/.env && docker compose up --build
+services:
+  backend:
+    build: ./backend
+    env_file: backend/.env
+    environment:
+      DB_PATH: /data/autoaws.db
+      CORS_ORIGINS: http://localhost:5173
+    volumes:
+      - backend-data:/data
+      # Platform AWS credentials for role connections (optional)
+      - ~/.aws:/root/.aws:ro
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  backend-data:

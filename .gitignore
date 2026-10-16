@@ -1,0 +1,43 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+*.pem
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+
+# AI tool local state (giữ AGENTS.md / CLAUDE.md / GEMINI.md và skills)
+.claude/settings.local.json
+.claude/*.local.*
+.gemini/*.local.*
+.cursor/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
