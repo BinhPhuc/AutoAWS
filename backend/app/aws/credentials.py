@@ -26,10 +26,26 @@ class CredentialError(Exception):
 
 
 def platform_session() -> boto3.Session:
+    """Prefer credentials loaded from backend/.env; retain SDK fallback when unset."""
     settings = get_settings()
+    key = settings.aws_access_key_id.get_secret_value()
+    secret = settings.aws_secret_access_key.get_secret_value()
+    token = settings.aws_session_token.get_secret_value()
+    region = settings.aws_default_region or None
+    if key or secret or token:
+        if not key or not secret:
+            raise CredentialError(
+                "Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in backend/.env"
+            )
+        return boto3.Session(
+            aws_access_key_id=key,
+            aws_secret_access_key=secret,
+            aws_session_token=token or None,
+            region_name=region,
+        )
     if settings.platform_aws_profile:
-        return boto3.Session(profile_name=settings.platform_aws_profile)
-    return boto3.Session()
+        return boto3.Session(profile_name=settings.platform_aws_profile, region_name=region)
+    return boto3.Session(region_name=region)
 
 
 def resolve_session(conn: Connection) -> boto3.Session:

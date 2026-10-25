@@ -95,7 +95,7 @@ def resolve_session(conn: Connection) -> boto3.Session:
     if conn.type == "access_key":
         return boto3.Session(aws_access_key_id=..., aws_secret_access_key=..., region_name=conn.region)
     # role
-    base = boto3.Session()  # credentials nền tảng từ env PLATFORM_AWS_* hoặc AWS_PROFILE
+    base = platform_session()  # credentials từ Settings đọc trực tiếp backend/.env
     resp = base.client("sts").assume_role(RoleArn=conn.role_arn, RoleSessionName=f"autoaws-{conn.id}",
                                           ExternalId=conn.external_id, DurationSeconds=900)
     return boto3.Session(**map_creds(resp["Credentials"]), region_name=conn.region)
@@ -134,7 +134,7 @@ class LLMProvider(Protocol):
 ### 4.4 Agent loop (`agent/loop.py`)
 ```
 messages = [system(SYSTEM_PROMPT + ANSWER_FORMAT), *history, user(question)]
-for i in range(MAX_AGENT_ITERATIONS):          # mặc định 8
+for i in range(MAX_AGENT_ITERATIONS):          # mặc định 10, phạm vi 1–10
     yield status("Reasoning…")                 # trước mỗi tool: status(f"Reading {spec.label.lower()}…")
     resp = await provider.chat(messages, tools)
     if resp.tool_calls:
@@ -176,8 +176,12 @@ ANTHROPIC_API_KEY=
 BEDROCK_MODEL_ID=
 BEDROCK_REGION=
 PLATFORM_AWS_ACCOUNT_ID=       # cần cho type=role (tài khoản nền tảng)
-PLATFORM_AWS_PROFILE=          # hoặc AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY chuẩn của boto3
-MAX_AGENT_ITERATIONS=8
+AWS_ACCESS_KEY_ID=            # đọc trực tiếp từ backend/.env
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=            # bắt buộc với credentials tạm thời
+AWS_DEFAULT_REGION=ap-southeast-1
+PLATFORM_AWS_PROFILE=          # fallback khi không cấu hình credentials
+MAX_AGENT_ITERATIONS=10
 CORS_ORIGINS=http://localhost:5173
 ```
 
@@ -212,3 +216,28 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 3. Dữ liệu đi vào provider **phải** qua `sanitizer.sanitize`.
 4. Tool mới = thêm 1 hàm có decorator `@tool(...)` trong `aws/tools/` + test moto + dòng trong bảng `API_CONTRACT.md`. Không gọi boto3 ở nơi khác ngoài `aws/`.
 5. Đổi endpoint/schema → sửa `API_CONTRACT.md` trước.
+
+## Mốc Bedrock Converse local (2026-10-25)
+
+- [x] BedrockProvider dùng Converse/tool use qua adapter trong `app/aws/`, chạy ngoài event loop.
+- [x] Demo qua API/UI bằng `AGENT_DEMO_MODE`, tool giả registry và kết nối AWS đã xác thực.
+- [x] Giới hạn cấu hình 1–10 lượt model, mặc định 10; lỗi hoặc hết lượt kết thúc SSE.
+- [x] Kiểm thử wire format bằng Stubber và luồng SSE bằng moto; hướng dẫn chạy local.
+- [ ] Smoke test Bedrock thật qua UI với model/region và credentials trên máy.
+
+Bedrock đã triển khai; Anthropic và Guardrails vẫn thuộc phần sau init. Quyền invoke model
+thuộc identity nền tảng, không thêm vào policy tool đọc AWS của tài khoản chẩn đoán.
+
+## Credentials trực tiếp từ .env (2026-10-25)
+
+- [x] Settings đọc AWS access key, secret, session token dạng SecretStr và default region từ backend/.env theo đường dẫn tuyệt đối.
+- [x] AssumeRole/Bedrock dùng chung platform_session; ưu tiên credentials cấu hình trực tiếp, thiếu cặp key/secret báo lỗi; profile/default chain là fallback.
+- [x] Docker Compose không cần mount ~/.aws; cập nhật cấu hình mẫu và hướng dẫn.
+- [x] Kiểm thử dotenv khi không có shared credentials, token tạm thời, lỗi cấu hình và AssumeRole với moto.
+
+- [x] API `GET /api/connections/setup` trả account ID công khai và tên role để UI điền sẵn trust policy; thiếu/sai account ID trả null, không gọi AWS hay trả credentials.
+
+- [x] Preview CloudFormation qua POST trước khi tạo connection, không ghi DB/gọi AWS; kiểm tra External ID và account ID, thêm DescribeRegions cho Verify. Endpoint CloudFormation theo connection cũ vẫn tương thích.
+
+- [x] Phân biệt Bedrock ValidationException với thông báo Operation not allowed: trả lỗi hữu ích và log Request ID, giữ kín payload dịch vụ; kiểm thử không lộ dữ liệu.
+- [ ] Smoke test inference Bedrock thật bị chặn bởi Operation not allowed trên request tối giản; cần AWS xác minh hạn chế tài khoản (2026-10-26).

@@ -61,6 +61,29 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 
 ## 2. Connections — kết nối tài khoản AWS
 
+### `GET /api/connections/setup`
+Thông tin công khai để tạo role trước khi lưu connection; không gọi AWS và không trả credentials.
+```json
+200 { "status_code": 200, "message": "OK",
+      "data": { "account_id": "111122223333", "role_name": "AutoAWSReadOnly" } }
+```
+`account_id` lấy từ `PLATFORM_AWS_ACCOUNT_ID`; nếu trống hoặc không đúng 12 chữ số thì trả `null`.
+Frontend chỉ cho sao chép trust policy khi có account ID hợp lệ; nếu chưa có thì hiển thị
+thông báo kết nối tạm thời chưa sẵn sàng, không yêu cầu người dùng cấu hình hệ thống.
+External ID vẫn dùng giá trị đang có trong form, không sinh lại ở endpoint này.
+
+### `POST /api/connections/cloudformation-preview`
+Sinh template để người dùng tạo role **trước khi lưu connection**. Không ghi DB, không gọi AWS.
+Request: `{ "external_id": "autoaws-..." }` (2–1224 ký tự ASCII thuộc `A-Z a-z 0-9 _ + = , . @ : / -`).
+Response 200: envelope với `data` giống `CloudFormationOut` của endpoint CloudFormation theo connection:
+`{stack_name, role_name, external_id, platform_account_id, template_yaml}`.
+Account ID và External ID được điền sẵn. Thiếu account nền tảng hợp lệ trả lỗi 503
+`CONNECTION_SETUP_UNAVAILABLE`, message `"Connection setup is temporarily unavailable"`.
+Input không hợp lệ trả 422 `VALIDATION_ERROR`. Template có quyền đọc registry cộng
+`sts:GetCallerIdentity`/`ec2:DescribeRegions` để Verify; không thêm quyền ghi cho agent.
+Cả hai cách IAM/CloudFormation dùng chung External ID của form; người dùng dán RoleArn
+về form rồi Save & verify. Backend không tự deploy stack.
+
 ### Schema `Connection`
 ```json
 {
@@ -271,3 +294,13 @@ Dự kiến: `POST /api/checklists/runs`, `GET /api/checklists/runs/{id}` (kết
 | `cloudwatch_get_metric_data` | metrics | CloudWatch metrics | cloudwatch:GetMetricData — *stub, M3* |
 | `logs_insights_query` | logs | CloudWatch Logs query | logs:StartQuery, GetQueryResults — *stub, M3* |
 | `cloudtrail_lookup_events` | cloudtrail | CloudTrail events | cloudtrail:LookupEvents — *stub, M3* |
+
+### Chế độ demo Converse local
+
+`AGENT_DEMO_MODE=true` chỉ công bố và cho phép chạy tool bên dưới qua registry; mặc định `false` dùng danh sách tool thật. Kết nối AWS vẫn phải được xác thực. SSE và schema câu trả lời không đổi; câu trả lời phải ghi rõ dữ liệu mô phỏng.
+
+| Tool | Group | Input | Output | AWS actions |
+|---|---|---|---|---|
+| `demo_instance_status` | compute | `{}` | `{simulated: true, instance_id: "demo-instance", state: "stopped"}` | Không có |
+
+Agent gọi model tối đa `MAX_AGENT_ITERATIONS` lượt (mặc định 10, phạm vi 1–10), bao gồm lượt sửa JSON. Vượt giới hạn trả SSE `error` với mã `MAX_ITERATIONS`, sau đó `done`.

@@ -8,13 +8,12 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-import boto3
 from sqlmodel import Session
 
 from app.agent import schemas as ev
 from app.agent.prompts import ANSWER_FORMAT, RETRY_JSON_PROMPT, SYSTEM_PROMPT
 from app.agent.schemas import AgentEvent, DiagnosisAnswer
-from app.aws.registry import ToolSpec, list_tools, run_tool, summarize_output
+from app.aws.registry import AWSSession, ToolSpec, list_tools, run_tool, summarize_output
 from app.config import get_settings
 from app.llm.base import LLMError, LLMMessage, LLMProvider
 from app.sanitizer import sanitize
@@ -28,7 +27,7 @@ async def run_agent(
     db: Session,
     conversation: Conversation,
     question: str,
-    aws_session: boto3.Session,
+    aws_session: AWSSession,
     provider: LLMProvider,
 ) -> AsyncIterator[AgentEvent]:
     settings = get_settings()
@@ -40,7 +39,15 @@ async def run_agent(
     )
     repo.touch_conversation(db, conversation, title=question[:80])
 
-    messages = [LLMMessage(role="system", content=SYSTEM_PROMPT + ANSWER_FORMAT)]
+    prompt = SYSTEM_PROMPT + ANSWER_FORMAT
+    if settings.agent_demo_mode:
+        prompt += (
+            "\nThis is a simulated demo. Call demo_instance_status once before answering "
+            "each question, then conclude using its result. Clearly state in Vietnamese "
+            "that all evidence is simulated and real AWS state is unverified. "
+            "Do not claim to have inspected the connected account."
+        )
+    messages = [LLMMessage(role="system", content=prompt)]
     messages += _history(db, conversation.id, exclude_id=user_msg.id)
     messages.append(LLMMessage(role="user", content=question))
 

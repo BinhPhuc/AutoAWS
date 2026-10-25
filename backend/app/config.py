@@ -1,11 +1,17 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[1] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_env: str = "dev"
     db_path: str = "./autoaws.db"
@@ -19,8 +25,13 @@ class Settings(BaseSettings):
 
     platform_aws_account_id: str = ""
     platform_aws_profile: str = ""
+    aws_access_key_id: SecretStr = SecretStr("")
+    aws_secret_access_key: SecretStr = SecretStr("")
+    aws_session_token: SecretStr = SecretStr("")
+    aws_default_region: str = ""
 
-    max_agent_iterations: int = 8
+    max_agent_iterations: int = Field(default=10, ge=1, le=10)
+    agent_demo_mode: bool = False
     assume_role_duration_seconds: int = 900
 
     @property

@@ -9,8 +9,6 @@ services:
       CORS_ORIGINS: http://localhost:5173
     volumes:
       - backend-data:/data
-      # Platform AWS credentials for role connections (optional)
-      - ~/.aws:/root/.aws:ro
     ports:
       - "8000:8000"
 

@@ -17,8 +17,10 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Hợp đồng API `docs/API_CONTRACT.md`
 - [x] `backend/` FastAPI: connections (access key + role/ExternalId + CloudFormation), 13 tool AWS thật + 3 stub M3, agent loop + SSE, sanitizer, MockProvider; 25 test (moto)
 - [x] `frontend/` Vite + React 19 + TS + Tailwind + shadcn (Base UI): Connect, Chat (stream, timeline, DiagnosisCard), Checklist placeholder; MSW mock; 6 test
-- [x] `docker-compose.yml` (backend + frontend/nginx)
-- [ ] **Tiếp theo**: `AnthropicProvider` / `BedrockProvider` thật (`backend/app/llm/anthropic.py`, `bedrock.py` có hướng dẫn trong docstring); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
+- [x] Connect: giao diện chỉ dùng IAM Role với hai cách IAM thủ công/CloudFormation trước khi lưu connection; popup hướng dẫn tạo `AutoAWSReadOnly` từ đầu, trust/permissions policy điền sẵn account AutoAWS và lấy ARN; CLI tùy chọn; popup đóng khi bấm ngoài, Region neo bên dưới (2026-10-25).
+- [x] `docker-compose.yml` (backend + frontend/nginx); AssumeRole/Bedrock đọc credentials trực tiếp từ `backend/.env`, không cần AWS profile trên host (2026-10-25).
+- [x] Bedrock Converse + tool use, demo API/UI với tool giả, tối đa 10 lượt; đã cấu hình Nova Micro và gọi Bedrock thật, đang bị AWS từ chối `Operation not allowed` ở cấp tài khoản (2026-10-26); backend đã báo lỗi cụ thể và log Request ID.
+- [ ] **Tiếp theo**: `AnthropicProvider` thật (`backend/app/llm/anthropic.py`, `bedrock.py` có hướng dẫn trong docstring); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
 
 ## Bố cục repo
 

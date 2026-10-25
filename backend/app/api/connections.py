@@ -1,10 +1,17 @@
+import re
 import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
-from app.api.schemas import CloudFormationOut, ConnectionIn, ConnectionOut, VerifyOut
+from app.api.schemas import (
+    CloudFormationOut,
+    CloudFormationPreviewIn,
+    ConnectionIn,
+    ConnectionOut,
+    VerifyOut,
+)
 from app.aws import cloudformation
 from app.aws.credentials import CredentialError, forget_session, resolve_session, verify_session
 from app.config import get_settings
@@ -15,6 +22,35 @@ from app.storage.db import get_session
 from app.storage.models import Connection
 
 router = APIRouter(prefix="/connections", tags=["connections"])
+
+
+@router.get("/setup")
+def connection_setup():
+    account = get_settings().platform_aws_account_id.strip()
+    return ok(
+        {
+            "account_id": account if re.fullmatch(r"[0-9]{12}", account) else None,
+            "role_name": cloudformation.ROLE_NAME,
+        }
+    )
+
+
+@router.post("/cloudformation-preview")
+def preview_cloudformation(body: CloudFormationPreviewIn):
+    account = get_settings().platform_aws_account_id.strip()
+    if not re.fullmatch(r"[0-9]{12}", account):
+        raise AppError(
+            "CONNECTION_SETUP_UNAVAILABLE", 503, "Connection setup is temporarily unavailable"
+        )
+    return ok(
+        CloudFormationOut(
+            stack_name=cloudformation.STACK_NAME,
+            role_name=cloudformation.ROLE_NAME,
+            external_id=body.external_id,
+            platform_account_id=account,
+            template_yaml=cloudformation.render_template(account, body.external_id),
+        )
+    )
 
 
 def _get(db: Session, conn_id: str) -> Connection:
