@@ -17,7 +17,13 @@ class Settings(BaseSettings):
     db_path: str = "./autoaws.db"
     cors_origins: str = "http://localhost:5173"
 
-    llm_provider: Literal["mock", "anthropic", "bedrock"] = "mock"
+    llm_provider: Literal["mock", "openai", "anthropic", "bedrock"] = "mock"
+    openai_base_url: str = "http://localhost:11434/v1"
+    openai_model: str = ""
+    openai_api_key: SecretStr = SecretStr("")
+    openai_timeout_seconds: float = Field(default=120, gt=0)
+    openai_max_tokens: int = Field(default=4096, ge=1)
+    openai_token_limit_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
     anthropic_api_key: str = ""
     anthropic_model: str = ""
     bedrock_model_id: str = ""

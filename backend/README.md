@@ -12,6 +12,70 @@ cp .env.example .env          # LLM_PROVIDER=mock chạy được ngay, không c
 uvicorn app.main:app --reload # http://localhost:8000/docs
 ```
 
+## LLM ưu tiên: OpenAI-compatible / Ollama
+
+`LLM_PROVIDER=openai` gọi **Chat Completions + function calling** qua HTTP async. Endpoint
+có thể là Ollama tự host hoặc dịch vụ khác tương thích giao thức này; model cần hỗ trợ
+tool calling. Cấu hình model ở backend, không liên quan region tài nguyên trên trang Connect.
+`mock` vẫn là mặc định để chạy pipeline khi chưa có model server.
+
+Với Ollama đã cài, khởi động server nếu chưa chạy và tải model có tool calling, ví dụ:
+
+```bash
+ollama serve
+# Trong terminal khác; chọn model phù hợp RAM/VRAM của máy.
+ollama pull qwen3:8b
+ollama list
+curl http://localhost:11434/v1/models
+```
+
+Sửa hoặc thêm các dòng sau trong **`backend/.env` hiện có** (giữ các credentials AWS):
+
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=qwen3:8b
+OPENAI_API_KEY=
+OPENAI_TIMEOUT_SECONDS=120
+OPENAI_MAX_TOKENS=4096
+OPENAI_TOKEN_LIMIT_FIELD=max_tokens
+MAX_AGENT_ITERATIONS=10
+AGENT_DEMO_MODE=false
+```
+
+`OPENAI_MODEL` phải khớp tên trong `ollama list`. Local Ollama không yêu cầu API key.
+Nếu server ở máy khác, thay hostname trong `OPENAI_BASE_URL`; nếu server có xác thực,
+điền `OPENAI_API_KEY`. URL là **API base URL**, gồm tiền tố như `/v1`, không thêm
+`/chat/completions` vì provider tự nối đường dẫn này. Với model yêu cầu trường giới hạn
+token mới của OpenAI, đặt `OPENAI_TOKEN_LIMIT_FIELD=max_completion_tokens`.
+
+Khởi động lại backend sau khi sửa `.env` (kể cả dùng `--reload`). Mở Chat trên kết nối AWS
+đã verify và hỏi “Liệt kê các EC2 instance trong region này”. Timeline sẽ hiển thị tool
+AWS thật; kết quả vẫn qua sanitizer và trả lời theo cấu trúc tiếng Việt. AWS credentials
+trong `.env` vẫn cần cho AssumeRole; inference qua Ollama không cần quyền Bedrock.
+
+Để chỉ thử model gọi một tool giả, đặt `AGENT_DEMO_MODE=true` và hỏi “Kiểm tra trạng thái
+instance demo”. Model được yêu cầu gọi `demo_instance_status` rồi trả lời rằng dữ liệu
+được mô phỏng. Mỗi lượt gọi model, kể cả sửa JSON, đều tính vào giới hạn tối đa 10 vòng.
+
+Backend chạy trong Docker, Ollama chạy trên host: đặt
+`OPENAI_BASE_URL=http://host.docker.internal:11434/v1`, rồi chạy
+`docker compose up -d --build --force-recreate backend`. Compose đã thêm ánh xạ host cho
+Linux. Ollama cần lắng nghe trên interface Docker truy cập được (cấu hình `OLLAMA_HOST`
+cho tiến trình/dịch vụ Ollama); địa chỉ loopback mặc định chỉ dùng được từ host.
+
+Lỗi HTTP 401/403: kiểm tra API key/quyền model; 404: kiểm tra URL và tên model đã tải;
+400: kiểm tra model hỗ trợ tools và trường giới hạn token; timeout: kiểm tra server,
+tài nguyên máy và tăng `OPENAI_TIMEOUT_SECONDS` khi model tải chậm. Phản hồi bị cắt
+sẽ không được dùng để thực thi tool; tăng `OPENAI_MAX_TOKENS` nếu model cần thêm token.
+Chi tiết lỗi từ server không được đưa vào SSE để tránh lộ keys hoặc nội dung request.
+Backend không tự chuyển provider khi gặp lỗi; đổi `LLM_PROVIDER` rõ ràng để chọn nơi
+gửi dữ liệu. Bedrock vẫn dùng được bằng `LLM_PROVIDER=bedrock` với cấu hình riêng bên dưới.
+
+Tham chiếu giao thức: [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling),
+[Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility),
+[Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling).
+
 ## Test / lint
 
 ```bash

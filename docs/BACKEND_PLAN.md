@@ -10,7 +10,7 @@ Một server chạy **local** cho phép:
 
 > **Ngôn ngữ:** `message` trong envelope, status SSE, label/mô tả tool → **tiếng Anh**. **Câu trả lời của agent** (`DiagnosisAnswer`, `content` assistant) → **tiếng Việt** (system prompt ép). Comment code tiếng Anh; tài liệu tiếng Việt.
 2. Chat chẩn đoán: nhận câu hỏi → **vòng lặp agent** gọi **công cụ đọc AWS** thật → trả lời có cấu trúc, **stream** từng bước ra UI.
-3. Chạy được **end-to-end không cần LLM key** nhờ `MockProvider`; cắm LLM thật sau bằng cách thêm 1 file provider.
+3. Chạy được **end-to-end không cần LLM key** nhờ `MockProvider`; ưu tiên LLM thật qua API OpenAI-compatible (Ollama tự host), có thể chọn Bedrock.
 
 Ngoài phạm vi init (chừa chỗ, không làm): checklist runner, auth người dùng, metrics/logs/CloudTrail đầy đủ (M3), đóng gói Lambda, DynamoDB.
 
@@ -71,7 +71,8 @@ backend/
 │   │   ├── base.py           # LLMProvider (Protocol): chat(messages, tools) -> LLMResponse(text | tool_calls)
 │   │   ├── mock.py           # MockProvider: chọn tool theo từ khoá, trả DiagnosisAnswer mẫu
 │   │   ├── anthropic.py      # AnthropicProvider: raise NotImplementedError("TODO")  ← placeholder
-│   │   ├── bedrock.py        # BedrockProvider:   raise NotImplementedError("TODO")  ← placeholder
+│   │   ├── openai_compatible.py # OpenAICompatibleProvider: Chat Completions + function calling
+│   │   ├── bedrock.py        # BedrockProvider: Converse qua adapter app/aws/bedrock.py
 │   │   └── factory.py        # get_provider(settings.LLM_PROVIDER)
 │   ├── sanitizer.py          # sanitize(obj) -> obj: che AKIA…, secret, email, token, ARN account id?; truncate(list, n)
 │   └── storage/
@@ -118,9 +119,9 @@ def tool(spec) -> decorator  # đăng ký vào REGISTRY
 - Mỗi tool: nhận `(session, input)`, trả **dict JSON-serializable, đã rút gọn** (chỉ trường cần cho chẩn đoán, ví dụ instance: id, name, state, public_ip, private_ip, subnet_id, vpc_id, sg_ids, status_checks). Phân trang bằng paginator; giới hạn `max_items`.
 - `AccessDenied`/`ClientError` → trả `{"error": "AccessDenied: ..."}` để agent biết và ghi vào `unverified`.
 
-### 4.3 LLM provider (`llm/base.py`) — PLACEHOLDER
+### 4.3 LLM provider (`llm/base.py`)
 ```python
-class LLMMessage(TypedDict): role: Literal["system","user","assistant","tool"]; content: str | list
+class LLMMessage(BaseModel): role: Literal["system","user","assistant","tool"]; content: str
 class ToolCallRequest(BaseModel): id: str; name: str; input: dict
 class LLMResponse(BaseModel): text: str | None; tool_calls: list[ToolCallRequest]; stop_reason: str
 
@@ -129,7 +130,9 @@ class LLMProvider(Protocol):
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse: ...
 ```
 - `MockProvider` (demo không cần key): lượt 1 nhìn từ khoá trong câu hỏi → trả `tool_calls` (ví dụ chứa "ssh" → `describe_instances`, `describe_security_groups`, `describe_route_tables`; "502"/"5xx" → `elbv2_describe_load_balancers`, `elbv2_describe_target_health`; "dns"/"tên miền" → `resolve_dns_public`, `route53_list_records`, `describe_instances`); lượt 2 trả `text` là JSON `DiagnosisAnswer` **sinh từ kết quả tool thật** ở mức đơn giản (liệt kê bằng chứng, `confidence: "low"`, `cause` ghi "MockProvider — chưa cấu hình LLM, chỉ liệt kê bằng chứng chưa suy luận"). Mục đích: UI và pipeline chạy thật từ đầu đến cuối.
-- `AnthropicProvider`, `BedrockProvider`: file có class + docstring mô tả cách map (Anthropic Messages API tool use / Bedrock Converse toolConfig) + `raise NotImplementedError`. Người làm LLM (TV1) chỉ cần điền file này.
+- `OpenAICompatibleProvider` (`LLM_PROVIDER=openai`) là hướng ưu tiên: HTTP async qua `httpx` tới `OPENAI_BASE_URL/chat/completions`, model do `OPENAI_MODEL` chọn; API key tùy server, local Ollama có thể để trống. Tool schema map sang `tools[].function.parameters`; arguments JSON map về `ToolCallRequest`; kết quả dùng role `tool` và `tool_call_id`. Giữ nội dung assistant và mọi call ID qua các lượt; hỗ trợ nhiều tool trong một response.
+- Chỉ chấp nhận phản hồi hoàn chỉnh và arguments là JSON object. Phản hồi lỗi/rỗng/bị cắt, HTTP lỗi, timeout hoặc mạng lỗi → `LLMError` an toàn, không đưa payload/keys vào log hay SSE. Không tự fallback sang dịch vụ khác. Giới hạn output cấu hình bằng `OPENAI_MAX_TOKENS`, tên trường `max_tokens` hoặc `max_completion_tokens` tùy model/server; timeout qua `OPENAI_TIMEOUT_SECONDS`.
+- `BedrockProvider` đã triển khai Converse qua adapter `app/aws/bedrock.py`, boto3 chạy ngoài event loop. `AnthropicProvider` vẫn là placeholder; không bắt buộc để dùng OpenAI-compatible.
 
 ### 4.4 Agent loop (`agent/loop.py`)
 ```
@@ -171,7 +174,13 @@ Role `AutoAWSReadOnly`: trust policy `Principal: {AWS: <PLATFORM_AWS_ACCOUNT_ID>
 ```
 APP_ENV=dev
 DB_PATH=./autoaws.db
-LLM_PROVIDER=mock              # mock | anthropic | bedrock
+LLM_PROVIDER=mock              # mock | openai | bedrock | anthropic (stub)
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=                 # tên model trên server; ví dụ qwen3:8b đã pull trong Ollama
+OPENAI_API_KEY=               # local Ollama có thể để trống
+OPENAI_TIMEOUT_SECONDS=120
+OPENAI_MAX_TOKENS=4096
+OPENAI_TOKEN_LIMIT_FIELD=max_tokens
 ANTHROPIC_API_KEY=
 BEDROCK_MODEL_ID=
 BEDROCK_REGION=
@@ -203,7 +212,7 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 Ước tính: B1–B3 ≈ 1 ngày, B4 ≈ 1.5 ngày, B5–B7 ≈ 1.5 ngày, B8–B10 ≈ 0.5 ngày.
 
 ## 6. Sau init (không làm bây giờ)
-- `AnthropicProvider` / `BedrockProvider` thật (+ Guardrails).
+- `AnthropicProvider` thật, Guardrails cho Bedrock (Converse đã triển khai).
 - Tool M3: `cloudwatch_get_metric_data`, `logs_insights_query` (giới hạn khung thời gian, lọc mức lỗi, tóm tắt), `cloudtrail_lookup_events`.
 - Checklist runner (parser → chạy từng mục → lưu từng mục).
 - Auth (Cognito JWT) — middleware FastAPI `Depends(current_user)`; mọi bảng thêm `user_id`.
@@ -241,3 +250,13 @@ thuộc identity nền tảng, không thêm vào policy tool đọc AWS của t�
 
 - [x] Phân biệt Bedrock ValidationException với thông báo Operation not allowed: trả lỗi hữu ích và log Request ID, giữ kín payload dịch vụ; kiểm thử không lộ dữ liệu.
 - [ ] Smoke test inference Bedrock thật bị chặn bởi Operation not allowed trên request tối giản; cần AWS xác minh hạn chế tài khoản (2026-10-26).
+
+## Mốc OpenAI-compatible / Ollama (2026-10-26)
+
+- [x] Thêm `OpenAICompatibleProvider` dùng Chat Completions/function calling qua HTTP async; factory chọn bằng `LLM_PROVIDER=openai`, Bedrock và mock vẫn dùng được.
+- [x] Đọc endpoint/model/API key/timeout/giới hạn output trực tiếp từ `backend/.env`; API key là `SecretStr`, tùy chọn cho local Ollama. `httpx` là dependency runtime.
+- [x] Map đầy đủ history, nhiều tool calls và `tool_call_id`; kiểm tra cấu trúc response, JSON arguments; xử lý HTTP/network/timeout an toàn.
+- [x] Kiểm thử protocol và SSE: tool giả → kết quả đã sanitize → DiagnosisAnswer/lưu lịch sử; tool ngoài registry bị từ chối; lỗi kết thúc stream; tối đa 10 lượt.
+- [x] Hướng dẫn dùng Ollama, endpoint tương thích khác, restart backend và Docker gọi model server trên host trong `backend/README.md`.
+- [x] Kiểm tra backend: 91 test pass (40 test OpenAI-compatible mới), `ruff check app tests` và kiểm tra format các file Python đã sửa đều pass.
+- [ ] Smoke test inference với Ollama thật: máy hiện chưa cài/chạy model server; không tải model tự động.

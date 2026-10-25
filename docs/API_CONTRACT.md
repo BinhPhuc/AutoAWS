@@ -56,6 +56,9 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 200 { "status_code": 200, "message": "OK",
       "data": { "status": "ok", "version": "0.1.0", "llm_provider": "mock" } }
 ```
+`llm_provider` phản ánh cấu hình backend: `mock`, `openai` (OpenAI-compatible, gồm Ollama),
+`bedrock` hoặc `anthropic` (chưa triển khai). Đây là tên provider, không phải kiểm tra
+kết nối model. Đổi provider không thay đổi endpoint, schema chat hay các event SSE.
 
 ---
 
