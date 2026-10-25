@@ -71,6 +71,7 @@ def test_role_connection_cloudformation(client, aws):
     yaml = cf["template_yaml"]
     assert "sts:ExternalId" in yaml
     assert "ec2:DescribeRouteTables" in yaml
+    assert "ec2:DescribeRegions" in yaml  # needed by POST /verify
     assert "Effect: Deny" in yaml and "s3:GetObject*" in yaml
     # never grant a write action
     for verb in ("Create", "Delete", "Modify", "Put", "Terminate"):

@@ -12,6 +12,9 @@ from app.aws.registry import all_aws_actions
 STACK_NAME = "AutoAWSReadOnlyRole"
 ROLE_NAME = "AutoAWSReadOnly"
 
+# Called by credentials.verify_session, not by any tool, so the registry does not list it.
+VERIFY_ACTIONS = ["ec2:DescribeRegions"]
+
 DENIED_ACTIONS = [
     "s3:GetObject*",
     "secretsmanager:GetSecretValue",
@@ -24,8 +27,12 @@ DENIED_ACTIONS = [
 ]
 
 
+def _allowed_actions() -> list[str]:
+    return sorted({a for a in all_aws_actions() if a} | set(VERIFY_ACTIONS))
+
+
 def render_template(platform_account_id: str, external_id: str) -> str:
-    allow = [a for a in all_aws_actions() if a]
+    allow = _allowed_actions()
     actions_yaml = "\n".join(f"                  - {a}" for a in allow)
     denies_yaml = "\n".join(f"                  - {a}" for a in DENIED_ACTIONS)
     return f"""AWSTemplateFormatVersion: '2010-09-09'
@@ -87,7 +94,7 @@ def render_policy_json() -> str:
         {
             "Version": "2012-10-17",
             "Statement": [
-                {"Effect": "Allow", "Action": all_aws_actions(), "Resource": "*"},
+                {"Effect": "Allow", "Action": _allowed_actions(), "Resource": "*"},
                 {"Effect": "Deny", "Action": DENIED_ACTIONS, "Resource": "*"},
             ],
         },
