@@ -30,3 +30,22 @@ Mặc định profile `autoaws-customer`, region `ap-southeast-1`; đổi bằng
   Khôi phục: chạy lại lệnh với `PublicRouteTable` (association id mới lấy bằng `describe-route-tables`).
 
 > KB1 làm subnet A mất Internet, nên ALB của KB3 (dùng A và B) cũng bị ảnh hưởng — không bật KB1 và KB3 cùng lúc.
+
+## readonly-role.yaml (việc 12)
+
+Role `AutoAWSReadOnly`: trust tài khoản nền tảng + `sts:ExternalId`; Allow đúng các action mà tool cần, Deny dữ liệu nghiệp vụ.
+File **sinh tự động** từ `backend/app/aws/cloudformation.py` — không sửa tay; khi thêm tool thì sinh lại:
+
+```bash
+cd backend && python -c "from app.aws.cloudformation import render_template; open('../infra/demo-customer/readonly-role.yaml','w',newline='\n').write(render_template('', ''))"
+```
+
+Deploy (cần quyền IAM — user admin):
+
+```bash
+python -c "import secrets; print('autoaws-' + secrets.token_hex(12))"   # tạo ExternalId
+PLATFORM_ACCOUNT_ID=<12 số> EXTERNAL_ID=<autoaws-...> ./infra/demo-customer/role-up.sh   # in ra Role ARN
+```
+
+Không commit Account ID / ExternalId thật; gửi Role ARN + ExternalId cho phía nền tảng qua kênh riêng.
+Thu hồi quyền: `aws cloudformation delete-stack --stack-name AutoAWSReadOnlyRole`.
