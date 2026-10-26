@@ -60,6 +60,7 @@ cd frontend && pnpm install && cp .env.example .env && pnpm dev   # http://local
 
 Mở http://localhost:5173 → **Connections** → Add connection (Access Key cho dev, hoặc IAM Role + template CloudFormation) → Verify → **Diagnose** → mô tả sự cố.
 Không có backend? `VITE_USE_MOCK=true pnpm dev` chạy với dữ liệu giả lập.
+Không có AWS / Bedrock? Xem `infra/localstack/README.md`: dựng kịch bản trong LocalStack và để một MCP client (ví dụ Claude Code) đóng vai LLM qua `LLM_PROVIDER=mcp`.
 
 ## Nhóm
 
