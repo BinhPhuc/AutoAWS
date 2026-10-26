@@ -32,7 +32,15 @@ def test_create_and_verify_access_key(client, aws):
     assert got["last_verified_at"] is not None
 
 
-def test_verify_failure_marks_failed(client):
+def test_verify_failure_marks_failed(client, monkeypatch):
+    from app.api import connections as connections_api
+    from app.aws.credentials import CredentialError
+
+    def rejected(_session):
+        raise CredentialError("InvalidClientTokenId: The security token included is invalid")
+
+    # No network: simulate AWS rejecting the credentials.
+    monkeypatch.setattr(connections_api, "verify_session", rejected)
     r = client.post(
         "/api/connections",
         json={
@@ -44,7 +52,6 @@ def test_verify_failure_marks_failed(client):
         },
     )
     conn_id = r.json()["data"]["id"]
-    # No moto here -> real botocore call fails on bad credentials / no network.
     v = client.post(f"/api/connections/{conn_id}/verify").json()
     assert v["status_code"] == 200
     assert v["data"]["status"] == "failed"

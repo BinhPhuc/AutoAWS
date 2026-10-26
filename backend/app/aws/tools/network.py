@@ -143,34 +143,40 @@ def describe_network_acls(session: boto3.Session, params: dict) -> dict:
             "max_items": MAX_ITEMS_SCHEMA,
         },
     },
-    aws_actions=["ec2:DescribeRouteTables"],
+    aws_actions=["ec2:DescribeRouteTables", "ec2:DescribeSubnets"],
 )
 def describe_route_tables(session: boto3.Session, params: dict) -> dict:
     ec2 = session.client("ec2")
+    subnet_ids = params.get("subnet_ids") or []
     filters = _vpc_filter(params, [])
-    if params.get("subnet_ids"):
-        filters.append({"Name": "association.subnet-id", "Values": params["subnet_ids"]})
+    if subnet_ids:
+        filters.append({"Name": "association.subnet-id", "Values": subnet_ids})
     kwargs = {"Filters": filters} if filters else {}
     tables = []
     for page in ec2.get_paginator("describe_route_tables").paginate(**kwargs):
         for rt in page["RouteTables"]:
             tables.append(_route_table(rt))
 
-    # Subnets with no explicit association fall back to the main table: fetch it so the
-    # agent sees the effective routing instead of an empty list.
-    if params.get("subnet_ids") and not tables:
-        subnets = ec2.describe_subnets(SubnetIds=params["subnet_ids"])["Subnets"]
-        vpc_ids = sorted({s["VpcId"] for s in subnets})
-        if vpc_ids:
-            resp = ec2.describe_route_tables(
-                Filters=[
-                    {"Name": "vpc-id", "Values": vpc_ids},
-                    {"Name": "association.main", "Values": ["true"]},
-                ]
-            )
-            for rt in resp["RouteTables"]:
-                t = _route_table(rt)
-                t["implicit_for_subnets"] = params["subnet_ids"]
+    # A subnet with no explicit association uses its VPC's main table. Add that table for
+    # each such subnet (not only when none matched), so the agent sees the effective
+    # routing of every subnet it asked about.
+    covered = {sid for t in tables for sid in t["subnet_ids"]}
+    implicit = [s for s in subnet_ids if s not in covered]
+    if implicit:
+        by_vpc: dict[str, list[str]] = {}
+        for s in ec2.describe_subnets(SubnetIds=implicit)["Subnets"]:
+            by_vpc.setdefault(s["VpcId"], []).append(s["SubnetId"])
+        resp = ec2.describe_route_tables(
+            Filters=[
+                {"Name": "vpc-id", "Values": sorted(by_vpc)},
+                {"Name": "association.main", "Values": ["true"]},
+            ]
+        )
+        existing = {t["route_table_id"]: t for t in tables}
+        for rt in resp["RouteTables"]:
+            t = existing.get(rt["RouteTableId"]) or _route_table(rt)
+            t["implicit_for_subnets"] = by_vpc.get(t["vpc_id"], [])
+            if rt["RouteTableId"] not in existing:
                 tables.append(t)
     items, truncated = cap(tables, params)
     return {"route_tables": items, "_truncated": truncated}

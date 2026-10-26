@@ -24,6 +24,9 @@ from app.storage.models import Conversation, Message, ToolCallRecord
 log = logging.getLogger(__name__)
 
 
+STOPPED_NOTE = "Lượt chẩn đoán đã bị dừng trước khi có kết luận."
+
+
 async def run_agent(
     db: Session,
     conversation: Conversation,
@@ -46,103 +49,144 @@ async def run_agent(
 
     records: list[ToolCallRecord] = []
     retried_json = False
+    # Set once the assistant message of this turn is stored. If the turn ends any other way
+    # (client disconnect / Stop, unexpected error) the finally block stores a note, so the
+    # history stays user/assistant and the tool timeline survives a reload.
+    finished = False
+    thinking = "Waiting for the MCP client…" if provider.name == "mcp" else "Reasoning…"
 
-    for _ in range(settings.max_agent_iterations):
-        yield ev.status("Reasoning…")
-        try:
-            response = await provider.chat(messages, tools)
-        except (LLMError, NotImplementedError) as e:
-            yield ev.error("LLM_UNAVAILABLE", f"LLM provider is unavailable: {e}")
-            yield ev.done()
-            return
-        except Exception as e:  # noqa: BLE001 — never leak a traceback into the stream
-            log.exception("LLM call failed")
-            yield ev.error("LLM_UNAVAILABLE", f"LLM call failed: {type(e).__name__}")
-            yield ev.done()
-            return
+    try:
+        for _ in range(settings.max_agent_iterations):
+            yield ev.status(thinking)
+            try:
+                response = await provider.chat(messages, tools)
+            except (LLMError, NotImplementedError) as e:
+                message = f"LLM provider is unavailable: {e}"
+                _save_unfinished(db, conversation, records, f"Chưa hoàn thành chẩn đoán: {message}")
+                finished = True
+                yield ev.error("LLM_UNAVAILABLE", message)
+                yield ev.done()
+                return
+            except Exception as e:  # noqa: BLE001 — never leak a traceback into the stream
+                log.exception("LLM call failed")
+                message = f"LLM call failed: {type(e).__name__}"
+                _save_unfinished(db, conversation, records, f"Chưa hoàn thành chẩn đoán: {message}")
+                finished = True
+                yield ev.error("LLM_UNAVAILABLE", message)
+                yield ev.done()
+                return
 
-        if response.wants_tools:
-            messages.append(
-                LLMMessage(
-                    role="assistant", content=response.text or "", tool_calls=response.tool_calls
-                )
-            )
-            for call in response.tool_calls:
-                spec = tool_index.get(call.name)
-                yield ev.status(f"Reading {spec.label.lower() if spec else call.name}…")
-                yield AgentEvent(
-                    type="tool_call", data={"id": call.id, "tool": call.name, "input": call.input}
-                )
-                result = await asyncio.to_thread(run_tool, aws_session, call.name, call.input)
-                clean = sanitize(result.output)
-                summary = summarize_output(clean)
-                records.append(
-                    ToolCallRecord(
-                        tool=call.name,
-                        input_json=json.dumps(call.input, default=str),
-                        output_summary=summary,
-                        status=result.status,
-                        error=result.error,
-                        duration_ms=result.duration_ms,
-                    )
-                )
-                yield AgentEvent(
-                    type="tool_result",
-                    data={
-                        "id": call.id,
-                        "status": result.status,
-                        "output_summary": summary,
-                        "duration_ms": result.duration_ms,
-                    },
-                )
+            if response.wants_tools:
                 messages.append(
                     LLMMessage(
-                        role="tool",
-                        tool_call_id=call.id,
-                        tool_name=call.name,
-                        content=json.dumps(clean, default=str),
+                        role="assistant",
+                        content=response.text or "",
+                        tool_calls=response.tool_calls,
                     )
                 )
-            continue
-
-        yield ev.status("Analyzing results…")
-        answer = _parse_answer(response.text or "")
-        if answer is None:
-            if not retried_json:
-                retried_json = True
-                messages.append(LLMMessage(role="assistant", content=response.text or ""))
-                messages.append(LLMMessage(role="user", content=RETRY_JSON_PROMPT))
+                for call in response.tool_calls:
+                    spec = tool_index.get(call.name)
+                    yield ev.status(f"Reading {spec.label.lower() if spec else call.name}…")
+                    yield AgentEvent(
+                        type="tool_call",
+                        data={"id": call.id, "tool": call.name, "input": call.input},
+                    )
+                    result = await asyncio.to_thread(run_tool, aws_session, call.name, call.input)
+                    clean = sanitize(result.output)
+                    summary = summarize_output(clean)
+                    records.append(
+                        ToolCallRecord(
+                            tool=call.name,
+                            input_json=json.dumps(call.input, default=str),
+                            output_summary=summary,
+                            status=result.status,
+                            error=result.error,
+                            duration_ms=result.duration_ms,
+                        )
+                    )
+                    yield AgentEvent(
+                        type="tool_result",
+                        data={
+                            "id": call.id,
+                            "status": result.status,
+                            "output_summary": summary,
+                            "duration_ms": result.duration_ms,
+                        },
+                    )
+                    messages.append(
+                        LLMMessage(
+                            role="tool",
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                            content=json.dumps(clean, default=str),
+                        )
+                    )
                 continue
-            answer = _fallback_answer(response.text or "", tools)
 
-        content = answer.summary
-        assistant_msg = repo.add_message(
+            yield ev.status("Analyzing results…")
+            answer = _parse_answer(response.text or "")
+            if answer is None:
+                if not retried_json:
+                    retried_json = True
+                    messages.append(LLMMessage(role="assistant", content=response.text or ""))
+                    messages.append(LLMMessage(role="user", content=RETRY_JSON_PROMPT))
+                    continue
+                answer = _fallback_answer(response.text or "", tools)
+
+            content = answer.summary
+            assistant_msg = repo.add_message(
+                db,
+                Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content=content,
+                    answer_json=answer.model_dump_json(),
+                ),
+                records,
+            )
+            repo.touch_conversation(db, conversation)
+            finished = True
+            yield AgentEvent(
+                type="answer",
+                data={
+                    "message_id": assistant_msg.id,
+                    "content": content,
+                    "answer": answer.model_dump(),
+                },
+            )
+            yield ev.done()
+            return
+
+        steps = settings.max_agent_iterations
+        _save_unfinished(
             db,
-            Message(
-                conversation_id=conversation.id,
-                role="assistant",
-                content=content,
-                answer_json=answer.model_dump_json(),
-            ),
+            conversation,
             records,
+            f"Chưa hoàn thành chẩn đoán: dừng sau {steps} bước suy luận mà chưa có kết luận.",
         )
-        repo.touch_conversation(db, conversation)
-        yield AgentEvent(
-            type="answer",
-            data={
-                "message_id": assistant_msg.id,
-                "content": content,
-                "answer": answer.model_dump(),
-            },
+        finished = True
+        yield ev.error(
+            "MAX_ITERATIONS", f"Stopped after {steps} reasoning steps without a conclusion"
         )
         yield ev.done()
-        return
+    finally:
+        if not finished:
+            try:
+                _save_unfinished(db, conversation, records, STOPPED_NOTE)
+            except Exception:  # noqa: BLE001 — do not mask the original exit reason
+                log.exception("Could not store the unfinished turn")
 
-    yield ev.error(
-        "MAX_ITERATIONS",
-        f"Stopped after {settings.max_agent_iterations} reasoning steps without a conclusion",
+
+def _save_unfinished(
+    db: Session, conversation: Conversation, records: list[ToolCallRecord], note: str
+) -> None:
+    """Store an assistant message without answer for a turn that ended early."""
+    repo.add_message(
+        db,
+        Message(conversation_id=conversation.id, role="assistant", content=note),
+        records,
     )
-    yield ev.done()
+    repo.touch_conversation(db, conversation)
 
 
 # ---------------------------------------------------------------------------

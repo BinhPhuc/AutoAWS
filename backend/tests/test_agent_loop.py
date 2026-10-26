@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 
 def _stream(client, conv_id, content):
     events = []
@@ -88,3 +90,123 @@ def test_conversation_filters_and_delete(client, connection):
     assert listed[0].get("messages") is None
     assert client.delete(f"/api/conversations/{conv_id}").json()["data"] is None
     assert client.get(f"/api/conversations/{conv_id}").json()["error"] == "CONVERSATION_NOT_FOUND"
+
+
+# ---- turns that end without an answer are still stored ------------------------
+
+
+class _FailingProvider:
+    name = "failing"
+
+    async def chat(self, messages, tools):
+        from app.llm.base import LLMError
+
+        raise LLMError("quota exceeded")
+
+
+class _AlwaysToolsProvider:
+    name = "always-tools"
+
+    async def chat(self, messages, tools):
+        from app.llm.base import LLMResponse, ToolCallRequest
+
+        call = ToolCallRequest(id=f"tc{len(messages)}", name="get_caller_identity", input={})
+        return LLMResponse(tool_calls=[call], stop_reason="tool_use")
+
+
+class _BlockingProvider:
+    """Never answers: lets a test cancel the turn while the LLM is 'thinking'."""
+
+    name = "blocking"
+
+    async def chat(self, messages, tools):
+        import asyncio
+
+        await asyncio.Event().wait()
+
+
+def _new_conversation(client, connection) -> str:
+    return client.post("/api/conversations", json={"connection_id": connection["id"]}).json()[
+        "data"
+    ]["id"]
+
+
+def test_failed_turn_is_stored_with_a_note(client, connection, monkeypatch):
+    from app.api import conversations as conversations_api
+
+    monkeypatch.setattr(conversations_api, "get_provider", lambda: _FailingProvider())
+    conv_id = _new_conversation(client, connection)
+    events = _stream(client, conv_id, "Website báo 502")
+    assert [t for t, _ in events][-2:] == ["error", "done"]
+    assert next(d for t, d in events if t == "error")["error"] == "LLM_UNAVAILABLE"
+
+    messages = client.get(f"/api/conversations/{conv_id}").json()["data"]["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant"]
+    assert messages[1]["answer"] is None
+    assert messages[1]["content"].startswith("Chưa hoàn thành chẩn đoán: LLM provider")
+
+
+def test_max_iterations_turn_keeps_its_tool_calls(client, connection, monkeypatch):
+    from app.api import conversations as conversations_api
+    from app.config import get_settings
+
+    monkeypatch.setattr(conversations_api, "get_provider", lambda: _AlwaysToolsProvider())
+    monkeypatch.setattr(get_settings(), "max_agent_iterations", 3)
+    conv_id = _new_conversation(client, connection)
+    events = _stream(client, conv_id, "Kiểm tra giúp")
+    assert next(d for t, d in events if t == "error")["error"] == "MAX_ITERATIONS"
+
+    assistant = client.get(f"/api/conversations/{conv_id}").json()["data"]["messages"][1]
+    assert assistant["answer"] is None
+    assert "dừng sau 3 bước" in assistant["content"]
+    assert [tc["tool"] for tc in assistant["tool_calls"]] == ["get_caller_identity"] * 3
+
+
+async def test_turn_closed_by_the_client_is_stored(app, aws):
+    """Client disconnects while the stream is suspended between events (aclose)."""
+    from sqlmodel import Session
+
+    from app.agent.loop import STOPPED_NOTE, run_agent
+    from app.llm.mock import MockProvider
+    from app.storage import repo
+    from app.storage.db import get_engine, init_db
+    from app.storage.models import Conversation
+
+    init_db()
+    with Session(get_engine()) as db:
+        conv = repo.create_conversation(db, Conversation(connection_id="conn_x"))
+        agen = run_agent(db, conv, "không ssh được", aws, MockProvider())
+        assert (await agen.__anext__()).type == "status"
+        await agen.aclose()
+        msgs = repo.list_messages(db, conv.id)
+        assert [m.role for m in msgs] == ["user", "assistant"]
+        assert msgs[1].content == STOPPED_NOTE and msgs[1].answer_json is None
+
+
+async def test_turn_cancelled_while_waiting_for_the_llm_is_stored(app, aws):
+    """Stop pressed while the provider is working (sse-starlette cancels the task)."""
+    import asyncio
+
+    from sqlmodel import Session
+
+    from app.agent.loop import STOPPED_NOTE, run_agent
+    from app.storage import repo
+    from app.storage.db import get_engine, init_db
+    from app.storage.models import Conversation
+
+    init_db()
+    with Session(get_engine()) as db:
+        conv = repo.create_conversation(db, Conversation(connection_id="conn_y"))
+
+        async def consume():
+            async for _ in run_agent(db, conv, "502", aws, _BlockingProvider()):
+                pass
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        msgs = repo.list_messages(db, conv.id)
+        assert [m.role for m in msgs] == ["user", "assistant"]
+        assert msgs[1].content == STOPPED_NOTE

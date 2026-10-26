@@ -16,4 +16,8 @@ def get_provider() -> LLMProvider:
         from app.llm.bedrock import BedrockProvider
 
         return BedrockProvider()
+    if name == "mcp":
+        from app.llm.mcp_bridge import McpBridgeProvider
+
+        return McpBridgeProvider()
     raise LLMError(f"Unknown LLM_PROVIDER: {name}")

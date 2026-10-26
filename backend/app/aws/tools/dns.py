@@ -6,8 +6,13 @@ import dns.resolver
 
 from app.aws.registry import tool
 from app.aws.tools._common import MAX_ITEMS_SCHEMA, cap
+from app.config import get_settings
 
 PUBLIC_RESOLVERS = ["8.8.8.8", "1.1.1.1"]
+
+
+def _zone_name(zone: dict) -> str:
+    return zone["Name"].rstrip(".").lower()
 
 
 @tool(
@@ -35,9 +40,15 @@ def route53_list_records(session: boto3.Session, params: dict) -> dict:
     if params.get("zone_id"):
         zones = [z for z in zones if z["Id"].endswith(params["zone_id"])]
     elif domain:
-        matching = [z for z in zones if domain.endswith(z["Name"].rstrip(".").lower())]
-        # Longest-suffix match wins (sub.example.com over example.com)
-        zones = sorted(matching, key=lambda z: -len(z["Name"]))[:1]
+        matching = [
+            z for z in zones if domain == _zone_name(z) or domain.endswith("." + _zone_name(z))
+        ]
+        # Longest suffix wins (sub.example.com over example.com); on a tie prefer the public
+        # zone, which is what the Internet resolves.
+        zones = sorted(
+            matching,
+            key=lambda z: (-len(_zone_name(z)), z.get("Config", {}).get("PrivateZone", False)),
+        )[:1]
 
     records = []
     for z in zones:
@@ -49,7 +60,7 @@ def route53_list_records(session: boto3.Session, params: dict) -> dict:
                 alias = rr.get("AliasTarget")
                 records.append(
                     {
-                        "zone": z["Name"].rstrip("."),
+                        "zone": _zone_name(z),
                         "private_zone": z.get("Config", {}).get("PrivateZone", False),
                         "name": name,
                         "type": rr["Type"],
@@ -60,7 +71,7 @@ def route53_list_records(session: boto3.Session, params: dict) -> dict:
                 )
     items, truncated = cap(records, params)
     return {
-        "zones": [z["Name"].rstrip(".") for z in zones],
+        "zones": [_zone_name(z) for z in zones],
         "records": items,
         "_truncated": truncated,
     }
@@ -71,7 +82,8 @@ def route53_list_records(session: boto3.Session, params: dict) -> dict:
     group="dns",
     label="Public DNS lookup",
     description="Resolve a hostname using public resolvers (8.8.8.8, 1.1.1.1) to see what the "
-    "Internet actually sees. Compare with the instance's current public IP.",
+    "Internet actually sees. Compare with the instance's current public IP. rcode NXDOMAIN "
+    "means the name does not exist publicly; NODATA means no record of that type.",
     input_schema={
         "type": "object",
         "properties": {
@@ -88,22 +100,23 @@ def resolve_dns_public(session: boto3.Session, params: dict) -> dict:
     if not hostname:
         return {"error": "hostname is required"}
     resolver = dns.resolver.Resolver(configure=False)
-    resolver.nameservers = PUBLIC_RESOLVERS
+    resolver.nameservers = get_settings().dns_resolver_list or PUBLIC_RESOLVERS
     resolver.lifetime = 5.0
+    base = {"hostname": hostname, "type": rtype}
     try:
         answer = resolver.resolve(hostname, rtype)
-        values = [r.to_text().strip('"') for r in answer]
-        cname = answer.canonical_name.to_text().rstrip(".")
-        return {
-            "hostname": hostname,
-            "type": rtype,
-            "answers": values,
-            "canonical_name": cname if cname != hostname else None,
-            "ttl": answer.rrset.ttl if answer.rrset is not None else None,
-        }
     except dns.resolver.NXDOMAIN:
-        return {"hostname": hostname, "type": rtype, "answers": [], "error": "NXDOMAIN"}
+        # A finding, not a failure: the name does not exist in public DNS.
+        return {**base, "rcode": "NXDOMAIN", "answers": []}
     except dns.resolver.NoAnswer:
-        return {"hostname": hostname, "type": rtype, "answers": [], "error": "No answer"}
+        return {**base, "rcode": "NODATA", "answers": []}
     except (dns.exception.DNSException, OSError) as e:
-        return {"hostname": hostname, "type": rtype, "answers": [], "error": f"DNS error: {e}"}
+        return {**base, "answers": [], "error": f"DNS error: {e}"}
+    cname = answer.canonical_name.to_text().rstrip(".")
+    return {
+        **base,
+        "rcode": "NOERROR",
+        "answers": [r.to_text().strip('"') for r in answer],
+        "canonical_name": cname if cname != hostname else None,
+        "ttl": answer.rrset.ttl if answer.rrset is not None else None,
+    }

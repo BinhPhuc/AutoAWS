@@ -41,7 +41,11 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `CONNECTION_NOT_VERIFIED` | 400 | `"Connection is not verified yet"` | Tạo hội thoại / gửi câu hỏi trên connection chưa `connected` |
 | `AWS_AUTH_FAILED` | 400 | `"AWS authentication failed: <reason>"` | Credentials sai, AssumeRole bị từ chối |
 | `AWS_ACCESS_DENIED` | 403 | `"AWS access denied: <action>"` | Role thiếu quyền cho một lệnh đọc |
-| `LLM_UNAVAILABLE` | 503 | `"LLM provider is unavailable"` | Provider lỗi / chưa cấu hình |
+| `LLM_UNAVAILABLE` | 503 | `"LLM provider is unavailable"` | Provider lỗi / chưa cấu hình / không có MCP client trả lời kịp (`LLM_PROVIDER=mcp`) |
+| `MAX_ITERATIONS` | — | `"Stopped after 8 reasoning steps without a conclusion"` | **Chỉ qua SSE `error`**: agent hết số vòng mà chưa kết luận |
+| `NOT_FOUND` | 404 | `"Not Found"` | Route không tồn tại |
+| `METHOD_NOT_ALLOWED` | 405 | `"Method Not Allowed"` | Sai HTTP method |
+| `NOT_IMPLEMENTED` | 501 | `"Checklist runs are not available yet"` | Tính năng chưa có (checklist) |
 | `INTERNAL` | 500 | `"Internal server error"` | Lỗi không lường trước |
 
 ### Ngoại lệ: SSE stream
@@ -56,6 +60,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 200 { "status_code": 200, "message": "OK",
       "data": { "status": "ok", "version": "0.1.0", "llm_provider": "mock" } }
 ```
+`llm_provider` ∈ `mock | anthropic | bedrock | mcp` (`mcp` = một MCP client đóng vai LLM, xem mục 6).
 
 ---
 
@@ -110,7 +115,7 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
 ```
 
 ### `POST /api/connections/{id}/verify`
-Server lấy credentials (trực tiếp hoặc `AssumeRole`), gọi `sts:GetCallerIdentity` + `ec2:DescribeRegions`. Luôn `200` (kết quả verify nằm trong `data`, không phải lỗi HTTP) và cập nhật `status` của Connection.
+Server lấy credentials (trực tiếp hoặc `AssumeRole`), gọi `sts:GetCallerIdentity` + `ec2:DescribeRegions` (hai action này luôn có trong policy của template CloudFormation). Luôn `200` (kết quả verify nằm trong `data`, không phải lỗi HTTP) và cập nhật `status` của Connection.
 ```json
 200 { "status_code": 200, "message": "Connection verified",
       "data": { "status": "connected", "account_id": "123456789012",
@@ -228,6 +233,8 @@ Thứ tự điển hình: `status` → (`tool_call` → `tool_result`)* → `ans
 Lỗi trước khi stream bắt đầu (hội thoại không tồn tại, connection chưa verify, body sai) → JSON lỗi theo mục 0, không phải SSE.
 Client dùng `fetch` + `ReadableStream` (vì là POST). Khi stream kết thúc, `GET /api/conversations/{id}` phải trả về đúng message vừa stream (server lưu trước khi gửi `done`).
 
+**Lượt không có kết luận vẫn được lưu.** Khi stream đã bắt đầu (server đã lưu câu hỏi) mà lượt kết thúc không có `answer` (event `error`, hết vòng, hoặc client ngắt kết nối / bấm Stop), server lưu một message assistant với `answer: null`, `content` là câu giải thích tiếng Việt (ví dụ `"Chưa hoàn thành chẩn đoán: LLM provider is unavailable"`, `"Lượt chẩn đoán đã bị dừng trước khi có kết luận."`) và `tool_calls` gồm các công cụ đã chạy. Nhờ vậy lịch sử luôn xen kẽ user/assistant. Client ngắt kết nối = dừng agent.
+
 ---
 
 ## 4. Tools — danh sách công cụ đọc AWS
@@ -251,6 +258,24 @@ Dự kiến: `POST /api/checklists/runs`, `GET /api/checklists/runs/{id}` (kết
 
 ---
 
+## 6. MCP bridge — MCP client đóng vai LLM (chỉ dev/test)
+
+Chỉ bật khi `LLM_PROVIDER=mcp`. Dùng khi chưa có quyền gọi Bedrock/Anthropic: mỗi lượt `provider.chat()` của agent được xếp hàng, một MCP client (ví dụ Claude Code) lấy về, suy luận và trả lời. Vòng lặp agent, công cụ, sanitizer, SSE giữ nguyên. **Không phải endpoint cho FE**, không theo envelope (giao thức MCP).
+
+- Endpoint: `http://localhost:8000/mcp/` (MCP Streamable HTTP; có dấu `/` cuối). Kết nối Claude Code: `claude mcp add --transport http autoaws-llm http://localhost:8000/mcp/`.
+- Không có auth → chỉ chạy trên máy dev (bind `127.0.0.1`).
+- Request chờ quá `MCP_BRIDGE_TIMEOUT_SECONDS` (mặc định 900) → agent nhận lỗi `LLM_UNAVAILABLE`.
+
+| MCP tool | Tham số | Trả về |
+|---|---|---|
+| `next_llm_request` | `wait_seconds` (0–60, mặc định 30), `include_system` (mặc định `true`), `include_tools` (mặc định `true`) | Lượt cũ nhất đang chờ: `{ "pending": true, "request_id", "created_at", "system", "messages": [LLMMessage], "tools": [{name, description, input_schema}] }`; hết thời gian chờ mà không có lượt nào → `{ "pending": false }` |
+| `respond_llm_request` | `request_id`, **một trong hai**: `tool_calls: [{ "name", "input" }]` (muốn đọc thêm dữ liệu) hoặc `text` (câu trả lời cuối = JSON `DiagnosisAnswer`, mục 3) | `{ "ok": true }`; tên tool không có trong `tools`, request không tồn tại / đã trả lời → lỗi MCP (`isError`) |
+| `list_llm_requests` | — | `{ "requests": [{ "request_id", "created_at", "last_user_message" }] }` các lượt đang chờ |
+
+`LLMMessage` = `{ "role": "user" | "assistant" | "tool", "content", "tool_calls"?: [{id, name, input}], "tool_call_id"?, "tool_name"? }` (`content` của `tool` là JSON kết quả công cụ đã sanitize).
+
+---
+
 ## Danh sách công cụ bản init (tên ổn định; `label` do backend trả về, FE không tự đặt)
 
 | name | group | label | AWS action |
@@ -261,11 +286,11 @@ Dự kiến: `POST /api/checklists/runs`, `GET /api/checklists/runs/{id}` (kết
 | `ssm_describe_instance_information` | compute | SSM Agent status | ssm:DescribeInstanceInformation |
 | `describe_security_groups` | network | Security groups | ec2:DescribeSecurityGroups |
 | `describe_network_acls` | network | Network ACLs | ec2:DescribeNetworkAcls |
-| `describe_route_tables` | network | Route tables | ec2:DescribeRouteTables |
+| `describe_route_tables` | network | Route tables | ec2:DescribeRouteTables, DescribeSubnets |
 | `describe_subnets` | network | Subnets | ec2:DescribeSubnets |
 | `describe_internet_gateways` | network | Internet gateways | ec2:DescribeInternetGateways |
 | `route53_list_records` | dns | Route 53 records | route53:ListHostedZones, ListResourceRecordSets |
-| `resolve_dns_public` | dns | Public DNS lookup | (không cần AWS) truy vấn DNS công khai |
+| `resolve_dns_public` | dns | Public DNS lookup | (không cần AWS) truy vấn DNS công khai (`DNS_RESOLVERS`, mặc định 8.8.8.8, 1.1.1.1) |
 | `elbv2_describe_load_balancers` | elb | Load balancers | elasticloadbalancing:DescribeLoadBalancers, DescribeListeners |
 | `elbv2_describe_target_health` | elb | Target health | elasticloadbalancing:DescribeTargetGroups, DescribeTargetHealth |
 | `cloudwatch_get_metric_data` | metrics | CloudWatch metrics | cloudwatch:GetMetricData — *stub, M3* |

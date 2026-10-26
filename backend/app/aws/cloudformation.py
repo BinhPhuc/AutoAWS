@@ -1,31 +1,26 @@
 """Render the CloudFormation template users deploy to grant AutoAWS read-only access.
 
-The Allow statement is generated from the tool registry so the policy always matches
-what the code can call. The explicit Deny protects business data even if a future tool
-accidentally asks for it.
+The Allow statement is generated from the tool registry (plus the calls made by
+``verify_session``) so the policy always matches what the code can call. The explicit
+Deny protects business data even if a future tool accidentally asks for it.
 """
 
 import json
 
-from app.aws.registry import all_aws_actions
+from app.aws.credentials import VERIFY_AWS_ACTIONS
+from app.aws.registry import DENIED_ACTIONS, all_aws_actions
 
 STACK_NAME = "AutoAWSReadOnlyRole"
 ROLE_NAME = "AutoAWSReadOnly"
 
-DENIED_ACTIONS = [
-    "s3:GetObject*",
-    "secretsmanager:GetSecretValue",
-    "ssm:GetParameter*",
-    "kms:Decrypt",
-    "dynamodb:GetItem",
-    "dynamodb:Query",
-    "dynamodb:Scan",
-    "rds-data:*",
-]
+
+def policy_actions() -> list[str]:
+    """Every action AutoAWS calls on the user's account: tools + connection verify."""
+    return sorted(set(all_aws_actions()) | set(VERIFY_AWS_ACTIONS))
 
 
 def render_template(platform_account_id: str, external_id: str) -> str:
-    allow = [a for a in all_aws_actions() if a]
+    allow = policy_actions()
     actions_yaml = "\n".join(f"                  - {a}" for a in allow)
     denies_yaml = "\n".join(f"                  - {a}" for a in DENIED_ACTIONS)
     return f"""AWSTemplateFormatVersion: '2010-09-09'
@@ -87,7 +82,7 @@ def render_policy_json() -> str:
         {
             "Version": "2012-10-17",
             "Statement": [
-                {"Effect": "Allow", "Action": all_aws_actions(), "Resource": "*"},
+                {"Effect": "Allow", "Action": policy_actions(), "Resource": "*"},
                 {"Effect": "Deny", "Action": DENIED_ACTIONS, "Resource": "*"},
             ],
         },
