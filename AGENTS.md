@@ -36,7 +36,7 @@ AutoAWS/
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
 ├── frontend/                # Vite + React + TS — src/{api,hooks,pages,components,lib,mocks} (xem frontend/README.md)
 ├── docker-compose.yml
-└── .claude/ .agents/ .gemini/   # skills thiết kế UI dùng chung (ui-ux-pro-max, ui-styling, ...)
+└── .claude/ .agents/ .gemini/   # skills của AI tool — gitignore, mỗi người tự cài
 ```
 
 ## Chạy project
