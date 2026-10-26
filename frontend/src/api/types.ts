@@ -23,13 +23,17 @@ export type ApiErrorCode =
   | 'AWS_AUTH_FAILED'
   | 'AWS_ACCESS_DENIED'
   | 'LLM_UNAVAILABLE'
+  | 'MAX_ITERATIONS'
+  | 'NOT_FOUND'
+  | 'METHOD_NOT_ALLOWED'
+  | 'NOT_IMPLEMENTED'
   | 'INTERNAL'
 
 // ---------- Health ----------
 export interface Health {
   status: 'ok'
   version: string
-  llm_provider: string
+  llm_provider: 'mock' | 'anthropic' | 'bedrock' | 'mcp'
 }
 
 // ---------- Connections ----------

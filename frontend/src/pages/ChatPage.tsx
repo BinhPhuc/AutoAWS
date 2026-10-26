@@ -29,6 +29,10 @@ export function ChatPage() {
   const conversation = useConversation(conversationId)
   const create = useCreateConversation()
   const { state, send, stop } = useSendMessage(conversationId)
+  // A live turn is shown only in the conversation it belongs to; while another conversation
+  // is streaming, this one can be read but not sent to.
+  const live = state.conversationId === conversationId ? state : null
+  const busyElsewhere = state.streaming && !live
   const [prefill, setPrefill] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -57,9 +61,9 @@ export function ChatPage() {
     if (!activeConnectionId) return
     create.mutate(activeConnectionId, {
       onSuccess: ({ data }) => {
-        navigate(`/chat/${data.id}`, { replace: true })
-        // The hook is bound to the URL param; send on next tick once it re-renders.
+        // The hook is bound to the URL param; send once the page re-renders with the new id.
         pendingFirstMessage.current = text
+        navigate(`/chat/${data.id}`, { replace: true })
       },
     })
   }
@@ -88,7 +92,12 @@ export function ChatPage() {
 
   const messages = conversation.data?.messages ?? []
   const showEmpty =
-    !conversationId || (conversation.isSuccess && messages.length === 0 && !state.streaming)
+    !conversationId || (conversation.isSuccess && messages.length === 0 && !live?.streaming)
+  // The server stores the question when the turn starts, so a refetch during the turn (e.g.
+  // after switching away and back) already ends with it: render the question only once.
+  const lastMessage = messages.at(-1)
+  const questionStored =
+    lastMessage?.role === 'user' && lastMessage.content === live?.pendingQuestion
 
   return (
     <div className="flex h-full flex-col">
@@ -128,23 +137,23 @@ export function ChatPage() {
           <PageLoading />
         ) : conversationId && conversation.isError ? (
           <PageError error={conversation.error} onRetry={() => void conversation.refetch()} />
-        ) : showEmpty && !state.pendingQuestion ? (
+        ) : showEmpty && !live?.pendingQuestion ? (
           <EmptyChat onPick={(text) => setPrefill(text)} />
         ) : (
           <div className="mx-auto max-w-3xl space-y-5 p-4">
             {messages.map((m) => (
               <MessageItem key={m.id} message={m} />
             ))}
-            {state.pendingQuestion && (
+            {live?.pendingQuestion && (
               <>
-                <UserMessage content={state.pendingQuestion} />
+                {!questionStored && <UserMessage content={live.pendingQuestion} />}
                 <AssistantMessage
-                  toolCalls={state.toolCalls}
-                  answer={state.answer?.answer}
-                  content={state.answer?.content}
-                  streaming={state.streaming}
-                  statusText={state.statusText}
-                  error={state.error}
+                  toolCalls={live.toolCalls}
+                  answer={live.answer?.answer}
+                  content={live.answer?.content}
+                  streaming={live.streaming}
+                  statusText={live.statusText}
+                  error={live.error}
                 />
               </>
             )}
@@ -156,8 +165,8 @@ export function ChatPage() {
       <Composer
         onSend={handleSend}
         onStop={stop}
-        streaming={state.streaming}
-        disabled={create.isPending || !activeConnectionId}
+        streaming={!!live?.streaming}
+        disabled={create.isPending || !activeConnectionId || busyElsewhere}
         initialValue={prefill}
       />
     </div>

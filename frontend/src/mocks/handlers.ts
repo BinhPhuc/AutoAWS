@@ -119,7 +119,7 @@ export const handlers = [
     if (!c) return fail(404, 'CONNECTION_NOT_FOUND', 'Connection not found', pathOf(request))
     if (c.type !== 'role')
       return fail(
-        422,
+        400,
         'VALIDATION_ERROR',
         'CloudFormation template is only available for role connections',
         pathOf(request),

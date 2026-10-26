@@ -81,7 +81,14 @@ export function ConnectionForm({ onCreated }: Props) {
         <CloudFormationSnippet connectionId={created.id} />
         <div className="flex justify-end gap-2">
           <Button
-            onClick={() => verify.mutate(created.id, { onSuccess: () => onCreated(created) })}
+            onClick={() =>
+              // Stay on this step when verify fails (e.g. the stack is not created yet).
+              verify.mutate(created.id, {
+                onSuccess: ({ data }) => {
+                  if (data.status === 'connected') onCreated(created)
+                },
+              })
+            }
             disabled={verify.isPending}
           >
             {verify.isPending ? S.connections.verifying : S.connections.verify}

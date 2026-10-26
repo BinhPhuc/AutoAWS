@@ -124,6 +124,7 @@ export const S = {
     howToFix: 'How to fix',
     notVerified: 'Not verified',
     verifiedBadge: 'Verified from AWS',
+    inferredBadge: 'Inferred',
     checkManually: 'Check manually',
     confidence: {
       high: 'High confidence',

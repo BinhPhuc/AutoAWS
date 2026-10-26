@@ -132,7 +132,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   variant="ghost"
                   size="icon-xs"
                   aria-label={S.chat.deleteConversation}
-                  className="absolute top-1.5 right-1 opacity-0 group-hover:opacity-100"
+                  className="absolute top-1.5 right-1 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
                   onClick={() =>
                     remove.mutate(c.id, {
                       onSuccess: () => {

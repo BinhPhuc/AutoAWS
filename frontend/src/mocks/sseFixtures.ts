@@ -43,7 +43,7 @@ const kb1: Scenario = {
     },
     {
       tool: 'describe_route_tables',
-      input: { subnet_id: 'subnet-0a1b' },
+      input: { subnet_ids: ['subnet-0a1b'] },
       output: 'rtb-07c9: 1 route (10.0.0.0/16 → local). No 0.0.0.0/0 route.',
       ms: 350,
     },

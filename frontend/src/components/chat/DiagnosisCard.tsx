@@ -45,13 +45,17 @@ export function DiagnosisCard({ answer }: { answer: DiagnosisAnswer }) {
                     <Badge variant="outline" className="font-mono text-[10px]">
                       {lookup(e.source).label}
                     </Badge>
-                    {e.verified && (
+                    {e.verified ? (
                       <Badge
                         variant="outline"
                         className="border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                       >
                         <CheckCircle2 />
                         {t.verifiedBadge}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-muted-foreground">
+                        {t.inferredBadge}
                       </Badge>
                     )}
                   </span>
