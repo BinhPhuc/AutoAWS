@@ -13,6 +13,15 @@ Scenarios (docs/SYSTEM_OVERVIEW.md §4):
        record still points to an old IP, and the security group does not allow 8080.
   KB3  needs ELBv2 + CloudWatch Logs/CloudTrail; ELBv2 is not in LocalStack Community, so
        it is skipped (covered by moto unit tests).
+  KB4  "api-server": SSH times out although the SG allows 22 — a custom network ACL on the
+       subnet denies TCP 22 (rule 90) before allowing everything (rule 100).
+  KB5  "worker-01" is unreachable: its subnet has no explicit route table (main table, no
+       0.0.0.0/0) and the instance has no public IP.
+  KB6  "shop-web": the website is down because the instance is stopped.
+  KB7  "bastion": SSH from home fails — the SG only allows 22 from one office IP (/32).
+
+Only behaviour LocalStack Community emulates faithfully is used (see README: blackhole
+routes and Elastic IPs across stop/start are not emulated correctly).
 
 Re-running is safe: a scenario whose VPC already exists is skipped.
 """
@@ -208,11 +217,127 @@ def seed_kb2(ec2, r53) -> dict:
     }
 
 
+def _sg(ec2, scenario: str, name: str, vpc: str, rules: list[tuple[int, str]]) -> str:
+    sg = ec2.create_security_group(
+        GroupName=name,
+        Description=f"{name} ({scenario})",
+        VpcId=vpc,
+        TagSpecifications=_tags(name, scenario, "security-group"),
+    )["GroupId"]
+    ec2.authorize_security_group_ingress(
+        GroupId=sg,
+        IpPermissions=[
+            {"IpProtocol": "tcp", "FromPort": port, "ToPort": port, "IpRanges": [{"CidrIp": cidr}]}
+            for port, cidr in rules
+        ],
+    )
+    return sg
+
+
+def seed_kb4(ec2) -> dict:
+    if vpc := _existing_vpc(ec2, "kb4"):
+        return {"skipped": f"exists ({vpc})"}
+    net = _public_vpc(ec2, "kb4", "10.40.0.0/16", "10.40.1.0/24")
+    sg = _sg(ec2, "kb4", "autoaws-kb4-api-sg", net["vpc"], [(22, "0.0.0.0/0"), (443, "0.0.0.0/0")])
+    inst = _instance(ec2, "kb4", "api-server", net["subnet"], sg)
+    acl = ec2.create_network_acl(
+        VpcId=net["vpc"], TagSpecifications=_tags("autoaws-kb4-acl", "kb4", "network-acl")
+    )["NetworkAcl"]["NetworkAclId"]
+    entries = [
+        (90, "6", "deny", False, {"From": 22, "To": 22}),  # the incident
+        (100, "-1", "allow", False, None),
+        (100, "-1", "allow", True, None),
+    ]
+    for number, proto, action, egress, ports in entries:
+        kwargs = {"PortRange": ports} if ports else {}
+        ec2.create_network_acl_entry(
+            NetworkAclId=acl,
+            RuleNumber=number,
+            Protocol=proto,
+            RuleAction=action,
+            Egress=egress,
+            CidrBlock="0.0.0.0/0",
+            **kwargs,
+        )
+    current = ec2.describe_network_acls(
+        Filters=[{"Name": "association.subnet-id", "Values": [net["subnet"]]}]
+    )["NetworkAcls"][0]
+    assoc = next(
+        a["NetworkAclAssociationId"]
+        for a in current["Associations"]
+        if a["SubnetId"] == net["subnet"]
+    )
+    ec2.replace_network_acl_association(AssociationId=assoc, NetworkAclId=acl)
+    return {
+        "instance": inst["InstanceId"],
+        "public_ip": inst.get("PublicIpAddress"),
+        "network_acl": acl,
+        "ask": "SSH vào api-server bị timeout, Security Group đã cho phép port 22 từ mọi nơi.",
+    }
+
+
+def seed_kb5(ec2) -> dict:
+    if vpc := _existing_vpc(ec2, "kb5"):
+        return {"skipped": f"exists ({vpc})"}
+    vpc = ec2.create_vpc(
+        CidrBlock="10.50.0.0/16", TagSpecifications=_tags("autoaws-kb5-vpc", "kb5", "vpc")
+    )["Vpc"]["VpcId"]
+    igw = ec2.create_internet_gateway(
+        TagSpecifications=_tags("autoaws-kb5-igw", "kb5", "internet-gateway")
+    )["InternetGateway"]["InternetGatewayId"]
+    ec2.attach_internet_gateway(InternetGatewayId=igw, VpcId=vpc)
+    # No route table is created or associated: the subnet silently uses the main table,
+    # which only has the local route. MapPublicIpOnLaunch stays false.
+    subnet = ec2.create_subnet(
+        VpcId=vpc,
+        CidrBlock="10.50.1.0/24",
+        AvailabilityZone=f"{REGION}a",
+        TagSpecifications=_tags("autoaws-kb5-subnet", "kb5", "subnet"),
+    )["Subnet"]["SubnetId"]
+    sg = _sg(ec2, "kb5", "autoaws-kb5-worker-sg", vpc, [(22, "0.0.0.0/0")])
+    inst = _instance(ec2, "kb5", "worker-01", subnet, sg)
+    return {
+        "instance": inst["InstanceId"],
+        "public_ip": inst.get("PublicIpAddress"),
+        "subnet": subnet,
+        "ask": "Tôi vừa tạo instance worker-01 trong VPC mới nhưng không SSH vào được.",
+    }
+
+
+def seed_kb6(ec2) -> dict:
+    if vpc := _existing_vpc(ec2, "kb6"):
+        return {"skipped": f"exists ({vpc})"}
+    net = _public_vpc(ec2, "kb6", "10.60.0.0/16", "10.60.1.0/24")
+    sg = _sg(ec2, "kb6", "autoaws-kb6-web-sg", net["vpc"], [(80, "0.0.0.0/0"), (443, "0.0.0.0/0")])
+    inst = _instance(ec2, "kb6", "shop-web", net["subnet"], sg)
+    ec2.stop_instances(InstanceIds=[inst["InstanceId"]])  # the incident
+    return {
+        "instance": inst["InstanceId"],
+        "public_ip_before_stop": inst.get("PublicIpAddress"),
+        "ask": "Website bán hàng chạy trên shop-web tự nhiên không truy cập được nữa.",
+    }
+
+
+def seed_kb7(ec2) -> dict:
+    if vpc := _existing_vpc(ec2, "kb7"):
+        return {"skipped": f"exists ({vpc})"}
+    net = _public_vpc(ec2, "kb7", "10.70.0.0/16", "10.70.1.0/24")
+    sg = _sg(ec2, "kb7", "autoaws-kb7-bastion-sg", net["vpc"], [(22, "203.0.113.10/32")])
+    inst = _instance(ec2, "kb7", "bastion", net["subnet"], sg)
+    return {
+        "instance": inst["InstanceId"],
+        "public_ip": inst.get("PublicIpAddress"),
+        "security_group": sg,
+        "ask": "Ở công ty tôi SSH vào bastion được, nhưng về nhà thì không vào được.",
+    }
+
+
 def main() -> None:
     _require_localstack()
     ec2, r53 = _client("ec2"), _client("route53")
     try:
         result = {"kb1": seed_kb1(ec2), "kb2": seed_kb2(ec2, r53)}
+        result.update(kb4=seed_kb4(ec2), kb5=seed_kb5(ec2), kb6=seed_kb6(ec2), kb7=seed_kb7(ec2))
     except ClientError as e:
         sys.exit(f"Seeding failed: {e}")
     result["kb3"] = {"skipped": "ELBv2 is not available in LocalStack Community"}
