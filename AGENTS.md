@@ -19,6 +19,7 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] `frontend/` Vite + React 19 + TS + Tailwind + shadcn (Base UI): Connect, Chat (stream, timeline, DiagnosisCard), Checklist placeholder; MSW mock; 6 test
 - [x] `docker-compose.yml` (backend + frontend/nginx)
 - [x] Đợt 2 (2026-10-26): sửa C1 (policy CFN thiếu `ec2:DescribeRegions`), guard chỉ-đọc allow-list + hook botocore lúc chạy, sửa `describe_route_tables`/DNS/Route 53, lưu lượt lỗi/Stop; UI: hết trùng câu hỏi, stream không lọt hội thoại, badge Inferred; `LLM_PROVIDER=mcp` (MCP client đóng vai LLM, `/mcp/`); seed LocalStack `infra/localstack/`. 67 test BE, 9 test FE; E2E trên LocalStack: KB1, KB2 đúng.
+- [x] Lưu trữ DynamoDB (2026-10-27): interface `Store` (`app/storage/base.py`), `STORAGE_BACKEND=sqlite|dynamodb`, bảng single-table mã hoá KMS; 80 test BE (store chạy trên cả 2 backend); chạy thật trên DynamoDB của LocalStack.
 - [ ] **Tiếp theo**: `AnthropicProvider` / `BedrockProvider` thật (`backend/app/llm/anthropic.py`, `bedrock.py` có hướng dẫn trong docstring); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
 
 ## Bố cục repo
@@ -65,7 +66,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 | # | Quyết định | Lý do |
 |---|---|---|
-| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE |
+| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) mặc định; DynamoDB chọn bằng `STORAGE_BACKEND` | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE; DynamoDB là lưu trữ đích |
 | 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
 | 4 | **Chưa có auth**, chế độ 1 người dùng | Init tập trung luồng kết nối → chat; chừa middleware |

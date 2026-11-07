@@ -68,3 +68,23 @@ def connection(client, aws):
     v = client.post(f"/api/connections/{conn['id']}/verify").json()
     assert v["data"]["status"] == "connected", v
     return conn
+
+
+@pytest.fixture(params=["sqlite", "dynamodb"])
+def store(request, app, aws):
+    """A Store of each backend: SQLite (test DB) and DynamoDB (moto, fresh table per test)."""
+    if request.param == "sqlite":
+        from sqlmodel import Session
+
+        from app.storage.db import get_engine, init_db
+        from app.storage.sql import SqlStore
+
+        init_db()
+        with Session(get_engine()) as session:
+            yield SqlStore(session)
+    else:
+        from app.storage.dynamo import DynamoStore, ensure_table
+
+        client = aws.client("dynamodb")
+        ensure_table(client, "autoaws-test")
+        yield DynamoStore(client, "autoaws-test")

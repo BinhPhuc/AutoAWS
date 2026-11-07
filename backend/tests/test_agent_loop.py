@@ -162,51 +162,96 @@ def test_max_iterations_turn_keeps_its_tool_calls(client, connection, monkeypatc
     assert [tc["tool"] for tc in assistant["tool_calls"]] == ["get_caller_identity"] * 3
 
 
-async def test_turn_closed_by_the_client_is_stored(app, aws):
+async def test_turn_closed_by_the_client_is_stored(store, aws):
     """Client disconnects while the stream is suspended between events (aclose)."""
-    from sqlmodel import Session
-
     from app.agent.loop import STOPPED_NOTE, run_agent
     from app.llm.mock import MockProvider
-    from app.storage import repo
-    from app.storage.db import get_engine, init_db
     from app.storage.models import Conversation
 
-    init_db()
-    with Session(get_engine()) as db:
-        conv = repo.create_conversation(db, Conversation(connection_id="conn_x"))
-        agen = run_agent(db, conv, "không ssh được", aws, MockProvider())
-        assert (await agen.__anext__()).type == "status"
-        await agen.aclose()
-        msgs = repo.list_messages(db, conv.id)
-        assert [m.role for m in msgs] == ["user", "assistant"]
-        assert msgs[1].content == STOPPED_NOTE and msgs[1].answer_json is None
+    conv = store.create_conversation(Conversation(connection_id="conn_x"))
+    agen = run_agent(store, conv, "không ssh được", aws, MockProvider())
+    assert (await agen.__anext__()).type == "status"
+    await agen.aclose()
+    msgs = store.list_messages(conv.id)
+    assert [m.role for m in msgs] == ["user", "assistant"]
+    assert msgs[1].content == STOPPED_NOTE and msgs[1].answer_json is None
 
 
-async def test_turn_cancelled_while_waiting_for_the_llm_is_stored(app, aws):
+async def test_turn_cancelled_while_waiting_for_the_llm_is_stored(store, aws):
     """Stop pressed while the provider is working (sse-starlette cancels the task)."""
     import asyncio
 
-    from sqlmodel import Session
-
     from app.agent.loop import STOPPED_NOTE, run_agent
-    from app.storage import repo
-    from app.storage.db import get_engine, init_db
     from app.storage.models import Conversation
 
-    init_db()
-    with Session(get_engine()) as db:
-        conv = repo.create_conversation(db, Conversation(connection_id="conn_y"))
+    conv = store.create_conversation(Conversation(connection_id="conn_y"))
 
-        async def consume():
-            async for _ in run_agent(db, conv, "502", aws, _BlockingProvider()):
-                pass
+    async def consume():
+        async for _ in run_agent(store, conv, "502", aws, _BlockingProvider()):
+            pass
 
-        task = asyncio.create_task(consume())
-        await asyncio.sleep(0.05)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        msgs = repo.list_messages(db, conv.id)
-        assert [m.role for m in msgs] == ["user", "assistant"]
-        assert msgs[1].content == STOPPED_NOTE
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    msgs = store.list_messages(conv.id)
+    assert [m.role for m in msgs] == ["user", "assistant"]
+    assert msgs[1].content == STOPPED_NOTE
+
+
+async def test_second_question_sees_the_first_turn(store, aws):
+    """Acceptance: on the 2nd question the LLM receives turn 1 (question, shortened tool
+    results and answer) from storage — on both backends."""
+    import json as _json
+
+    from app.agent.loop import run_agent
+    from app.llm.base import LLMResponse, ToolCallRequest
+    from app.storage.models import Conversation
+
+    ec2 = aws.client("ec2")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]["VpcId"]
+    subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.1.0/24")["Subnet"]["SubnetId"]
+    ec2.run_instances(ImageId="ami-12345678", MinCount=1, MaxCount=1, SubnetId=subnet)
+    answer1 = {
+        "summary": "web-server đang chạy",
+        "cause": "Route table thiếu 0.0.0.0/0",
+        "evidence": [],
+        "fix_steps": [],
+        "unverified": [],
+        "confidence": "high",
+    }
+
+    class Scripted:
+        name = "scripted"
+
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, messages, tools):
+            self.calls.append(list(messages))
+            if (
+                not any(m.role == "tool" for m in messages[len(messages) - 3 :])
+                and len(self.calls) == 1
+            ):
+                call = ToolCallRequest(id="t1", name="describe_instances", input={})
+                return LLMResponse(tool_calls=[call], stop_reason="tool_use")
+            return LLMResponse(text=_json.dumps(answer1, ensure_ascii=False))
+
+    conv = store.create_conversation(Conversation(connection_id="conn_hist"))
+    turn1 = Scripted()
+    [e async for e in run_agent(store, conv, "Không SSH được vào web-server", aws, turn1)]
+    turn2 = Scripted()
+    turn2.calls.append([])  # skip the tool-call branch: answer directly
+    [e async for e in run_agent(store, conv, "Vậy sửa thế nào?", aws, turn2)]
+
+    seen = turn2.calls[1]  # what the LLM received on the 2nd question
+    roles = [m.role for m in seen]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert seen[1].content == "Không SSH được vào web-server"
+    replay = seen[2].content
+    assert "[Data read earlier]" in replay
+    assert "- describe_instances: 1 instances" in replay  # shortened tool result, not raw data
+    assert "Route table thiếu 0.0.0.0/0" in replay  # the turn-1 answer
+    assert seen[3].content == "Vậy sửa thế nào?"
+    assert len(store.list_messages(conv.id)) == 4

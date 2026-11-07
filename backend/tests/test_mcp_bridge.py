@@ -5,14 +5,11 @@ import json
 
 import pytest
 from mcp.client.client import Client
-from sqlmodel import Session
 
 from app.agent.loop import run_agent
 from app.aws.registry import list_tools
 from app.llm.base import LLMError, LLMMessage
 from app.llm.mcp_bridge import LLMBridge, McpBridgeProvider, ToolCallIn, bridge, build_mcp_server
-from app.storage import repo
-from app.storage.db import get_engine, init_db
 from app.storage.models import Conversation
 
 MESSAGES = [
@@ -144,9 +141,8 @@ async def test_mcp_tools():
         assert (await task).text == answer
 
 
-async def test_agent_turn_driven_through_the_bridge(app, aws):
+async def test_agent_turn_driven_through_the_bridge(store, aws):
     """Full turn: agent asks the MCP client, runs the chosen tool on moto, gets JSON back."""
-    init_db()
     ec2 = aws.client("ec2")
     vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]["VpcId"]
     subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.1.0/24")["Subnet"]["SubnetId"]
@@ -170,18 +166,17 @@ async def test_agent_turn_driven_through_the_bridge(app, aws):
         assert json.loads(tool_msg.content)["instances"][0]["subnet_id"] == subnet
         bridge.respond(turn.request_id, json.dumps(final, ensure_ascii=False), None)
 
-    with Session(get_engine()) as db:
-        conv = repo.create_conversation(db, Conversation(connection_id="conn_bridge"))
-        llm = asyncio.create_task(play_the_llm())
-        events = [
-            e async for e in run_agent(db, conv, "Kiểm tra instance", aws, McpBridgeProvider())
-        ]
-        await llm
+    conv = store.create_conversation(Conversation(connection_id="conn_bridge"))
+    llm = asyncio.create_task(play_the_llm())
+    events = [
+        e async for e in run_agent(store, conv, "Kiểm tra instance", aws, McpBridgeProvider())
+    ]
+    await llm
 
-        types = [e.type for e in events]
-        assert "tool_call" in types and types[-2:] == ["answer", "done"]
-        answer = next(e for e in events if e.type == "answer")
-        assert answer.data["answer"]["confidence"] == "medium"
-        [user, assistant] = repo.list_messages(db, conv.id)
-        assert (user.role, assistant.role) == ("user", "assistant")
-        assert [t.tool for t in repo.list_tool_calls(db, assistant.id)] == ["describe_instances"]
+    types = [e.type for e in events]
+    assert "tool_call" in types and types[-2:] == ["answer", "done"]
+    answer = next(e for e in events if e.type == "answer")
+    assert answer.data["answer"]["confidence"] == "medium"
+    [user, assistant] = store.list_messages(conv.id)
+    assert (user.role, assistant.role) == ("user", "assistant")
+    assert [t.tool for t in store.list_tool_calls(assistant.id)] == ["describe_instances"]

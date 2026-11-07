@@ -2,7 +2,6 @@ import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
 
 from app.api.schemas import CloudFormationOut, ConnectionIn, ConnectionOut, VerifyOut
 from app.aws import cloudformation
@@ -10,22 +9,22 @@ from app.aws.credentials import CredentialError, forget_session, resolve_session
 from app.config import get_settings
 from app.errors import AppError, NotFound
 from app.responses import ok
-from app.storage import repo
-from app.storage.db import get_session
+from app.storage.base import Store
 from app.storage.models import Connection
+from app.storage.store import get_store
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
 
-def _get(db: Session, conn_id: str) -> Connection:
-    conn = repo.get_connection(db, conn_id)
+def _get(store: Store, conn_id: str) -> Connection:
+    conn = store.get_connection(conn_id)
     if conn is None:
         raise NotFound("CONNECTION_NOT_FOUND", "Connection not found")
     return conn
 
 
 @router.post("")
-def create_connection(body: ConnectionIn, db: Session = Depends(get_session)):
+def create_connection(body: ConnectionIn, store: Store = Depends(get_store)):
     if body.type == "access_key":
         conn = Connection(
             name=body.name,
@@ -42,31 +41,31 @@ def create_connection(body: ConnectionIn, db: Session = Depends(get_session)):
             role_arn=body.role_arn,
             external_id=body.external_id or f"autoaws-{secrets.token_hex(12)}",
         )
-    repo.create_connection(db, conn)
+    store.create_connection(conn)
     return ok(ConnectionOut.from_model(conn), "Connection created", 201)
 
 
 @router.get("")
-def list_connections(db: Session = Depends(get_session)):
-    return ok([ConnectionOut.from_model(c) for c in repo.list_connections(db)])
+def list_connections(store: Store = Depends(get_store)):
+    return ok([ConnectionOut.from_model(c) for c in store.list_connections()])
 
 
 @router.get("/{conn_id}")
-def get_connection(conn_id: str, db: Session = Depends(get_session)):
-    return ok(ConnectionOut.from_model(_get(db, conn_id)))
+def get_connection(conn_id: str, store: Store = Depends(get_store)):
+    return ok(ConnectionOut.from_model(_get(store, conn_id)))
 
 
 @router.delete("/{conn_id}")
-def delete_connection(conn_id: str, db: Session = Depends(get_session)):
-    conn = _get(db, conn_id)
+def delete_connection(conn_id: str, store: Store = Depends(get_store)):
+    conn = _get(store, conn_id)
     forget_session(conn.id)
-    repo.delete_connection(db, conn)
+    store.delete_connection(conn)
     return ok(None, "Connection deleted")
 
 
 @router.post("/{conn_id}/verify")
-def verify_connection(conn_id: str, db: Session = Depends(get_session)):
-    conn = _get(db, conn_id)
+def verify_connection(conn_id: str, store: Store = Depends(get_store)):
+    conn = _get(store, conn_id)
     forget_session(conn.id)
     checked_at = datetime.now(UTC)
     try:
@@ -75,7 +74,7 @@ def verify_connection(conn_id: str, db: Session = Depends(get_session)):
         conn.status = "failed"
         conn.last_error = str(e)[:500]
         conn.last_verified_at = checked_at
-        repo.save(db, conn)
+        store.save_connection(conn)
         result = VerifyOut(
             status="failed", account_id=None, arn=None, checked_at=checked_at, error=conn.last_error
         )
@@ -85,7 +84,7 @@ def verify_connection(conn_id: str, db: Session = Depends(get_session)):
     conn.account_id = identity["account_id"]
     conn.last_error = None
     conn.last_verified_at = checked_at
-    repo.save(db, conn)
+    store.save_connection(conn)
     result = VerifyOut(
         status="connected",
         account_id=identity["account_id"],
@@ -97,8 +96,8 @@ def verify_connection(conn_id: str, db: Session = Depends(get_session)):
 
 
 @router.get("/{conn_id}/cloudformation")
-def get_cloudformation(conn_id: str, db: Session = Depends(get_session)):
-    conn = _get(db, conn_id)
+def get_cloudformation(conn_id: str, store: Store = Depends(get_store)):
+    conn = _get(store, conn_id)
     if conn.type != "role":
         raise AppError(
             "VALIDATION_ERROR",

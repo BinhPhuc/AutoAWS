@@ -34,9 +34,29 @@ curl -N localhost:8000/api/conversations/<conv_id>/messages -H 'content-type: ap
 
 ## Lưu ý bảo mật (bản init)
 
-- Access key của kết nối `access_key` lưu **plaintext trong SQLite** (`DB_PATH`) — chỉ dùng dev/học tập. Kiểu `role` (AssumeRole + ExternalId) là đường chuẩn; credentials tạm thời chỉ nằm trong bộ nhớ.
+- Access key của kết nối `access_key` lưu **plaintext trong SQLite** (`DB_PATH`) hoặc trong item DynamoDB — chỉ dùng dev/học tập. Kiểu `role` (AssumeRole + ExternalId) là đường chuẩn; credentials tạm thời chỉ nằm trong bộ nhớ.
 - Mọi tool chỉ gọi API đọc; `app/aws/registry.py` từ chối đăng ký action ghi.
 - Dữ liệu AWS đi qua `app/sanitizer.py` trước khi tới LLM và trước khi lưu `output_summary`.
+
+## Lưu trữ: SQLite hoặc DynamoDB
+
+`STORAGE_BACKEND=sqlite` (mặc định, file `DB_PATH`) hoặc `dynamodb` (bảng `DYNAMODB_TABLE` trong tài khoản nền tảng, mã hoá KMS). Router và agent loop chỉ dùng interface `app/storage/base.py::Store`; hai bản cài đặt `sql.py` và `dynamo.py` qua cùng bộ test `tests/test_store.py`.
+
+Thiết kế bảng DynamoDB (một bảng):
+
+| Item | PK / SK | GSI1 |
+|---|---|---|
+| Kết nối | `CONN#<id>` / `META` | `CONNECTIONS` / `<created_at>#<id>` |
+| Hội thoại | `CONV#<id>` / `META` | `CONVS#<connection_id>` / `<updated_at>#<id>` |
+| Tin nhắn | `CONV#<conversation_id>` / `MSG#<created_at>#<id>` (tool call nhúng trong item) | — |
+
+Index `ById` (theo `id`) để lấy tool call của một tin nhắn. Chạy thử với LocalStack:
+
+```bash
+STORAGE_BACKEND=dynamodb DYNAMODB_ENDPOINT_URL=http://localhost:4566 uvicorn app.main:app
+```
+
+Lưu ý: GSI nhất quán sau (eventually consistent) — danh sách ngay sau khi ghi có thể trễ vài ms; secret của kết nối access key vẫn nằm trong item (bảng đã mã hoá KMS, nhưng ai đọc được bảng là đọc được secret — cần mã hoá cấp trường trước khi có nhiều người dùng).
 
 ## Thêm tool AWS mới
 

@@ -8,7 +8,7 @@ from app import __version__
 from app.api import checklists, connections, conversations, health, tools
 from app.config import get_settings
 from app.errors import install_exception_handlers
-from app.storage.db import init_db
+from app.storage.store import init_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        init_db()
+        init_storage()
         if mcp_server is None:
             yield
             return

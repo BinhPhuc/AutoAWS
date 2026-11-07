@@ -9,7 +9,6 @@ import logging
 from collections.abc import AsyncIterator
 
 import boto3
-from sqlmodel import Session
 
 from app.agent import schemas as ev
 from app.agent.prompts import ANSWER_FORMAT, RETRY_JSON_PROMPT, SYSTEM_PROMPT
@@ -18,7 +17,7 @@ from app.aws.registry import ToolSpec, list_tools, run_tool, summarize_output
 from app.config import get_settings
 from app.llm.base import LLMError, LLMMessage, LLMProvider
 from app.sanitizer import sanitize
-from app.storage import repo
+from app.storage.base import Store
 from app.storage.models import Conversation, Message, ToolCallRecord
 
 log = logging.getLogger(__name__)
@@ -28,7 +27,7 @@ STOPPED_NOTE = "Lượt chẩn đoán đã bị dừng trước khi có kết lu
 
 
 async def run_agent(
-    db: Session,
+    store: Store,
     conversation: Conversation,
     question: str,
     aws_session: boto3.Session,
@@ -38,13 +37,13 @@ async def run_agent(
     tools = list_tools()
     tool_index = {t.name: t for t in tools}
 
-    user_msg = repo.add_message(
-        db, Message(conversation_id=conversation.id, role="user", content=question)
+    user_msg = store.add_message(
+        Message(conversation_id=conversation.id, role="user", content=question)
     )
-    repo.touch_conversation(db, conversation, title=question[:80])
+    store.touch_conversation(conversation, title=question[:80])
 
     messages = [LLMMessage(role="system", content=SYSTEM_PROMPT + ANSWER_FORMAT)]
-    messages += _history(db, conversation.id, exclude_id=user_msg.id)
+    messages += _history(store, conversation.id, exclude_id=user_msg.id)
     messages.append(LLMMessage(role="user", content=question))
 
     records: list[ToolCallRecord] = []
@@ -62,7 +61,9 @@ async def run_agent(
                 response = await provider.chat(messages, tools)
             except (LLMError, NotImplementedError) as e:
                 message = f"LLM provider is unavailable: {e}"
-                _save_unfinished(db, conversation, records, f"Chưa hoàn thành chẩn đoán: {message}")
+                _save_unfinished(
+                    store, conversation, records, f"Chưa hoàn thành chẩn đoán: {message}"
+                )
                 finished = True
                 yield ev.error("LLM_UNAVAILABLE", message)
                 yield ev.done()
@@ -70,7 +71,9 @@ async def run_agent(
             except Exception as e:  # noqa: BLE001 — never leak a traceback into the stream
                 log.exception("LLM call failed")
                 message = f"LLM call failed: {type(e).__name__}"
-                _save_unfinished(db, conversation, records, f"Chưa hoàn thành chẩn đoán: {message}")
+                _save_unfinished(
+                    store, conversation, records, f"Chưa hoàn thành chẩn đoán: {message}"
+                )
                 finished = True
                 yield ev.error("LLM_UNAVAILABLE", message)
                 yield ev.done()
@@ -134,8 +137,7 @@ async def run_agent(
                 answer = _fallback_answer(response.text or "", tools)
 
             content = answer.summary
-            assistant_msg = repo.add_message(
-                db,
+            assistant_msg = store.add_message(
                 Message(
                     conversation_id=conversation.id,
                     role="assistant",
@@ -144,7 +146,7 @@ async def run_agent(
                 ),
                 records,
             )
-            repo.touch_conversation(db, conversation)
+            store.touch_conversation(conversation)
             finished = True
             yield AgentEvent(
                 type="answer",
@@ -159,7 +161,7 @@ async def run_agent(
 
         steps = settings.max_agent_iterations
         _save_unfinished(
-            db,
+            store,
             conversation,
             records,
             f"Chưa hoàn thành chẩn đoán: dừng sau {steps} bước suy luận mà chưa có kết luận.",
@@ -172,36 +174,35 @@ async def run_agent(
     finally:
         if not finished:
             try:
-                _save_unfinished(db, conversation, records, STOPPED_NOTE)
+                _save_unfinished(store, conversation, records, STOPPED_NOTE)
             except Exception:  # noqa: BLE001 — do not mask the original exit reason
                 log.exception("Could not store the unfinished turn")
 
 
 def _save_unfinished(
-    db: Session, conversation: Conversation, records: list[ToolCallRecord], note: str
+    store: Store, conversation: Conversation, records: list[ToolCallRecord], note: str
 ) -> None:
     """Store an assistant message without answer for a turn that ended early."""
-    repo.add_message(
-        db,
+    store.add_message(
         Message(conversation_id=conversation.id, role="assistant", content=note),
         records,
     )
-    repo.touch_conversation(db, conversation)
+    store.touch_conversation(conversation)
 
 
 # ---------------------------------------------------------------------------
 
 
-def _history(db: Session, conversation_id: str, exclude_id: str) -> list[LLMMessage]:
+def _history(store: Store, conversation_id: str, exclude_id: str) -> list[LLMMessage]:
     """Replay earlier turns so follow-up questions reuse what was already read."""
     out: list[LLMMessage] = []
-    for m in repo.list_messages(db, conversation_id):
+    for m in store.list_messages(conversation_id):
         if m.id == exclude_id:
             continue
         if m.role == "user":
             out.append(LLMMessage(role="user", content=m.content))
         else:
-            calls = repo.list_tool_calls(db, m.id)
+            calls = store.list_tool_calls(m.id)
             read = "\n".join(f"- {c.tool}: {c.output_summary}" for c in calls)
             body = m.answer_json or m.content
             if read:

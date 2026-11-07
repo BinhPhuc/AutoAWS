@@ -8,8 +8,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_env: str = "dev"
-    db_path: str = "./autoaws.db"
     cors_origins: str = "http://localhost:5173"
+
+    # Storage: sqlite (default, DB_PATH) | dynamodb (target storage, platform account)
+    storage_backend: Literal["sqlite", "dynamodb"] = "sqlite"
+    db_path: str = "./autoaws.db"
+    dynamodb_table: str = "autoaws"
+    dynamodb_region: str = ""
+    # Dev only: LocalStack, e.g. http://localhost:4566 (independent of AWS_ENDPOINT_URL)
+    dynamodb_endpoint_url: str = ""
+    # Create the table on startup if it does not exist (dev / LocalStack)
+    dynamodb_create_table: bool = True
+    # Customer managed KMS key for table encryption; empty = AWS managed key
+    dynamodb_kms_key_id: str = ""
 
     llm_provider: Literal["mock", "anthropic", "bedrock", "mcp"] = "mock"
     anthropic_api_key: str = ""
