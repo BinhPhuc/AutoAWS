@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  AutoAWS test scenario KB6 (dev only). bastion whose security group only allows SSH from the
+  user's old (office) IP, so SSH from any other network fails. The fault is built in.
+
+Parameters:
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  KeyName:
+    Type: String
+    Default: ""
+  OldUserCidr:
+    Type: String
+    Default: 203.0.113.10/32
+    Description: The only source allowed on 22 (TEST-NET-3 by default, i.e. nobody)
+
+Conditions:
+  HasKey: !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.60.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: autoaws-kb6-vpc }]
+  Igw:
+    Type: AWS::EC2::InternetGateway
+  IgwAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref Igw }
+  PublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttach
+    Properties: { RouteTableId: !Ref PublicRt, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref Igw }
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.60.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+  SubnetRt:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref Subnet, RouteTableId: !Ref PublicRt }
+  Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "bastion: SSH from the office only"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref OldUserCidr }
+      Tags: [{ Key: Name, Value: autoaws-kb6-bastion-sg }]
+  Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: [DefaultRoute, SubnetRt]
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref Sg]
+      KeyName: !If [HasKey, !Ref KeyName, !Ref AWS::NoValue]
+      Tags: [{ Key: Name, Value: bastion }]
+
+Outputs:
+  InstanceId: { Value: !Ref Instance }
+  SecurityGroupId: { Value: !Ref Sg }
+  OldUserCidr: { Value: !Ref OldUserCidr }
