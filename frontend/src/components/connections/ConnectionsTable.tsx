@@ -16,7 +16,13 @@ import type { Connection } from '@/api/types'
 import { DescriptionList } from '@/components/layout/Panel'
 import { StatusBadge } from '@/components/layout/ConnectionBadge'
 import { useActiveConnection } from '@/hooks/useActiveConnection'
-import { useDeleteConnection, useVerifyConnection } from '@/hooks/useConnections'
+import {
+  useDeleteConnection,
+  useSetRemediationRole,
+  useVerifyConnection,
+} from '@/hooks/useConnections'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { CloudFormationSnippet } from './CloudFormationSnippet'
@@ -35,6 +41,7 @@ export function ConnectionsTable({ connections }: { connections: Connection[] })
           <Th>{t.colType}</Th>
           <Th>{t.colAccount}</Th>
           <Th>{t.colRegion}</Th>
+          <Th>{t.colRemediation}</Th>
           <Th>{t.colVerified}</Th>
           <Th className="text-right">{t.colActions}</Th>
         </Tr>
@@ -86,6 +93,11 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
         <Td>
           <Mono>{c.region}</Mono>
         </Td>
+        <Td>
+          <StatusTag tone={c.remediation_enabled ? 'info' : 'neutral'}>
+            {c.remediation_enabled ? t.remediationOn : t.remediationOff}
+          </StatusTag>
+        </Td>
         <Td className="tabular whitespace-nowrap text-muted-foreground">
           {c.last_verified_at ? formatTime(c.last_verified_at) : t.never}
         </Td>
@@ -128,7 +140,7 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
       {expanded && (
         <tr className="border-b bg-muted/40">
           <td />
-          <td colSpan={7} className="space-y-3 px-3 py-3">
+          <td colSpan={8} className="space-y-3 px-3 py-3">
             <DescriptionList
               items={[
                 { label: 'ID', value: <Mono>{c.id}</Mono> },
@@ -153,6 +165,7 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
                 {c.last_error}
               </p>
             )}
+            {c.type === 'role' && <RemediationRoleField connection={c} />}
             {c.type === 'role' && <CloudFormationSnippet connectionId={c.id} />}
           </td>
         </tr>
@@ -179,5 +192,55 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
         </DialogContent>
       </Dialog>
     </Fragment>
+  )
+}
+
+const ROLE_ARN_RE = /^arn:aws:iam::\d{12}:role\/.+/
+
+/** Remediation role of a role connection (CloudFormation EnableRemediation=true output). */
+function RemediationRoleField({ connection: c }: { connection: Connection }) {
+  const t = S.connections
+  const save = useSetRemediationRole()
+  const [value, setValue] = useState(c.remediation_role_arn ?? '')
+  const valid = ROLE_ARN_RE.test(value.trim())
+  const id = `remediation-${c.id}`
+  return (
+    <div className="max-w-2xl space-y-1.5">
+      <Label htmlFor={id}>{t.remediationRole}</Label>
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={t.remediationRolePlaceholder}
+          className="font-mono text-xs"
+          aria-describedby={`${id}-hint`}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!valid || save.isPending || value.trim() === c.remediation_role_arn}
+          onClick={() => save.mutate({ id: c.id, arn: value.trim() })}
+        >
+          {t.save}
+        </Button>
+        {c.remediation_role_arn && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={save.isPending}
+            onClick={() => {
+              setValue('')
+              save.mutate({ id: c.id, arn: null })
+            }}
+          >
+            {t.removeRole}
+          </Button>
+        )}
+      </div>
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+        {t.remediationRoleHint}
+      </p>
+    </div>
   )
 }

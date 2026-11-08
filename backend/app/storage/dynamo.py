@@ -4,10 +4,13 @@ Items (PK / SK):
   connection    CONN#<id>              / META                      GSI1: CONNECTIONS
   conversation  CONV#<id>              / META                      GSI1: CONVS#<connection_id>
   message       CONV#<conversation_id> / MSG#<created_at>#<id>     (tool calls embedded)
+  proposal      PROP#<id>              / META                      GSI1: PROPOSALS
 
 Indexes:
   GSI1  (GSI1PK, GSI1SK)  listings — connections newest first, conversations of a connection
-                          most recently updated first (GSI1SK = <timestamp>#<id>)
+                          most recently updated first, proposals newest first
+                          (GSI1SK = <timestamp>#<id>; proposals are filtered by
+                          conversation / status after the query — demo-scale volume)
   ById  (id)              any item by its id; used to load one message's tool calls
 
 Attributes are the model fields as JSON types (datetimes as ISO-8601 UTC). Sort keys use a
@@ -26,7 +29,14 @@ from datetime import UTC, datetime
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from botocore.exceptions import ClientError
 
-from app.storage.models import Connection, Conversation, Message, ToolCallRecord, utcnow
+from app.storage.models import (
+    Connection,
+    Conversation,
+    Message,
+    Proposal,
+    ToolCallRecord,
+    utcnow,
+)
 
 log = logging.getLogger(__name__)
 
@@ -138,7 +148,9 @@ class DynamoStore:
 
     def delete_conversation(self, conv: Conversation) -> None:
         # The conversation item and all its messages share the partition CONV#<id>.
-        self._delete_keys([(i["PK"]["S"], i["SK"]["S"]) for i in self._query(f"CONV#{conv.id}")])
+        keys = [(i["PK"]["S"], i["SK"]["S"]) for i in self._query(f"CONV#{conv.id}")]
+        keys += [(f"PROP#{p.id}", "META") for p in self.list_proposals(conversation_id=conv.id)]
+        self._delete_keys(keys)
 
     def touch_conversation(self, conv: Conversation, title: str | None = None) -> None:
         conv.updated_at = utcnow()
@@ -184,7 +196,59 @@ class DynamoStore:
             )
         return list(self._tool_calls[message_id])
 
+    # ---- remediation proposals -----------------------------------------------
+
+    def create_proposal(self, proposal: Proposal) -> Proposal:
+        self._put(self._proposal_item(proposal), new=True)
+        return proposal
+
+    def get_proposal(self, proposal_id: str) -> Proposal | None:
+        item = self._get(f"PROP#{proposal_id}", "META")
+        return Proposal.model_validate(self._fields(item)) if item else None
+
+    def list_proposals(
+        self, conversation_id: str | None = None, status: str | None = None
+    ) -> list[Proposal]:
+        out = []
+        for item in self._query_gsi1("PROPOSALS"):
+            p = Proposal.model_validate(self._fields(item))
+            if (conversation_id and p.conversation_id != conversation_id) or (
+                status and p.status != status
+            ):
+                continue
+            out.append(p)
+        return out
+
+    def update_proposal(self, proposal: Proposal, expected_status: str | None = None) -> bool:
+        proposal.updated_at = utcnow()
+        item = {k: _serializer.serialize(v) for k, v in self._proposal_item(proposal).items()}
+        kwargs: dict = {}
+        if expected_status is not None:
+            kwargs = {
+                "ConditionExpression": "#s = :expected",
+                "ExpressionAttributeNames": {"#s": "status"},  # reserved word
+                "ExpressionAttributeValues": {":expected": {"S": expected_status}},
+            }
+        try:
+            self.client.put_item(TableName=self.table, Item=item, **kwargs)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+        return True
+
     # ---- items -----------------------------------------------------------------
+
+    @staticmethod
+    def _proposal_item(p: Proposal) -> dict:
+        return {
+            "PK": f"PROP#{p.id}",
+            "SK": "META",
+            "GSI1PK": "PROPOSALS",
+            "GSI1SK": f"{_ts(p.created_at)}#{p.id}",
+            "entity": "proposal",
+            **p.model_dump(mode="json"),
+        }
 
     @staticmethod
     def _connection_item(conn: Connection) -> dict:

@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     user_timezone: str = "Asia/Ho_Chi_Minh"
     assume_role_duration_seconds: int = 900
 
+    # Human-in-the-loop remediation (docs/API_CONTRACT.md §7)
+    # Dev only: let access-key connections execute approved proposals (LocalStack, test
+    # accounts). Role connections use their AutoAWSRemediation role instead.
+    remediation_allow_access_keys: bool = False
+    proposal_ttl_hours: int = 24
+    # How long the post-change verification may wait (e.g. targets turning healthy)
+    remediation_verify_timeout_seconds: int = 120
+    remediation_verify_poll_seconds: float = 5.0
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -44,6 +44,9 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `LLM_UNAVAILABLE` | 503 | `"LLM provider is unavailable"` | Provider lỗi / chưa cấu hình / không có MCP client trả lời kịp (`LLM_PROVIDER=mcp`) |
 | `MAX_ITERATIONS` | — | `"Stopped after 10 reasoning steps without a conclusion"` | **Chỉ qua SSE `error`**: agent hết số vòng và lượt chốt cuối (mục 3) cũng không ra kết luận |
 | `AGENT_LIMIT` | — | `"Stopped at the time limit (240 s) without a conclusion"` | **Chỉ qua SSE `error`**: chạm giới hạn thời gian / token / số lần gọi công cụ và lượt chốt cuối không ra kết luận |
+| `PROPOSAL_NOT_FOUND` | 404 | `"Proposal not found"` | |
+| `PROPOSAL_NOT_PENDING` | 409 | `"Proposal is not waiting for a decision (status SUCCEEDED)"` | Quyết định cho đề xuất đã duyệt / từ chối / hết hạn (mục 7) |
+| `REMEDIATION_DISABLED` | 400 | `"Remediation is not enabled for this connection"` | Duyệt đề xuất trên connection không có quyền sửa (mục 7) |
 | `NOT_FOUND` | 404 | `"Not Found"` | Route không tồn tại |
 | `METHOD_NOT_ALLOWED` | 405 | `"Method Not Allowed"` | Sai HTTP method |
 | `NOT_IMPLEMENTED` | 501 | `"Checklist runs are not available yet"` | Tính năng chưa có (checklist) |
@@ -79,6 +82,8 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
   "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly" | null,
   "external_id": "autoaws-7f3a..." | null,
   "access_key_id_masked": "AKIA****XYZ1" | null,
+  "remediation_role_arn": "arn:aws:iam::123456789012:role/AutoAWSRemediation" | null,
+  "remediation_enabled": true,      // server: có thể thực thi đề xuất đã duyệt (role trên, hoặc access key + REMEDIATION_ALLOW_ACCESS_KEYS)
   "last_verified_at": "2026-10-16T03:00:00Z" | null,
   "last_error": "..." | null,
   "created_at": "2026-10-16T02:58:00Z"
@@ -95,7 +100,8 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
 ```json
 { "type": "role", "name": "Prod", "region": "ap-southeast-1",
   "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly",
-  "external_id": "autoaws-7f3a..." }
+  "external_id": "autoaws-7f3a...",
+  "remediation_role_arn": "arn:aws:iam::123456789012:role/AutoAWSRemediation" }   // tuỳ chọn
 ```
 `external_id` với `type=role`: nếu bỏ trống, server tự sinh và trả về (client hiển thị để người dùng đưa vào CloudFormation).
 ```json
@@ -109,6 +115,11 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
 ### `GET /api/connections/{id}`
 ```json
 200 { "status_code": 200, "message": "OK", "data": Connection }
+```
+### `PATCH /api/connections/{id}`
+Bật / tắt quyền sửa sau khi đã tạo stack với `EnableRemediation=true`: `{ "remediation_role_arn": "arn:...:role/AutoAWSRemediation" | null }` (chỉ `type=role`).
+```json
+200 { "status_code": 200, "message": "Connection updated", "data": Connection }
 ```
 ### `DELETE /api/connections/{id}`
 ```json
@@ -139,6 +150,7 @@ Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Templat
                 "template_yaml": "AWSTemplateFormatVersion: '2010-09-09'\n..." } }
 ```
 Client hiển thị nút copy `template_yaml` + hướng dẫn tạo stack (link "Launch Stack" sau).
+Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của danh mục hành động (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` bản ghi `A`), output `RemediationRoleArn`.
 
 ---
 
@@ -185,6 +197,7 @@ DiagnosisAnswer {
     { "text": "sshd có đang chạy trong máy không", "how_to_check": "sudo systemctl status sshd" }
   ],
   "confidence": "high" | "medium" | "low",   // độ tin cậy chung của cả câu trả lời
+  "proposals": [ProposalRef],       // đề xuất sửa trong danh mục (mục 7); [] nếu không có
   "limit_reached": null | "max_iterations" | "time" | "tokens" | "tool_calls"   // khác null: agent phải chốt sớm, phần chưa kiểm tra nằm trong unverified
 }
 
@@ -199,6 +212,13 @@ Evidence {
 }
 ```
 Mọi chuỗi văn xuôi trong `DiagnosisAnswer` là **tiếng Việt** (system prompt ép model trả lời tiếng Việt); tên tài nguyên, lệnh, mã lỗi AWS giữ nguyên gốc.
+
+ProposalRef {
+  "action": "associate_route_table", "params": { "subnet_id": "subnet-0a1b", "route_table_id": "rtb-01aa" },
+  "reason": "Gắn subnet về route table public",   // tiếng Việt, do model viết
+  "proposal_id": "prop_..." | null,               // SERVER gán: đã tạo đề xuất chờ duyệt
+  "error": null | "..."                           // SERVER gán khi không tạo được (tham số sai, kiểm tra trước không đạt, connection không bật sửa)
+}
 
 **Server kiểm tra bằng chứng** trước khi gửi `answer` (ràng buộc cứng #6), không tin cờ do model tự khai:
 - `read`: `source` là công cụ đã chạy **thành công** trong hội thoại này, và nếu có `resource_id` thì ID đó xuất hiện trong kết quả của chính công cụ ấy.
@@ -303,6 +323,72 @@ Chỉ bật khi `LLM_PROVIDER=mcp`. Dùng khi chưa có quyền gọi Bedrock/An
 | `list_llm_requests` | — | `{ "requests": [{ "request_id", "created_at", "last_user_message" }] }` các lượt đang chờ |
 
 `LLMMessage` = `{ "role": "user" | "assistant" | "tool", "content", "tool_calls"?: [{id, name, input}], "tool_call_id"?, "tool_name"? }` (`content` của `tool` là JSON kết quả công cụ đã sanitize).
+
+---
+
+## 7. Khắc phục có phê duyệt (human-in-the-loop)
+
+Agent **không có công cụ ghi**: nó chỉ đưa `proposals` vào câu trả lời. Server kiểm tra từng đề xuất (schema, kiểm tra trước, snapshot tài nguyên) bằng session **chỉ đọc** rồi lưu thành `Proposal` chờ duyệt. Chỉ khi người dùng bấm Duyệt, executor mới gọi đúng API ghi của hành động đó bằng session ghi riêng, rồi kiểm chứng lại bằng session chỉ đọc.
+
+### Schema `Proposal`
+```json
+{
+  "id": "prop_...", "conversation_id": "conv_...", "message_id": "msg_...", "connection_id": "conn_...",
+  "kind": "fix" | "rollback",
+  "parent_id": null | "prop_...",            // rollback: đề xuất gốc; fix đề xuất lại sau góp ý: đề xuất bị thay
+  "action": "associate_route_table", "params": { ... }, "reason": "...",
+  "status": "PENDING_APPROVAL" | "APPROVED" | "EXECUTING" | "SUCCEEDED"
+          | "REJECTED" | "EXPIRED" | "SUPERSEDED" | "STALE" | "FAILED" | "VERIFY_FAILED" | "ROLLED_BACK",
+  "preview": {
+    "summary": "Gắn subnet subnet-0a1b vào route table rtb-01aa",
+    "changes": [ { "field": "Route table của subnet-0a1b", "before": "rtb-07c9 (không có 0.0.0.0/0)", "after": "rtb-01aa (0.0.0.0/0 → igw-0f3c)" } ],
+    "impact": "...", "risk": "low" | "medium" | "high", "rollback": "...", "verify": "..."
+  },
+  "result": { ... } | null,                  // thực thi: id tạo ra (allocation, association…)
+  "verification": { "ok": true, "details": "..." } | null,
+  "error": null | "...",
+  "history": [ { "status": "PENDING_APPROVAL", "at": "...", "note": "..." } ],   // nhật ký kiểm toán
+  "created_at": "...", "updated_at": "...", "expires_at": "..."                // hết hạn sau 24 giờ
+}
+```
+Văn bản trong `preview` là tiếng Anh do server sinh (nhãn) + ID tài nguyên; `reason` tiếng Việt do model viết.
+
+### Vòng đời
+`PENDING_APPROVAL` → (Duyệt) `APPROVED` → `EXECUTING` → `SUCCEEDED`.
+- Từ chối → `REJECTED`; không quyết định trong 24 giờ → `EXPIRED`; góp ý → `SUPERSEDED` (agent đề xuất lại trong lượt hỏi tiếp).
+- Lúc duyệt, server đọc lại tài nguyên: khác snapshot lúc xem trước → `STALE`, không ghi gì.
+- Lỗi khi gọi API ghi → `FAILED` (kèm `error`).
+- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
+- Thực thi chạy nền: response của quyết định trả `APPROVED`; client hỏi lại `GET /api/proposals/{id}` tới khi hết `APPROVED` / `EXECUTING`.
+
+### `GET /api/proposals`
+Query tuỳ chọn `?conversation_id=…`, `?status=PENDING_APPROVAL`. Mới nhất trước.
+```json
+200 { "status_code": 200, "message": "OK", "data": [Proposal] }
+```
+### `GET /api/proposals/{id}`
+```json
+200 { "status_code": 200, "message": "OK", "data": Proposal }
+```
+### `POST /api/proposals/{id}/decision`
+```json
+{ "decision": "approve" | "reject" | "feedback", "feedback": "chỉ mở 8080 cho IP công ty" }   // feedback bắt buộc khi decision = feedback
+200 { "status_code": 200, "message": "Proposal approved", "data": { "proposal": Proposal, "followup_question": null | "..." } }
+```
+`followup_question` (chỉ khi góp ý): câu hỏi tiếng Việt client gửi tiếp vào hội thoại để agent đề xuất lại.
+Lỗi: `PROPOSAL_NOT_PENDING` (409), `REMEDIATION_DISABLED` (400, khi duyệt).
+
+### `GET /api/remediation/actions`
+Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp.
+
+| name | Sửa | API ghi | Kiểm tra trước | Kiểm chứng | Hoàn tác |
+|---|---|---|---|---|---|
+| `associate_route_table` | KB1 | ec2:AssociateRouteTable / ReplaceRouteTableAssociation | Route table đích cùng VPC, có 0.0.0.0/0 → igw đang active | Route table hiệu lực của subnet có tuyến tới IGW | Gắn lại route table cũ (hoặc về main) |
+| `create_route_to_igw` | KB1 | ec2:CreateRoute | Chưa có 0.0.0.0/0; IGW đã gắn vào VPC | Tuyến active | ec2:DeleteRoute đúng tuyến vừa tạo |
+| `authorize_sg_ingress` | KB2 | ec2:AuthorizeSecurityGroupIngress | Quy tắc chưa có; **từ chối 22 / 3389 từ 0.0.0.0/0 hoặc ::/0** | Quy tắc có trong SG | ec2:RevokeSecurityGroupIngress |
+| `allocate_and_associate_eip` | KB2 | ec2:AllocateAddress, AssociateAddress | Instance đang chạy, chưa có Elastic IP | Public IP của instance = Elastic IP | DisassociateAddress + ReleaseAddress |
+| `upsert_a_record` | KB2 | route53:ChangeResourceRecordSets (UPSERT A) | Bản ghi A **đã có** trong hosted zone của tài khoản; IP mới là IP của tài khoản (hoặc `instance_id` → IP hiện tại lúc thực thi) | Route 53 trả giá trị mới, thay đổi INSYNC | UPSERT lại giá trị cũ |
+| `modify_health_check_path` | KB3 | elasticloadbalancing:ModifyTargetGroup | Đường dẫn bắt đầu bằng `/` | Mọi target healthy (chờ tối đa ~5 chu kỳ) | Đặt lại đường dẫn cũ |
 
 ---
 

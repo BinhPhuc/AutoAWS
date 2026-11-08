@@ -243,3 +243,41 @@ def test_api_flow_on_dynamodb(dynamo_api, aws):
     assert api.delete(f"/api/connections/{conn['id']}").json()["data"] is None
     assert api.get(f"/api/conversations/{conv['id']}").json()["error"] == "CONVERSATION_NOT_FOUND"
     assert ddb.scan(TableName="autoaws-api")["Count"] == 0
+
+
+def test_proposals_round_trip_and_compare_and_set(store):
+    from app.storage.models import Proposal
+
+    conv = store.create_conversation(Conversation(connection_id="conn_prop"))
+    old = store.create_proposal(
+        Proposal(conversation_id=conv.id, action="associate_route_table", created_at=T0)
+    )
+    new = store.create_proposal(
+        Proposal(
+            conversation_id=conv.id,
+            action="authorize_sg_ingress",
+            params_json='{"port": 8080}',
+            created_at=T0 + timedelta(seconds=1),
+        )
+    )
+    store.create_proposal(Proposal(conversation_id="conv_other", action="upsert_a_record"))
+
+    mine = store.list_proposals(conversation_id=conv.id)
+    assert [p.id for p in mine] == [new.id, old.id]  # newest first
+    assert store.get_proposal(new.id).params_json == '{"port": 8080}'
+
+    # compare-and-set: only the first of two concurrent approvals wins
+    a, b = store.get_proposal(old.id), store.get_proposal(old.id)
+    a.status = "APPROVED"
+    assert store.update_proposal(a, expected_status="PENDING_APPROVAL") is True
+    b.status = "REJECTED"
+    assert store.update_proposal(b, expected_status="PENDING_APPROVAL") is False
+    assert store.get_proposal(old.id).status == "APPROVED"
+    assert [p.id for p in store.list_proposals(conversation_id=conv.id, status="APPROVED")] == [
+        old.id
+    ]
+
+    store.delete_conversation(conv)
+    assert (
+        store.get_proposal(old.id) is None and store.list_proposals(conversation_id=conv.id) == []
+    )

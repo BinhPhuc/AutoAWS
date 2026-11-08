@@ -1,4 +1,11 @@
-import { AlertTriangle, CheckCircle2, CircleHelp, Lightbulb, Search } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleHelp,
+  Lightbulb,
+  Search,
+  ShieldCheck,
+} from 'lucide-react'
 import type { Confidence, DiagnosisAnswer, Evidence, RootCause } from '@/api/types'
 import { Panel } from '@/components/layout/Panel'
 import { StatusTag, type Tone } from '@/components/ui/status-tag'
@@ -7,6 +14,8 @@ import { useToolLookup } from '@/hooks/useTools'
 import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { CopyButton } from '@/components/connections/CloudFormationSnippet'
+import { ProposalList } from '@/components/remediation/ProposalCard'
+import { useChatActions } from './chatActions'
 
 const confidenceTone: Record<Confidence, Tone> = {
   high: 'success',
@@ -23,6 +32,8 @@ function ConfidenceTag({ value }: { value: Confidence }) {
 export function DiagnosisCard({ answer, time }: { answer: DiagnosisAnswer; time?: string }) {
   const t = S.diagnosis
   const causes = answer.root_causes ?? []
+  const proposals = answer.proposals ?? []
+  const { followup } = useChatActions()
 
   return (
     <div data-testid="diagnosis-card">
@@ -72,6 +83,12 @@ export function DiagnosisCard({ answer, time }: { answer: DiagnosisAnswer; time?
                 <li key={i}>{s}</li>
               ))}
             </ol>
+          </Section>
+        )}
+
+        {proposals.length > 0 && (
+          <Section icon={<ShieldCheck />} title={S.remediation.title}>
+            <ProposalList refs={proposals} onFollowup={followup} />
           </Section>
         )}
 

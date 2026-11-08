@@ -7,7 +7,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from app.agent.schemas import DiagnosisAnswer
-from app.storage.models import Connection, Conversation, Message, ToolCallRecord
+from app.aws.remediation.sessions import remediation_enabled
+from app.storage.models import Connection, Conversation, Message, Proposal, ToolCallRecord
 
 # ---- connections -------------------------------------------------------------
 
@@ -26,6 +27,11 @@ class RoleConnectionIn(BaseModel):
     region: str = Field(min_length=1)
     role_arn: str = Field(pattern=r"^arn:aws:iam::\d{12}:role/.+")
     external_id: str | None = None
+    remediation_role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/.+")
+
+
+class ConnectionPatch(BaseModel):
+    remediation_role_arn: str | None = Field(pattern=r"^arn:aws:iam::\d{12}:role/.+")
 
 
 ConnectionIn = Annotated[AccessKeyConnectionIn | RoleConnectionIn, Field(discriminator="type")]
@@ -41,6 +47,8 @@ class ConnectionOut(BaseModel):
     role_arn: str | None
     external_id: str | None
     access_key_id_masked: str | None
+    remediation_role_arn: str | None
+    remediation_enabled: bool
     last_verified_at: datetime | None
     last_error: str | None
     created_at: datetime
@@ -60,6 +68,8 @@ class ConnectionOut(BaseModel):
             role_arn=c.role_arn,
             external_id=c.external_id,
             access_key_id_masked=masked,
+            remediation_role_arn=c.remediation_role_arn,
+            remediation_enabled=remediation_enabled(c),
             last_verified_at=c.last_verified_at,
             last_error=c.last_error,
             created_at=c.created_at,
@@ -166,6 +176,74 @@ class MessageIn(BaseModel):
 class ToolOut(BaseModel):
     name: str
     group: str
+    label: str
+    description: str
+    input_schema: dict
+    aws_actions: list[str]
+
+
+# ---- remediation ---------------------------------------------------------------
+
+
+class ProposalOut(BaseModel):
+    id: str
+    conversation_id: str
+    message_id: str
+    connection_id: str
+    kind: str
+    parent_id: str | None
+    action: str
+    params: dict
+    reason: str
+    status: str
+    preview: dict
+    result: dict | None
+    verification: dict | None
+    error: str | None
+    history: list[dict]
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime | None
+
+    @classmethod
+    def from_model(cls, p: Proposal) -> "ProposalOut":
+        def load(text: str | None):
+            return json.loads(text) if text else None
+
+        return cls(
+            id=p.id,
+            conversation_id=p.conversation_id,
+            message_id=p.message_id,
+            connection_id=p.connection_id,
+            kind=p.kind,
+            parent_id=p.parent_id,
+            action=p.action,
+            params=load(p.params_json) or {},
+            reason=p.reason,
+            status=p.status,
+            preview=load(p.preview_json) or {},
+            result=load(p.result_json),
+            verification=load(p.verification_json),
+            error=p.error,
+            history=load(p.history_json) or [],
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+            expires_at=p.expires_at,
+        )
+
+
+class DecisionIn(BaseModel):
+    decision: Literal["approve", "reject", "feedback"]
+    feedback: str = Field(default="", max_length=2000)
+
+
+class DecisionOut(BaseModel):
+    proposal: ProposalOut
+    followup_question: str | None
+
+
+class RemediationActionOut(BaseModel):
+    name: str
     label: str
     description: str
     input_schema: dict

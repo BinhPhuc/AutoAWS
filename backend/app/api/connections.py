@@ -3,7 +3,13 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 
-from app.api.schemas import CloudFormationOut, ConnectionIn, ConnectionOut, VerifyOut
+from app.api.schemas import (
+    CloudFormationOut,
+    ConnectionIn,
+    ConnectionOut,
+    ConnectionPatch,
+    VerifyOut,
+)
 from app.aws import cloudformation
 from app.aws.credentials import CredentialError, forget_session, resolve_session, verify_session
 from app.config import get_settings
@@ -40,6 +46,7 @@ def create_connection(body: ConnectionIn, store: Store = Depends(get_store)):
             region=body.region,
             role_arn=body.role_arn,
             external_id=body.external_id or f"autoaws-{secrets.token_hex(12)}",
+            remediation_role_arn=body.remediation_role_arn,
         )
     store.create_connection(conn)
     return ok(ConnectionOut.from_model(conn), "Connection created", 201)
@@ -53,6 +60,18 @@ def list_connections(store: Store = Depends(get_store)):
 @router.get("/{conn_id}")
 def get_connection(conn_id: str, store: Store = Depends(get_store)):
     return ok(ConnectionOut.from_model(_get(store, conn_id)))
+
+
+@router.patch("/{conn_id}")
+def update_connection(conn_id: str, body: ConnectionPatch, store: Store = Depends(get_store)):
+    conn = _get(store, conn_id)
+    if conn.type != "role":
+        raise AppError(
+            "VALIDATION_ERROR", 400, "A remediation role can only be set on role connections"
+        )
+    conn.remediation_role_arn = body.remediation_role_arn
+    store.save_connection(conn)
+    return ok(ConnectionOut.from_model(conn), "Connection updated")
 
 
 @router.delete("/{conn_id}")

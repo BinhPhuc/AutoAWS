@@ -79,9 +79,24 @@ def test_role_connection_cloudformation(client, aws):
     assert "sts:ExternalId" in yaml
     assert "ec2:DescribeRouteTables" in yaml
     assert "Effect: Deny" in yaml and "s3:GetObject*" in yaml
-    # never grant a write action
-    for verb in ("Create", "Delete", "Modify", "Put", "Terminate"):
-        assert f":{verb}" not in yaml
+    # The read-only role never gets a write action ...
+    read_part, remediation_part = yaml.split("  AutoAWSRemediationRole:", 1)
+    for verb in ("Create", "Delete", "Modify", "Put", "Terminate", "Associate", "Authorize"):
+        assert f":{verb}" not in read_part
+    # ... writes live only in the optional remediation role (off by default), exactly the
+    # catalogue's actions, plus an explicit Deny of IAM / stop / terminate.
+    from app.aws.remediation.catalog import all_write_actions
+
+    assert "Default: 'false'" in yaml and "Condition: RemediationEnabled" in remediation_part
+    import re
+
+    granted = set(
+        re.findall(
+            r"^\s+- ([a-z0-9-]+:[A-Za-z]+)$", remediation_part.split("DenyDangerous")[0], re.M
+        )
+    )
+    assert granted == set(all_write_actions())
+    assert "iam:*" in remediation_part and "ec2:TerminateInstances" in remediation_part
 
 
 def test_cloudformation_rejected_for_access_key(client, connection):

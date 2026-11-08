@@ -26,6 +26,9 @@ class Connection(SQLModel, table=True):
     # Dev-only storage of long-term keys (see BACKEND_PLAN §4.1). Never serialized to clients.
     access_key_id: str | None = None
     secret_access_key: str | None = None
+    # Optional AutoAWSRemediation role (CloudFormation EnableRemediation=true): executes
+    # approved proposals. Never used for reads.
+    remediation_role_arn: str | None = None
     last_verified_at: datetime | None = None
     last_error: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
@@ -63,3 +66,29 @@ class ToolCallRecord(SQLModel, table=True):
     output_json: str | None = None
     read_at: datetime | None = None
     cached: bool | None = False  # served from the conversation cache, no AWS call
+
+
+class Proposal(SQLModel, table=True):
+    """A remediation the agent proposed; executed only after the user approves it."""
+
+    id: str = Field(default_factory=lambda: new_id("prop"), primary_key=True)
+    conversation_id: str = Field(index=True)
+    message_id: str = ""
+    connection_id: str = ""
+    kind: str = "fix"  # fix | rollback
+    parent_id: str | None = None
+    action: str
+    params_json: str = "{}"
+    reason: str = ""
+    status: str = "PENDING_APPROVAL"
+    preview_json: str = "{}"
+    # Resource state when the proposal was made (STALE check, rollback target)
+    snapshot_json: str = "{}"
+    snapshot_hash: str = ""
+    result_json: str | None = None
+    verification_json: str | None = None
+    error: str | None = None
+    history_json: str = "[]"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime | None = None

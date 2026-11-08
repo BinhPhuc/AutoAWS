@@ -6,7 +6,9 @@ import type {
   Conversation,
   CreateConnectionInput,
   CreateConversationInput,
+  DiagnosisAnswer,
   Message,
+  Proposal,
   SendMessageInput,
   ToolCall,
   VerifyResult,
@@ -66,6 +68,8 @@ export const handlers = [
         body.type === 'access_key'
           ? `${body.access_key_id.slice(0, 4)}****${body.access_key_id.slice(-4)}`
           : null,
+      remediation_role_arn: body.type === 'role' ? (body.remediation_role_arn ?? null) : null,
+      remediation_enabled: body.type === 'role' ? !!body.remediation_role_arn : true,
       last_verified_at: null,
       last_error: null,
       created_at: now(),
@@ -225,6 +229,7 @@ export const handlers = [
               tc.duration_ms = event.data.duration_ms
             }
           } else if (event.type === 'answer') {
+            event.data.answer = withMockProposals(event.data.answer, conv.id, messageId)
             // Persist before `done`, as the contract requires.
             const assistant: Message = {
               id: messageId,
@@ -251,6 +256,71 @@ export const handlers = [
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
     })
   }),
+
+  // ---------- remediation (human-in-the-loop) ----------
+  http.patch('/api/connections/:id', async ({ params, request }) => {
+    const c = db.connections.find((x) => x.id === params.id)
+    if (!c) return fail(404, 'CONNECTION_NOT_FOUND', 'Connection not found', pathOf(request))
+    const body = (await request.json()) as { remediation_role_arn: string | null }
+    c.remediation_role_arn = body.remediation_role_arn
+    c.remediation_enabled = !!body.remediation_role_arn
+    return ok(c, 'Connection updated')
+  }),
+
+  http.get('/api/proposals', async ({ request }) => {
+    const conv = new URL(request.url).searchParams.get('conversation_id')
+    return ok(db.proposals.filter((p) => !conv || p.conversation_id === conv))
+  }),
+
+  http.get('/api/proposals/:id', async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === params.id)
+    if (!p) return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found', pathOf(request))
+    return ok(p)
+  }),
+
+  http.post('/api/proposals/:id/decision', async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === params.id)
+    if (!p) return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found', pathOf(request))
+    if (p.status !== 'PENDING_APPROVAL')
+      return fail(
+        409,
+        'PROPOSAL_NOT_PENDING',
+        `Proposal is not waiting for a decision (${p.status})`,
+        pathOf(request),
+      )
+    const body = (await request.json()) as { decision: string; feedback?: string }
+    const mark = (status: Proposal['status'], note: string) => {
+      p.status = status
+      p.history = [...p.history, { status, at: now(), note }]
+      p.updated_at = now()
+    }
+    if (body.decision === 'approve') {
+      mark('APPROVED', 'approved by the user')
+      setTimeout(() => mark('EXECUTING', 're-checking the resource'), 600)
+      setTimeout(() => {
+        p.verification = {
+          ok: true,
+          details: 'subnet-0a1b uses rtb-public: 0.0.0.0/0 -> igw-0f3c (active)',
+        }
+        mark('SUCCEEDED', 'verified')
+      }, 2000)
+      return ok({ proposal: p, followup_question: null }, 'Proposal approved')
+    }
+    if (body.decision === 'reject') {
+      mark('REJECTED', 'rejected by the user')
+      return ok({ proposal: p, followup_question: null }, 'Proposal rejected')
+    }
+    mark('SUPERSEDED', `feedback: ${body.feedback ?? ''}`)
+    return ok(
+      {
+        proposal: p,
+        followup_question: `Góp ý cho đề xuất (${p.id}): ${body.feedback ?? ''}\nHãy đề xuất lại.`,
+      },
+      'Feedback sent',
+    )
+  }),
+
+  http.get('/api/remediation/actions', async () => ok([])),
 
   // ---------- tools ----------
   http.get('/api/tools', async () => {
@@ -304,4 +374,49 @@ Outputs:
   RoleArn:
     Value: !GetAtt AutoAWSReadOnly.Arn
 `
+}
+
+/** KB1 answers carry one proposal (associate_route_table) stored in the mock db. */
+function withMockProposals(answer: DiagnosisAnswer, conversationId: string, messageId: string) {
+  if (!answer.fix_steps.some((f) => f.includes('subnet-0a1b'))) return answer
+  const p: Proposal = {
+    id: nextId('prop'),
+    conversation_id: conversationId,
+    message_id: messageId,
+    connection_id: db.connections[0]?.id ?? '',
+    kind: 'fix',
+    parent_id: null,
+    action: 'associate_route_table',
+    params: { subnet_id: 'subnet-0a1b', route_table_id: 'rtb-public' },
+    reason: 'Gắn subnet-0a1b về route table public có tuyến 0.0.0.0/0 → igw-0f3c.',
+    status: 'PENDING_APPROVAL',
+    preview: {
+      summary: 'Associate subnet-0a1b with route table rtb-public',
+      changes: [
+        {
+          field: 'Route table of subnet-0a1b',
+          before: 'rtb-07c9: 10.0.0.0/16 -> local (active)',
+          after: 'rtb-public: 0.0.0.0/0 -> igw-0f3c (active), 10.0.0.0/16 -> local (active)',
+        },
+      ],
+      impact: 'Every instance in subnet-0a1b uses the routes of rtb-public.',
+      risk: 'low',
+      rollback: 'Associate subnet-0a1b back with rtb-07c9',
+      verify: 'The effective route table of subnet-0a1b has 0.0.0.0/0 to an Internet gateway.',
+    },
+    result: null,
+    verification: null,
+    error: null,
+    history: [{ status: 'PENDING_APPROVAL', at: now(), note: 'proposed by the agent' }],
+    created_at: now(),
+    updated_at: now(),
+    expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+  }
+  db.proposals.unshift(p)
+  return {
+    ...answer,
+    proposals: [
+      { action: p.action, params: p.params, reason: p.reason, proposal_id: p.id, error: null },
+    ],
+  }
 }

@@ -4,6 +4,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { ChecklistPage } from '@/pages/ChecklistPage'
 import { ConnectPage } from '@/pages/ConnectPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
+import { ProposalsPage } from '@/pages/ProposalsPage'
 import { ToolsPage } from '@/pages/ToolsPage'
 
 export const router = createBrowserRouter([
@@ -14,6 +15,7 @@ export const router = createBrowserRouter([
       { index: true, element: <HomeRedirect /> },
       { path: 'connect', element: <ConnectPage /> },
       { path: 'chat/:conversationId?', element: <ChatPage /> },
+      { path: 'proposals', element: <ProposalsPage /> },
       { path: 'tools', element: <ToolsPage /> },
       { path: 'checklist', element: <ChecklistPage /> },
     ],

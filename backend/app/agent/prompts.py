@@ -6,9 +6,12 @@ the tool list stay byte-identical between rounds (prompt caching); everything th
 changes per turn (time, region, account) goes into the user message (``context_block``).
 """
 
-SYSTEM_PROMPT = """You are AutoAWS, an assistant that diagnoses incidents in a user's AWS account.
+SYSTEM_PROMPT_TEMPLATE = """\
+You are AutoAWS, an assistant that diagnoses incidents in a user's AWS account.
 
-You only have READ access, through the tools provided. You can never change anything.
+You only have READ access, through the tools provided. You cannot change anything yourself: a
+fix from the remediation catalogue can only be PROPOSED, and it runs only after the user
+approves it.
 The data you read is the ground truth: never guess what a configuration looks like when
 you can read it with a tool.
 
@@ -71,10 +74,36 @@ plain text):
 - Prefer the fix that addresses the root cause; mention a temporary workaround if one exists.
 - Keep AWS resource ids, ARNs, IPs, commands and AWS error codes verbatim.
 
+## Remediation proposals
+If a fix is one of the catalogue actions below, ALSO add it to `proposals` (action + params +
+reason in Vietnamese) so the user can approve it with one click; keep it in fix_steps too. The
+server checks every proposal and the user approves each one; nothing runs without approval.
+- Only these actions, only with ids you READ from tools. One proposal per change, in the order
+  they must run (e.g. allocate_and_associate_eip before upsert_a_record with instance_id).
+- Never propose opening port 22 or 3389 to 0.0.0.0/0 (refused): use the user's IP /32.
+- Anything else (NACL, NAT, application config...) stays in fix_steps only.
+{catalog}
+
 ## Output language
 Write ALL prose (summary, statements, evidence text, fix_steps, unverified) in VIETNAMESE,
 regardless of the language of the question. Technical identifiers stay as-is.
 """
+
+
+def _catalog_text() -> str:
+    from app.aws.remediation.catalog import CATALOG
+
+    lines = []
+    for spec in CATALOG.values():
+        props = spec.input_schema.get("properties", {})
+        required = set(spec.input_schema.get("required", []))
+        params = ", ".join(f"{k}{'' if k in required else '?'}" for k in props)
+        lines.append(f"- {spec.name}({params}): {spec.description}")
+    return "\n".join(lines)
+
+
+# Static text (byte-identical every round: prompt caching)
+SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.replace("{catalog}", _catalog_text())
 
 ANSWER_FORMAT = """
 ## If you cannot call tools

@@ -25,6 +25,9 @@ export type ApiErrorCode =
   | 'LLM_UNAVAILABLE'
   | 'MAX_ITERATIONS'
   | 'AGENT_LIMIT'
+  | 'PROPOSAL_NOT_FOUND'
+  | 'PROPOSAL_NOT_PENDING'
+  | 'REMEDIATION_DISABLED'
   | 'NOT_FOUND'
   | 'METHOD_NOT_ALLOWED'
   | 'NOT_IMPLEMENTED'
@@ -51,6 +54,9 @@ export interface Connection {
   role_arn: string | null
   external_id: string | null
   access_key_id_masked: string | null
+  remediation_role_arn: string | null
+  /** Server: approved proposals can be executed on this connection. */
+  remediation_enabled: boolean
   last_verified_at: string | null
   last_error: string | null
   created_at: string
@@ -70,6 +76,7 @@ export interface CreateRoleConnection {
   region: string
   role_arn: string
   external_id?: string
+  remediation_role_arn?: string
 }
 
 export type CreateConnectionInput = CreateAccessKeyConnection | CreateRoleConnection
@@ -119,13 +126,82 @@ export interface Unverified {
 
 export type LimitReached = 'max_iterations' | 'time' | 'tokens' | 'tool_calls'
 
+/** A catalogue fix the agent proposed; the server fills proposal_id or error (§7). */
+export interface ProposalRef {
+  action: string
+  params: Record<string, unknown>
+  reason: string
+  proposal_id: string | null
+  error: string | null
+}
+
 export interface DiagnosisAnswer {
   summary: string
   root_causes: RootCause[]
   fix_steps: string[]
   unverified: Unverified[]
   confidence: Confidence
+  proposals?: ProposalRef[]
   limit_reached?: LimitReached | null
+}
+
+// ---------- Remediation (human-in-the-loop) ----------
+export type ProposalStatus =
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'EXECUTING'
+  | 'SUCCEEDED'
+  | 'REJECTED'
+  | 'EXPIRED'
+  | 'SUPERSEDED'
+  | 'STALE'
+  | 'FAILED'
+  | 'VERIFY_FAILED'
+  | 'ROLLED_BACK'
+
+export interface ProposalPreview {
+  summary: string
+  changes: { field: string; before: string; after: string }[]
+  impact: string
+  risk: 'low' | 'medium' | 'high'
+  rollback: string
+  verify: string
+}
+
+export interface Proposal {
+  id: string
+  conversation_id: string
+  message_id: string
+  connection_id: string
+  kind: 'fix' | 'rollback'
+  parent_id: string | null
+  action: string
+  params: Record<string, unknown>
+  reason: string
+  status: ProposalStatus
+  preview: ProposalPreview
+  result: Record<string, unknown> | null
+  verification: { ok: boolean; details: string } | null
+  error: string | null
+  history: { status: ProposalStatus; at: string; note: string }[]
+  created_at: string
+  updated_at: string
+  expires_at: string | null
+}
+
+export type Decision = 'approve' | 'reject' | 'feedback'
+
+export interface DecisionResult {
+  proposal: Proposal
+  followup_question: string | null
+}
+
+export interface RemediationAction {
+  name: string
+  label: string
+  description: string
+  input_schema: Record<string, unknown>
+  aws_actions: string[]
 }
 
 export interface ToolCall {

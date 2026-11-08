@@ -44,6 +44,7 @@ from app.aws.registry import ToolContext, ToolSpec, list_tools, run_tool, summar
 from app.aws.tools.dns import hostnames_in
 from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMMessage, LLMProvider, LLMResponse, ToolCallRequest
+from app.remediation.service import attach_proposals
 from app.sanitizer import sanitize
 from app.storage.base import Store
 from app.storage.models import Conversation, Message, ToolCallRecord
@@ -162,6 +163,7 @@ async def run_agent(
     messages = [LLMMessage(role="system", content=SYSTEM_PROMPT + ANSWER_FORMAT)]
     messages += _history(prior)
     context = _context(settings, aws_session, conn.account_id if conn else None)
+    context += _proposals_context(store, conversation.id)
     messages.append(LLMMessage(role="user", content=f"{context}\n[Question]\n{question}"))
 
     records: list[ToolCallRecord] = []
@@ -185,19 +187,19 @@ async def run_agent(
             and time.monotonic() - started >= settings.max_agent_seconds
         )
 
-    def store_answer(answer: DiagnosisAnswer) -> AgentEvent:
+    async def store_answer(answer: DiagnosisAnswer) -> AgentEvent:
         nonlocal finished
         answer = verify_answer(answer, outputs, set(tool_index))
         answer.limit_reached = limit
-        assistant_msg = store.add_message(
-            Message(
-                conversation_id=conversation.id,
-                role="assistant",
-                content=answer.summary,
-                answer_json=answer.model_dump_json(),
-            ),
-            records,
-        )
+        msg = Message(conversation_id=conversation.id, role="assistant", content=answer.summary)
+        if answer.proposals:
+            # Pre-check each proposal with the READ-ONLY session and store it as PENDING; the
+            # answer carries the proposal ids (or why a proposal was refused).
+            await asyncio.to_thread(
+                attach_proposals, store, conversation, msg.id, conn, aws_session, answer
+            )
+        msg.answer_json = answer.model_dump_json()
+        assistant_msg = store.add_message(msg, records)
         store.touch_conversation(conversation)
         finished = True
         return AgentEvent(
@@ -254,7 +256,7 @@ async def run_agent(
                 answer, problem = _answer_from_input(submit.input)
                 if answer is not None:
                     yield ev.status("Analyzing results…")
-                    yield store_answer(answer)
+                    yield await store_answer(answer)
                     yield ev.done()
                     return
                 if finalize_sent:
@@ -362,7 +364,7 @@ async def run_agent(
             answer = _parse_answer(response.text or "")
             if answer is not None:
                 yield ev.status("Analyzing results…")
-                yield store_answer(answer)
+                yield await store_answer(answer)
                 yield ev.done()
                 return
             if finalize_sent:
@@ -375,7 +377,7 @@ async def run_agent(
                 messages.append(LLMMessage(role="user", content=RETRY_ANSWER_PROMPT))
                 continue
             yield ev.status("Analyzing results…")
-            yield store_answer(_fallback_answer(response.text or ""))
+            yield await store_answer(_fallback_answer(response.text or ""))
             yield ev.done()
             return
     finally:
@@ -498,6 +500,19 @@ def _context(settings: Settings, session: boto3.Session, account: str | None) ->
         region=session.region_name or "unknown",
         account=account or "unknown",
     )
+
+
+def _proposals_context(store: Store, conversation_id: str) -> str:
+    """Current status of this conversation's proposals (did the user approve the fix?)."""
+    proposals = store.list_proposals(conversation_id=conversation_id)
+    if not proposals:
+        return ""
+    lines = [
+        f"- {p.id} {p.kind} {p.action} {p.params_json}: {p.status}"
+        + (f" ({p.error})" if p.error else "")
+        for p in reversed(proposals)
+    ]
+    return "Remediation proposals in this conversation:\n" + "\n".join(lines) + "\n"
 
 
 def _history(prior: list[tuple[Message, list[ToolCallRecord]]]) -> list[LLMMessage]:

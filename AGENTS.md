@@ -28,7 +28,8 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
   - `BedrockProvider` (SDK `anthropic`, client Mantle, `anthropic.claude-opus-5-5`) và `AnthropicProvider` dùng chung `app/llm/claude.py` — **chưa gọi Bedrock thật** (máy dev không có quyền);
   - seed LocalStack KB1, KB2, KB4–KB7 khớp Bảng 2.14, thêm KB8 (instance stop) và KB9 (prompt injection); file đáp án + `infra/eval/run_eval.py` chấm theo Bảng 2.15.
   - 152 test BE, 10 test FE.
-- [ ] **Tiếp theo**: chạy `run_eval.py --runs 5` với Bedrock thật; môi trường AWS thật cho KB3 + CloudTrail; checklist runner; auth Cognito; khắc phục có phê duyệt (cần sửa ràng buộc #1 trước)
+- [x] Khắc phục có phê duyệt (2026-11-08, nhánh `feat/remediation`): danh mục 6 hành động (`app/aws/remediation/catalog.py`), session ghi khoá theo hành động, luồng duyệt / từ chối / góp ý / hết hạn / STALE / kiểm chứng / đề xuất hoàn tác (`app/remediation/service.py`), API `/api/proposals*`, role `AutoAWSRemediation` trong CloudFormation (`EnableRemediation`), UI duyệt trong chat + trang Proposals. Ràng buộc #1 đã đổi tương ứng. 174 test BE, 12 test FE; chạy thật trên LocalStack (KB1).
+- [ ] **Tiếp theo**: chạy `run_eval.py --runs 5` với Bedrock thật; môi trường AWS thật cho KB3 + CloudTrail; email SNS + Step Functions cho luồng duyệt khi lên AWS; checklist runner; auth Cognito
 
 ## Bố cục repo
 
@@ -83,7 +84,11 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 ## Ràng buộc cứng — KHÔNG được vi phạm
 
-1. **Chỉ đọc AWS.** Không bao giờ thêm action tạo/sửa/xoá (chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`). Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt`.
+1. **Đọc mặc định chỉ đọc; ghi chỉ qua executor đã duyệt.**
+   - Lõi agent, tool đọc (`app/aws/tools/`) và session đọc **tuyệt đối chỉ đọc**: chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`. LLM không bao giờ có công cụ ghi.
+   - Lệnh ghi **chỉ** nằm trong `app/aws/remediation/` (danh mục cố định Bảng 2.11 của báo cáo), chỉ chạy một đề xuất **người dùng đã duyệt**, bằng session ghi riêng bị khoá đúng các API của hành động đó (role `AutoAWS-Remediation`; access key chỉ khi bật `REMEDIATION_ALLOW_ACCESS_KEYS` cho dev).
+   - Không bao giờ: xoá tài nguyên của người dùng (trừ hoàn tác chính thay đổi do AutoAWS tạo), đụng IAM / Organizations, stop / terminate instance, mở 22 / 3389 cho `0.0.0.0/0`.
+   - Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt`.
 2. **Không log / in / commit credentials**, secret, `.env`. Credentials tạm thời chỉ ở bộ nhớ.
 3. Dữ liệu AWS đưa vào LLM **phải** qua `app/sanitizer.py`.
 4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py` (cộng `submit_diagnosis` — kênh trả lời do vòng lặp xử lý, không chạm AWS); boto3 dùng cho **tài khoản người dùng** chỉ xuất hiện trong `app/aws/` (ngoại lệ dev: `infra/localstack/seed.py` tạo tài nguyên, chỉ chạy với LocalStack; `infra/aws-scenarios/` tạo/sửa tài nguyên kịch bản trong **tài khoản AWS test**, không bao giờ do app gọi).

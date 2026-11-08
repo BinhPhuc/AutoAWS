@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ListTree, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { ChatActionsContext } from '@/components/chat/chatActions'
 import { Composer } from '@/components/chat/Composer'
 import { ConversationList } from '@/components/chat/ConversationList'
 import { EmptyChat } from '@/components/chat/EmptyChat'
@@ -129,25 +130,27 @@ export function ChatPage() {
           ) : showEmpty && !live?.pendingQuestion ? (
             <EmptyChat onPick={(text) => setPrefill(text)} />
           ) : (
-            <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-6">
-              {messages.map((m) => (
-                <MessageItem key={m.id} message={m} />
-              ))}
-              {live?.pendingQuestion && (
-                <>
-                  {!questionStored && <UserMessage content={live.pendingQuestion} />}
-                  <AssistantMessage
-                    toolCalls={live.toolCalls}
-                    answer={live.answer?.answer}
-                    content={live.answer?.content}
-                    streaming={live.streaming}
-                    statusText={live.statusText}
-                    error={live.error}
-                  />
-                </>
-              )}
-              <div ref={bottomRef} />
-            </div>
+            <ChatActionsContext.Provider value={{ followup: (q) => void send(q) }}>
+              <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-6">
+                {messages.map((m) => (
+                  <MessageItem key={m.id} message={m} />
+                ))}
+                {live?.pendingQuestion && (
+                  <>
+                    {!questionStored && <UserMessage content={live.pendingQuestion} />}
+                    <AssistantMessage
+                      toolCalls={live.toolCalls}
+                      answer={live.answer?.answer}
+                      content={live.answer?.content}
+                      streaming={live.streaming}
+                      statusText={live.statusText}
+                      error={live.error}
+                    />
+                  </>
+                )}
+                <div ref={bottomRef} />
+              </div>
+            </ChatActionsContext.Provider>
           )}
         </div>
 

@@ -5,6 +5,7 @@ the platform credentials (boto3 default chain / PLATFORM_AWS_PROFILE), never a u
 """
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 
 import boto3
@@ -45,3 +46,9 @@ def get_store() -> Iterator[Store]:
         return
     with Session(get_engine()) as session:
         yield SqlStore(session)
+
+
+@contextmanager
+def open_store() -> Iterator[Store]:
+    """A Store outside a request (background execution of an approved proposal)."""
+    yield from get_store()

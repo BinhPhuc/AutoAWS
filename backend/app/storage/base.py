@@ -7,7 +7,7 @@ STORAGE_BACKEND; ``app.storage.store.get_store`` builds the right one per reques
 
 from typing import Protocol
 
-from app.storage.models import Connection, Conversation, Message, ToolCallRecord
+from app.storage.models import Connection, Conversation, Message, Proposal, ToolCallRecord
 
 
 class Store(Protocol):
@@ -52,4 +52,20 @@ class Store(Protocol):
 
     def list_tool_calls(self, message_id: str) -> list[ToolCallRecord]:
         """In the order they ran."""
+        ...
+
+    # ---- remediation proposals -----------------------------------------------
+    def create_proposal(self, proposal: Proposal) -> Proposal: ...
+
+    def get_proposal(self, proposal_id: str) -> Proposal | None: ...
+
+    def list_proposals(
+        self, conversation_id: str | None = None, status: str | None = None
+    ) -> list[Proposal]:
+        """Newest first."""
+        ...
+
+    def update_proposal(self, proposal: Proposal, expected_status: str | None = None) -> bool:
+        """Save; with ``expected_status`` only if the stored status still equals it
+        (compare-and-set, so a proposal is never executed twice). True if saved."""
         ...

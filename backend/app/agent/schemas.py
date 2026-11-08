@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.aws.remediation.catalog import CATALOG
+
 Confidence = Literal["high", "medium", "low"]
 Verification = Literal["read", "inferred", "not_found"]
 LimitReached = Literal["max_iterations", "time", "tokens", "tool_calls"]
@@ -34,6 +36,17 @@ class Unverified(BaseModel):
     how_to_check: str = ""
 
 
+class ProposalRef(BaseModel):
+    """A remediation the model proposes (catalogue action + params). The server fills
+    proposal_id when it stored a PENDING proposal, or error when it refused it."""
+
+    action: str
+    params: dict = {}
+    reason: str = ""
+    proposal_id: str | None = None
+    error: str | None = None
+
+
 class DiagnosisAnswer(BaseModel):
     """Prose fields are Vietnamese; resource ids, commands and AWS error codes stay verbatim."""
 
@@ -42,6 +55,7 @@ class DiagnosisAnswer(BaseModel):
     fix_steps: list[str] = []
     unverified: list[Unverified] = []
     confidence: Confidence = "low"
+    proposals: list[ProposalRef] = []
     # Set by the agent loop when it had to stop early (docs/API_CONTRACT.md §3).
     limit_reached: LimitReached | None = None
 
@@ -140,6 +154,21 @@ SUBMIT_INPUT_SCHEMA = {
             },
         },
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "proposals": {
+            "type": "array",
+            "maxItems": 5,
+            "description": "Optional: fixes from the remediation catalogue the user can approve "
+            "with one click. Only catalogue actions; the user approves each one.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": sorted(CATALOG)},
+                    "params": {"type": "object", "description": "As the catalogue describes"},
+                    "reason": {"type": "string", "description": "Why, in Vietnamese"},
+                },
+                "required": ["action", "params", "reason"],
+            },
+        },
     },
     "required": ["summary", "root_causes", "fix_steps", "unverified", "confidence"],
 }
