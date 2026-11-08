@@ -148,23 +148,42 @@ async def test_agent_turn_driven_through_the_bridge(store, aws):
     subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.1.0/24")["Subnet"]["SubnetId"]
     ec2.run_instances(ImageId="ami-12345678", MinCount=1, MaxCount=1, SubnetId=subnet)
 
-    final = {
-        "summary": "Instance đang chạy.",
-        "cause": "Không có lỗi cấu hình.",
-        "evidence": [{"text": "1 instance running", "source": "describe_instances"}],
-        "fix_steps": [],
-        "unverified": [],
-        "confidence": "medium",
-    }
+    def final(subnet_id: str) -> dict:
+        return {
+            "summary": "Instance đang chạy.",
+            "root_causes": [
+                {
+                    "statement": "Không có lỗi cấu hình.",
+                    "confidence": "medium",
+                    "evidence": [
+                        {
+                            "text": "1 instance running",
+                            "source": "describe_instances",
+                            "resource_id": subnet_id,
+                        }
+                    ],
+                }
+            ],
+            "fix_steps": [],
+            "unverified": [],
+            "confidence": "medium",
+        }
 
     async def play_the_llm():
         turn = await bridge.next_request(wait_seconds=5)
+        payload = turn.to_payload()
+        names = {t["name"] for t in payload["tools"]}
+        assert "submit_diagnosis" in names
+        described = next(t for t in payload["tools"] if t["name"] == "describe_instances")
+        assert "refresh" in described["input_schema"]["properties"]
         bridge.respond(turn.request_id, None, [ToolCallIn(name="describe_instances")])
         turn = await bridge.next_request(wait_seconds=5)
         tool_msg = turn.messages[-1]
         assert tool_msg.role == "tool" and tool_msg.tool_name == "describe_instances"
         assert json.loads(tool_msg.content)["instances"][0]["subnet_id"] == subnet
-        bridge.respond(turn.request_id, json.dumps(final, ensure_ascii=False), None)
+        bridge.respond(
+            turn.request_id, None, [ToolCallIn(name="submit_diagnosis", input=final(subnet))]
+        )
 
     conv = store.create_conversation(Conversation(connection_id="conn_bridge"))
     llm = asyncio.create_task(play_the_llm())
@@ -175,8 +194,12 @@ async def test_agent_turn_driven_through_the_bridge(store, aws):
 
     types = [e.type for e in events]
     assert "tool_call" in types and types[-2:] == ["answer", "done"]
+    calls = [e.data["tool"] for e in events if e.type == "tool_call"]
+    assert calls == ["describe_instances"]  # submit_diagnosis is not a timeline entry
     answer = next(e for e in events if e.type == "answer")
     assert answer.data["answer"]["confidence"] == "medium"
+    [evidence] = answer.data["answer"]["root_causes"][0]["evidence"]
+    assert evidence["verification"] == "read"
     [user, assistant] = store.list_messages(conv.id)
     assert (user.role, assistant.role) == ("user", "assistant")
     assert [t.tool for t in store.list_tool_calls(assistant.id)] == ["describe_instances"]

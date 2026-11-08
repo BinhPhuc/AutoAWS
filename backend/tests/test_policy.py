@@ -59,6 +59,7 @@ def world(aws):
         DefaultActions=[{"Type": "forward", "TargetGroupArn": tg["TargetGroupArn"]}],
     )
     elb.register_targets(TargetGroupArn=tg["TargetGroupArn"], Targets=[{"Id": inst}])
+    aws.client("logs").create_log_group(logGroupName="/demo/app")
     return {"vpc": vpc, "subnet": subnet, "subnet2": subnet2, "instance": inst, "zone": zone}
 
 
@@ -70,14 +71,25 @@ def _params(name: str, w: dict) -> dict:
         "describe_route_tables": {"subnet_ids": [w["subnet"], w["subnet2"]]},
         "describe_network_acls": {"subnet_ids": [w["subnet"]]},
         "route53_list_records": {"domain": "app.example.com"},
+        # no datapoints -> also lists the metric's dimensions
+        "cloudwatch_get_metric_data": {"namespace": "AWS/EC2", "metric_name": "CPUUtilization"},
+        "logs_insights_query": {"log_group_names": ["/demo/app"], "query": "fields @message"},
+        # not mentioned by the user -> the DNS guard checks the hosted zones
+        "resolve_dns_public": {"hostname": "www.example.com"},
     }.get(name, {})
 
 
-# moto lacks a few read APIs; those tools are covered by stubbed tests in test_tools.py.
-_MOTO_UNSUPPORTED = {"ssm_describe_instance_information"}
+# moto lacks a few read APIs; those tools are covered by stubbed tests in test_tools*.py.
+_MOTO_UNSUPPORTED = {"ssm_describe_instance_information", "cloudtrail_lookup_events"}
 
 
-def test_every_call_a_tool_makes_is_declared_and_in_the_policy(world):
+def test_every_call_a_tool_makes_is_declared_and_in_the_policy(world, monkeypatch):
+    import dns.resolver
+
+    def no_network(self, hostname, rtype):
+        raise dns.resolver.NXDOMAIN()
+
+    monkeypatch.setattr(dns.resolver.Resolver, "resolve", no_network)
     allowed = set(policy_actions())
     checked = 0
     for spec in list_tools():

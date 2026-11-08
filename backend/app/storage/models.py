@@ -58,3 +58,8 @@ class ToolCallRecord(SQLModel, table=True):
     status: str = "ok"  # ok | error
     error: str | None = None
     duration_ms: int = 0
+    # Sanitized result (capped, see agent/loop.py): conversation cache + evidence checks.
+    # Never sent to clients. None: too large to keep, a cache hit, or an older record.
+    output_json: str | None = None
+    read_at: datetime | None = None
+    cached: bool | None = False  # served from the conversation cache, no AWS call

@@ -1,9 +1,12 @@
-"""Network group: security groups, NACLs, route tables, subnets, internet gateways."""
+"""Network group: security groups, NACLs, route tables, subnets, gateways, Elastic IPs."""
 
 import boto3
 
 from app.aws.registry import tool
 from app.aws.tools._common import MAX_ITEMS_SCHEMA, cap, str_list_schema, tag
+
+# NACL entries carry IP protocol numbers
+_PROTOCOLS = {"-1": "all", "1": "icmp", "6": "tcp", "17": "udp", "58": "icmpv6"}
 
 
 def _vpc_filter(params: dict, filters: list[dict]) -> list[dict]:
@@ -112,7 +115,7 @@ def describe_network_acls(session: boto3.Session, params: dict) -> dict:
                             "rule_number": e["RuleNumber"],
                             "direction": "egress" if e.get("Egress") else "ingress",
                             "action": e.get("RuleAction"),
-                            "protocol": e.get("Protocol"),
+                            "protocol": _PROTOCOLS.get(str(e.get("Protocol")), e.get("Protocol")),
                             "ports": (
                                 f"{e['PortRange']['From']}-{e['PortRange']['To']}"
                                 if e.get("PortRange")
@@ -279,3 +282,93 @@ def describe_internet_gateways(session: boto3.Session, params: dict) -> dict:
             )
     items, truncated = cap(igws, params)
     return {"internet_gateways": items, "_truncated": truncated}
+
+
+@tool(
+    name="describe_nat_gateways",
+    group="network",
+    label="NAT gateways",
+    description="NAT gateways (state, subnet, public/private IPs, failure reason). A private "
+    "subnet reaches the Internet only through a 0.0.0.0/0 route to an available nat-*.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "nat_gateway_ids": str_list_schema("NAT gateway ids, e.g. ['nat-0abc...']"),
+            "vpc_id": {"type": "string"},
+            "subnet_ids": str_list_schema("Subnets the NAT gateways live in"),
+            "max_items": MAX_ITEMS_SCHEMA,
+        },
+    },
+    aws_actions=["ec2:DescribeNatGateways"],
+)
+def describe_nat_gateways(session: boto3.Session, params: dict) -> dict:
+    ec2 = session.client("ec2")
+    kwargs: dict = {}
+    if params.get("nat_gateway_ids"):
+        kwargs["NatGatewayIds"] = params["nat_gateway_ids"]
+    filters = _vpc_filter(params, [])
+    if params.get("subnet_ids"):
+        filters.append({"Name": "subnet-id", "Values": params["subnet_ids"]})
+    if filters:
+        kwargs["Filter"] = filters  # this API names it Filter, not Filters
+    nats = []
+    for page in ec2.get_paginator("describe_nat_gateways").paginate(**kwargs):
+        for n in page["NatGateways"]:
+            addresses = n.get("NatGatewayAddresses", [])
+            nats.append(
+                {
+                    "nat_gateway_id": n["NatGatewayId"],
+                    "name": tag(n.get("Tags")),
+                    "state": n.get("State"),
+                    "connectivity_type": n.get("ConnectivityType"),
+                    "vpc_id": n.get("VpcId"),
+                    "subnet_id": n.get("SubnetId"),
+                    "public_ips": [a["PublicIp"] for a in addresses if a.get("PublicIp")],
+                    "private_ips": [a["PrivateIp"] for a in addresses if a.get("PrivateIp")],
+                    "failure_code": n.get("FailureCode"),
+                    "failure_message": n.get("FailureMessage"),
+                }
+            )
+    items, truncated = cap(nats, params)
+    return {"nat_gateways": items, "_truncated": truncated}
+
+
+@tool(
+    name="describe_addresses",
+    group="network",
+    label="Elastic IPs",
+    description="Elastic IP addresses of the account and what they are attached to. An "
+    "instance without an Elastic IP gets a NEW public IP after stop/start, so DNS records "
+    "pointing at the old IP break.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "instance_ids": str_list_schema("Only Elastic IPs attached to these instances"),
+            "public_ips": str_list_schema("Look up these public IPs"),
+            "max_items": MAX_ITEMS_SCHEMA,
+        },
+    },
+    aws_actions=["ec2:DescribeAddresses"],
+)
+def describe_addresses(session: boto3.Session, params: dict) -> dict:
+    ec2 = session.client("ec2")
+    kwargs: dict = {}
+    if params.get("public_ips"):
+        kwargs["PublicIps"] = params["public_ips"]
+    if params.get("instance_ids"):
+        kwargs["Filters"] = [{"Name": "instance-id", "Values": params["instance_ids"]}]
+    addresses = [
+        {
+            "public_ip": a.get("PublicIp"),
+            "allocation_id": a.get("AllocationId"),
+            "name": tag(a.get("Tags")),
+            "instance_id": a.get("InstanceId"),
+            "network_interface_id": a.get("NetworkInterfaceId"),
+            "private_ip": a.get("PrivateIpAddress"),
+            "association_id": a.get("AssociationId"),
+            "domain": a.get("Domain"),
+        }
+        for a in ec2.describe_addresses(**kwargs)["Addresses"]
+    ]
+    items, truncated = cap(addresses, params)
+    return {"elastic_ips": items, "_truncated": truncated}

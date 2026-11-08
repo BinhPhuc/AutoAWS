@@ -14,6 +14,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.aws.registry import iam_action, is_read_only_action
@@ -24,6 +25,10 @@ log = logging.getLogger(__name__)
 
 # Calls made by verify_session; the CloudFormation policy must allow them too.
 VERIFY_AWS_ACTIONS = ["sts:GetCallerIdentity", "ec2:DescribeRegions"]
+
+# Adaptive retries back off on throttling, e.g. CloudTrail LookupEvents allows ~2 calls/s
+# per account and Region (docs/SYSTEM_OVERVIEW.md / report §2.3.2).
+RETRY_CONFIG = Config(retries={"mode": "adaptive", "max_attempts": 6})
 
 _role_cache: dict[str, tuple[boto3.Session, datetime]] = {}
 _REFRESH_MARGIN = timedelta(seconds=60)
@@ -37,23 +42,23 @@ class ReadOnlyViolation(Exception):
     """A non read-only AWS operation was attempted on a user-account session."""
 
 
-class _EndpointSession(boto3.Session):
-    """Session whose clients default to a custom endpoint (LocalStack in dev)."""
+class _AwsSession(boto3.Session):
+    """Session whose clients retry adaptively and, in dev, use a custom endpoint."""
 
-    def __init__(self, *args, endpoint_url: str, **kwargs):
+    def __init__(self, *args, endpoint_url: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         self._endpoint_url = endpoint_url
 
     def client(self, *args, **kwargs):
-        kwargs.setdefault("endpoint_url", self._endpoint_url)
+        if self._endpoint_url:
+            kwargs.setdefault("endpoint_url", self._endpoint_url)
+        config = kwargs.get("config")
+        kwargs["config"] = RETRY_CONFIG.merge(config) if config else RETRY_CONFIG
         return super().client(*args, **kwargs)
 
 
 def _new_session(**kwargs) -> boto3.Session:
-    endpoint = get_settings().aws_endpoint_url
-    if endpoint:
-        return _EndpointSession(endpoint_url=endpoint, **kwargs)
-    return boto3.Session(**kwargs)
+    return _AwsSession(endpoint_url=get_settings().aws_endpoint_url, **kwargs)
 
 
 def _reject_non_read_only(model, **_) -> None:

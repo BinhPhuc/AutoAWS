@@ -1,6 +1,6 @@
 """AWS read tools against moto. Each test builds the minimal resources it needs."""
 
-from app.aws.registry import all_aws_actions, get_tool, list_tools, run_tool
+from app.aws.registry import ToolContext, all_aws_actions, get_tool, list_tools, run_tool
 
 
 def _vpc_with_subnet(aws, public: bool):
@@ -142,11 +142,10 @@ def test_route53_records(aws):
     assert rec["values"] == ["13.212.1.1"]
 
 
-def test_unknown_tool_and_stub(aws):
+def test_unknown_tool_and_no_stubs_left(aws):
     assert run_tool(aws, "nope", {}).status == "error"
-    res = run_tool(aws, "cloudtrail_lookup_events", {})
-    assert res.status == "error" and "NOT_IMPLEMENTED" in res.error
-    assert get_tool("cloudtrail_lookup_events").stub is True
+    assert not [t.name for t in list_tools() if t.stub]
+    assert get_tool("cloudtrail_lookup_events").aws_actions == ["cloudtrail:LookupEvents"]
 
 
 def test_tools_endpoint(client):
@@ -250,7 +249,7 @@ def test_describe_network_acls(aws):
         "rule_number": 90,
         "direction": "ingress",
         "action": "deny",
-        "protocol": "6",
+        "protocol": "tcp",
         "ports": "22-22",
         "cidr": "0.0.0.0/0",
     } in custom["entries"]
@@ -325,9 +324,16 @@ def _patch_resolve(monkeypatch, behaviour):
     return calls
 
 
+def _asked(*names: str) -> ToolContext:
+    """Conversation in which the user mentioned these names (DNS guard)."""
+    return ToolContext(user_text="Tôi đã trỏ " + ", ".join(names))
+
+
 def test_resolve_dns_public_answers(monkeypatch):
     calls = _patch_resolve(monkeypatch, _FakeAnswer(["13.212.1.1"]))
-    res = run_tool(None, "resolve_dns_public", {"hostname": "app.example.com."})
+    res = run_tool(
+        None, "resolve_dns_public", {"hostname": "app.example.com."}, _asked("app.example.com")
+    )
     assert res.status == "ok"
     assert res.output == {
         "hostname": "app.example.com",
@@ -345,14 +351,22 @@ def test_resolve_dns_public_nxdomain_is_a_finding_not_an_error(monkeypatch):
     import dns.resolver
 
     _patch_resolve(monkeypatch, dns.resolver.NXDOMAIN())
-    res = run_tool(None, "resolve_dns_public", {"hostname": "missing.example.com"})
+    res = run_tool(
+        None,
+        "resolve_dns_public",
+        {"hostname": "missing.example.com"},
+        _asked("missing.example.com"),
+    )
     assert res.status == "ok"
     assert "error" not in res.output
     assert res.output["rcode"] == "NXDOMAIN" and res.output["answers"] == []
 
     _patch_resolve(monkeypatch, dns.resolver.NoAnswer())
     res = run_tool(
-        None, "resolve_dns_public", {"hostname": "app.example.com", "record_type": "AAAA"}
+        None,
+        "resolve_dns_public",
+        {"hostname": "app.example.com", "record_type": "AAAA"},
+        _asked("app.example.com"),
     )
     assert res.status == "ok"
     assert res.output["rcode"] == "NODATA"
@@ -362,6 +376,8 @@ def test_resolve_dns_public_resolver_failure_is_an_error(monkeypatch):
     import dns.exception
 
     _patch_resolve(monkeypatch, dns.exception.Timeout())
-    res = run_tool(None, "resolve_dns_public", {"hostname": "app.example.com"})
+    res = run_tool(
+        None, "resolve_dns_public", {"hostname": "app.example.com"}, _asked("app.example.com")
+    )
     assert res.status == "error"
     assert res.output["error"].startswith("DNS error")

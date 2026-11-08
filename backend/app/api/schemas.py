@@ -97,6 +97,7 @@ class ToolCallOut(BaseModel):
     status: str
     error: str | None
     duration_ms: int
+    cached: bool = False
 
     @classmethod
     def from_model(cls, t: ToolCallRecord) -> "ToolCallOut":
@@ -108,6 +109,7 @@ class ToolCallOut(BaseModel):
             status=t.status,
             error=t.error,
             duration_ms=t.duration_ms,
+            cached=bool(t.cached),
         )
 
 

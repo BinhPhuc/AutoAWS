@@ -46,8 +46,13 @@ def test_chat_stream_and_persist(client, connection, aws):
 
     answer = next(d for t, d in events if t == "answer")
     assert answer["answer"]["confidence"] == "low"
-    assert answer["answer"]["evidence"]
-    assert any(e["source"] == "describe_instances" for e in answer["answer"]["evidence"])
+    evidence = answer["answer"]["root_causes"][0]["evidence"]
+    instances = next(e for e in evidence if e["source"] == "describe_instances")
+    # the mock cites the instance id it read; the server confirms it in the tool output
+    assert instances["resource_id"].startswith("i-")
+    assert instances["verification"] == "read" and instances["verified"] is True
+    assert answer["answer"]["limit_reached"] is None
+    assert "submit_diagnosis" not in {c["tool"] for c in calls}
 
     # persisted before `done`
     got = client.get(f"/api/conversations/{conv_id}").json()["data"]
@@ -251,7 +256,11 @@ async def test_second_question_sees_the_first_turn(store, aws):
     assert seen[1].content == "Không SSH được vào web-server"
     replay = seen[2].content
     assert "[Data read earlier]" in replay
-    assert "- describe_instances: 1 instances" in replay  # shortened tool result, not raw data
+    assert "- describe_instances {}: 1 instances" in replay  # shortened result, not raw data
     assert "Route table thiếu 0.0.0.0/0" in replay  # the turn-1 answer
-    assert seen[3].content == "Vậy sửa thế nào?"
+    assert seen[3].content.startswith("[Context]")
+    assert seen[3].content.endswith("[Question]\nVậy sửa thế nào?")
     assert len(store.list_messages(conv.id)) == 4
+    # the turn-1 answer was stored in the old shape and is read back in the new one
+    stored = store.list_messages(conv.id)[1].answer_json
+    assert '"root_causes"' in stored and "Route table thiếu" in stored

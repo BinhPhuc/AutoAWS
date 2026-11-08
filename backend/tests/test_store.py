@@ -114,6 +114,48 @@ def test_messages_and_tool_calls(store):
         assert s.list_tool_calls(q.id) == []
 
 
+def test_tool_call_output_and_cache_fields_round_trip(store):
+    conv = store.create_conversation(Conversation(connection_id="conn_cache"))
+    read_at = T0 + timedelta(seconds=5)
+    output = json.dumps({"instances": [{"instance_id": "i-0abc", "name": "web-server"}]})
+    a = store.add_message(
+        Message(conversation_id=conv.id, role="assistant", content="đáp"),
+        [
+            ToolCallRecord(tool="describe_instances", output_json=output, read_at=read_at),
+            ToolCallRecord(tool="describe_instances", cached=True, read_at=read_at),
+        ],
+    )
+    fresh = DynamoStore(store.client, store.table) if isinstance(store, DynamoStore) else store
+    first, second = fresh.list_tool_calls(a.id)
+    assert first.output_json == output and bool(first.cached) is False
+    assert first.read_at.replace(tzinfo=UTC) == read_at
+    assert second.output_json is None and second.cached is True
+
+
+def test_sqlite_databases_from_before_get_the_new_columns(tmp_path):
+    from sqlalchemy import create_engine, inspect, text
+
+    from app.storage.db import add_missing_columns
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:  # the table as the first release created it
+        conn.execute(
+            text(
+                "CREATE TABLE toolcallrecord (id VARCHAR PRIMARY KEY, message_id VARCHAR, "
+                "seq INTEGER, tool VARCHAR, input_json VARCHAR, output_summary VARCHAR, "
+                "status VARCHAR, error VARCHAR, duration_ms INTEGER)"
+            )
+        )
+        conn.execute(text("INSERT INTO toolcallrecord (id, tool) VALUES ('tc_old', 'x')"))
+    added = add_missing_columns(engine)
+    assert {"toolcallrecord.output_json", "toolcallrecord.read_at", "toolcallrecord.cached"} <= set(
+        added
+    )
+    columns = {c["name"] for c in inspect(engine).get_columns("toolcallrecord")}
+    assert {"output_json", "read_at", "cached"} <= columns
+    assert add_missing_columns(engine) == []  # idempotent
+
+
 def test_deletes_cascade(store):
     conn = store.create_connection(_conn("x", T0))
     conv = store.create_conversation(Conversation(connection_id=conn.id))
