@@ -20,7 +20,15 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] `docker-compose.yml` (backend + frontend/nginx)
 - [x] Đợt 2 (2026-10-26): sửa C1 (policy CFN thiếu `ec2:DescribeRegions`), guard chỉ-đọc allow-list + hook botocore lúc chạy, sửa `describe_route_tables`/DNS/Route 53, lưu lượt lỗi/Stop; UI: hết trùng câu hỏi, stream không lọt hội thoại, badge Inferred; `LLM_PROVIDER=mcp` (MCP client đóng vai LLM, `/mcp/`); seed LocalStack `infra/localstack/`. 67 test BE, 9 test FE; E2E trên LocalStack: KB1, KB2 đúng.
 - [x] Lưu trữ DynamoDB (2026-10-27): interface `Store` (`app/storage/base.py`), `STORAGE_BACKEND=sqlite|dynamodb`, bảng single-table mã hoá KMS; 80 test BE (store chạy trên cả 2 backend); chạy thật trên DynamoDB của LocalStack.
-- [ ] **Tiếp theo**: `AnthropicProvider` / `BedrockProvider` thật (`backend/app/llm/anthropic.py`, `bedrock.py` có hướng dẫn trong docstring); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
+- [x] Hoàn thiện chẩn đoán theo báo cáo lần 2 (2026-11-08, nhánh `feat/diagnosis`):
+  - câu trả lời `root_causes[]` qua tool `submit_diagnosis`; server tự kiểm bằng chứng (`verification`: read / inferred / not_found);
+  - vòng lặp: kiểm tham số theo schema, giới hạn vòng / thời gian / token / số lần gọi tool kèm lượt chốt cuối (`limit_reached`), cache kết quả theo hội thoại (`refresh`), ngữ cảnh giờ / region / account;
+  - prompt theo §2.4.2: kiểm đủ mọi lớp, SSM là bằng chứng, dữ liệu tool không phải chỉ thị, đối chiếu CloudTrail;
+  - tool mới: CloudTrail, CloudWatch metrics + alarms, Logs (log groups + Insights), Elastic IP, NAT Gateway; tool DNS chỉ phân giải tên được phép (chống rò dữ liệu); che số điện thoại;
+  - `BedrockProvider` (SDK `anthropic`, client Mantle, `anthropic.claude-opus-5-5`) và `AnthropicProvider` dùng chung `app/llm/claude.py` — **chưa gọi Bedrock thật** (máy dev không có quyền);
+  - seed LocalStack KB1, KB2, KB4–KB7 khớp Bảng 2.14, thêm KB8 (instance stop) và KB9 (prompt injection); file đáp án + `infra/eval/run_eval.py` chấm theo Bảng 2.15.
+  - 152 test BE, 10 test FE.
+- [ ] **Tiếp theo**: chạy `run_eval.py --runs 5` với Bedrock thật; môi trường AWS thật cho KB3 + CloudTrail; checklist runner; auth Cognito; khắc phục có phê duyệt (cần sửa ràng buộc #1 trước)
 
 ## Bố cục repo
 
@@ -78,7 +86,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 1. **Chỉ đọc AWS.** Không bao giờ thêm action tạo/sửa/xoá (chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`). Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt`.
 2. **Không log / in / commit credentials**, secret, `.env`. Credentials tạm thời chỉ ở bộ nhớ.
 3. Dữ liệu AWS đưa vào LLM **phải** qua `app/sanitizer.py`.
-4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py`; boto3 dùng cho **tài khoản người dùng** chỉ xuất hiện trong `app/aws/` (ngoại lệ dev: `infra/localstack/seed.py` tạo tài nguyên, chỉ chạy với LocalStack).
+4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py` (cộng `submit_diagnosis` — kênh trả lời do vòng lặp xử lý, không chạm AWS); boto3 dùng cho **tài khoản người dùng** chỉ xuất hiện trong `app/aws/` (ngoại lệ dev: `infra/localstack/seed.py` tạo tài nguyên, chỉ chạy với LocalStack; `infra/aws-scenarios/` tạo/sửa tài nguyên kịch bản trong **tài khoản AWS test**, không bao giờ do app gọi).
 5. Đổi endpoint/schema/SSE event → sửa `docs/API_CONTRACT.md` **trước** rồi mới sửa code 2 phía.
    Mọi response JSON theo envelope: thành công `{status_code, message, data}`, lỗi `{status_code, message, error, path, timestamp}` (contract mục 0). Chỉ SSE là ngoại lệ.
 6. Kết luận chẩn đoán phải có bằng chứng; không chắc → `unverified` + lệnh tự kiểm tra, **không đoán**.
