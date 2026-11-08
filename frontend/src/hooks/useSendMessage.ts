@@ -94,6 +94,7 @@ export function useSendMessage(conversationId: string | undefined) {
                         status: e.data.status,
                         output_summary: e.data.output_summary,
                         duration_ms: e.data.duration_ms,
+                        cached: e.data.cached ?? false,
                         error: e.data.status === 'error' ? e.data.output_summary : null,
                       }
                     : tc,

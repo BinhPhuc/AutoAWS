@@ -24,6 +24,7 @@ export type ApiErrorCode =
   | 'AWS_ACCESS_DENIED'
   | 'LLM_UNAVAILABLE'
   | 'MAX_ITERATIONS'
+  | 'AGENT_LIMIT'
   | 'NOT_FOUND'
   | 'METHOD_NOT_ALLOWED'
   | 'NOT_IMPLEMENTED'
@@ -92,10 +93,23 @@ export interface CloudFormationInfo {
 // ---------- Conversations ----------
 export type Confidence = 'high' | 'medium' | 'low'
 
+/** Set by the server from the tool results it saw (API_CONTRACT §3). */
+export type Verification = 'read' | 'inferred' | 'not_found'
+
 export interface Evidence {
   text: string
   source: string
+  resource_id?: string | null
+  field?: string | null
+  value?: string | null
   verified: boolean
+  verification?: Verification | null
+}
+
+export interface RootCause {
+  statement: string
+  confidence: Confidence
+  evidence: Evidence[]
 }
 
 export interface Unverified {
@@ -103,13 +117,15 @@ export interface Unverified {
   how_to_check: string
 }
 
+export type LimitReached = 'max_iterations' | 'time' | 'tokens' | 'tool_calls'
+
 export interface DiagnosisAnswer {
   summary: string
-  cause: string
-  evidence: Evidence[]
+  root_causes: RootCause[]
   fix_steps: string[]
   unverified: Unverified[]
   confidence: Confidence
+  limit_reached?: LimitReached | null
 }
 
 export interface ToolCall {
@@ -120,6 +136,7 @@ export interface ToolCall {
   status: 'ok' | 'error'
   error: string | null
   duration_ms: number
+  cached?: boolean
 }
 
 export interface Message {
@@ -159,7 +176,13 @@ export interface ToolCallEvent {
 }
 export interface ToolResultEvent {
   type: 'tool_result'
-  data: { id: string; status: 'ok' | 'error'; output_summary: string; duration_ms: number }
+  data: {
+    id: string
+    status: 'ok' | 'error'
+    output_summary: string
+    duration_ms: number
+    cached?: boolean
+  }
 }
 export interface AnswerEvent {
   type: 'answer'

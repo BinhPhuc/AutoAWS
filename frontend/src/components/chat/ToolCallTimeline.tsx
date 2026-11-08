@@ -52,7 +52,11 @@ export function ToolCallTimeline({
                     ) : (
                       <CircleCheck className="size-3.5 text-emerald-600" />
                     )}
-                    {tc.duration_ms > 0 && <span>{tc.duration_ms} ms</span>}
+                    {tc.cached ? (
+                      <span className="rounded bg-muted px-1">{t.cached}</span>
+                    ) : (
+                      tc.duration_ms > 0 && <span>{tc.duration_ms} ms</span>
+                    )}
                   </span>
                 </div>
                 {Object.keys(tc.input ?? {}).length > 0 && (

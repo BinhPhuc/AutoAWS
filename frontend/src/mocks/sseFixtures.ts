@@ -63,34 +63,50 @@ const kb1: Scenario = {
   content: 'Subnet không có đường ra Internet; Security Group không phải nguyên nhân.',
   answer: {
     summary: 'Subnet không có đường ra Internet; Security Group không phải nguyên nhân.',
-    cause:
-      'Route table rtb-07c9 gắn với subnet subnet-0a1b không có tuyến 0.0.0.0/0 tới Internet Gateway, nên gói tin SSH từ ngoài không tới được instance dù SG đã mở port 22.',
-    evidence: [
+    root_causes: [
       {
-        text: 'Instance i-0abc1234 đang running, 2/2 status check đạt, public IP 54.169.10.20',
-        source: 'describe_instances',
-        verified: true,
-      },
-      {
-        text: 'Security Group sg-0d4e cho phép TCP/22 từ 0.0.0.0/0',
-        source: 'describe_security_groups',
-        verified: true,
-      },
-      {
-        text: 'rtb-07c9 chỉ có tuyến local 10.0.0.0/16, không có tuyến tới igw',
-        source: 'describe_route_tables',
-        verified: true,
-      },
-      {
-        text: 'ReplaceRouteTableAssociation lúc 09:14 ngày 09/10/2026 bởi user dev-tuan',
-        source: 'cloudtrail_lookup_events',
-        verified: true,
+        statement:
+          'Route table rtb-07c9 gắn với subnet subnet-0a1b không có tuyến 0.0.0.0/0 tới Internet Gateway, nên gói tin SSH từ ngoài không tới được instance dù SG đã mở port 22.',
+        confidence: 'high',
+        evidence: [
+          {
+            text: 'rtb-07c9 chỉ có tuyến local 10.0.0.0/16, không có tuyến tới igw',
+            source: 'describe_route_tables',
+            resource_id: 'rtb-07c9',
+            field: 'routes',
+            value: '10.0.0.0/16 → local',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'ReplaceRouteTableAssociation lúc 16:14 (UTC+7) ngày 09/10/2026 bởi user dev-tuan',
+            source: 'cloudtrail_lookup_events',
+            resource_id: 'subnet-0a1b',
+            value: 'ReplaceRouteTableAssociation',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'SSM Agent của i-0abc1234 mất kết nối từ cùng thời điểm (không còn đường tới endpoint SSM)',
+            source: 'ssm_describe_instance_information',
+            resource_id: 'i-0abc1234',
+            value: 'ConnectionLost',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'Security Group sg-0d4e cho phép TCP/22 từ 0.0.0.0/0 — không phải nguyên nhân',
+            source: 'describe_security_groups',
+            resource_id: 'sg-0d4e',
+            verified: true,
+            verification: 'read',
+          },
+        ],
       },
     ],
     fix_steps: [
       'Gắn lại subnet-0a1b vào route table public (rtb-public), hoặc',
       'Thêm tuyến 0.0.0.0/0 → igw-xxxx vào rtb-07c9',
-      'Tạm thời: truy cập qua Session Manager vì SSM Agent đang Online',
     ],
     unverified: [
       { text: 'sshd có đang chạy trong máy không', how_to_check: 'sudo systemctl status sshd' },
@@ -136,28 +152,52 @@ const kb2: Scenario = {
   content: 'Hai vấn đề: bản ghi DNS trỏ tới IP cũ và Security Group chưa mở port 8080.',
   answer: {
     summary: 'Hai vấn đề: bản ghi DNS trỏ tới IP cũ và Security Group chưa mở port 8080.',
-    cause:
-      'Instance bị stop/start hôm qua nên public IP động đã đổi từ 13.212.44.10 sang 54.169.88.2, nhưng bản ghi A vẫn trỏ IP cũ. Ngoài ra sg-0d4e chưa cho phép TCP/8080.',
-    evidence: [
+    root_causes: [
       {
-        text: 'app.example.com phân giải về 13.212.44.10',
-        source: 'resolve_dns_public',
-        verified: true,
+        statement:
+          'Instance bị stop/start hôm qua nên public IP động đã đổi từ 13.212.44.10 sang 54.169.88.2, nhưng bản ghi A vẫn trỏ IP cũ.',
+        confidence: 'high',
+        evidence: [
+          {
+            text: 'app.example.com phân giải về 13.212.44.10',
+            source: 'resolve_dns_public',
+            resource_id: 'app.example.com',
+            value: '13.212.44.10',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'Public IP hiện tại của i-0def5678 là 54.169.88.2 (không phải Elastic IP)',
+            source: 'describe_instances',
+            resource_id: 'i-0def5678',
+            field: 'public_ip',
+            value: '54.169.88.2',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'StopInstances / StartInstances lúc 03:02–03:10 (UTC+7) ngày 16/10 bởi admin',
+            source: 'cloudtrail_lookup_events',
+            resource_id: 'i-0def5678',
+            verified: true,
+            verification: 'read',
+          },
+        ],
       },
       {
-        text: 'Public IP hiện tại của i-0def5678 là 54.169.88.2',
-        source: 'describe_instances',
-        verified: true,
-      },
-      {
-        text: 'StopInstances / StartInstances lúc 20:02–20:10 ngày 15/10 bởi admin',
-        source: 'cloudtrail_lookup_events',
-        verified: true,
-      },
-      {
-        text: 'sg-0d4e không có rule inbound cho port 8080',
-        source: 'describe_security_groups',
-        verified: true,
+        statement: 'Security Group sg-0d4e chưa cho phép inbound TCP/8080.',
+        confidence: 'high',
+        evidence: [
+          {
+            text: 'sg-0d4e chỉ mở 22/tcp và 80/tcp, không có rule cho 8080',
+            source: 'describe_security_groups',
+            resource_id: 'sg-0d4e',
+            field: 'inbound',
+            value: '22/tcp, 80/tcp',
+            verified: true,
+            verification: 'read',
+          },
+        ],
       },
     ],
     fix_steps: [
@@ -176,7 +216,7 @@ const kb2: Scenario = {
 }
 
 const kb3: Scenario = {
-  match: (q) => /502|5xx|bad gateway|load balancer|health/i.test(q),
+  match: (q) => /unhealthy|502|5xx|bad gateway|load balancer|health/i.test(q),
   steps: [
     {
       tool: 'elbv2_describe_load_balancers',
@@ -186,8 +226,13 @@ const kb3: Scenario = {
     },
     {
       tool: 'cloudwatch_get_metric_data',
-      input: { metric: 'HTTPCode_ELB_5XX_Count', hours: 6 },
-      output: '5xx: 0 until 14:04, then 120–140/min from 14:05',
+      input: {
+        namespace: 'AWS/ApplicationELB',
+        metric_name: 'UnHealthyHostCount',
+        stat: 'Maximum',
+        hours: 6,
+      },
+      output: 'UnHealthyHostCount: 0 until 07:04Z, then 2 from 07:05Z',
       ms: 700,
     },
     {
@@ -214,33 +259,46 @@ const kb3: Scenario = {
   answer: {
     summary:
       'Phiên bản mới đổi đường dẫn health check thành /api/health, target group vẫn kiểm tra /health nên mọi target bị đánh dấu unhealthy.',
-    cause:
-      'Lượt triển khai lúc 14:03 đưa phiên bản v2.4.0 lên, phiên bản này không còn phục vụ /health (trả 404). Target group tg-web vẫn health check /health, do đó Load Balancer coi 2/2 target là unhealthy và trả 502.',
-    evidence: [
+    root_causes: [
       {
-        text: 'HTTPCode_ELB_5XX_Count tăng đột biến từ 14:05',
-        source: 'cloudwatch_get_metric_data',
-        verified: true,
-      },
-      {
-        text: '2/2 target unhealthy, lý do Target.ResponseCodeMismatch (/health → 404)',
-        source: 'elbv2_describe_target_health',
-        verified: true,
-      },
-      {
-        text: 'Log ứng dụng: GET /health 404, GET /api/health 200 sau 14:03',
-        source: 'logs_insights_query',
-        verified: true,
-      },
-      {
-        text: 'UpdateService lúc 14:03 bởi deploy-bot; cấu hình target group không đổi',
-        source: 'cloudtrail_lookup_events',
-        verified: true,
+        statement:
+          'Lượt triển khai lúc 14:03 (UTC+7) đưa phiên bản v2.4.0 lên, phiên bản này không còn phục vụ /health (trả 404). Target group tg-web vẫn health check /health, nên Load Balancer coi 2/2 target là unhealthy. Website vẫn chạy vì khi mọi target unhealthy, ALB vẫn chuyển request tới tất cả (fail-open).',
+        confidence: 'high',
+        evidence: [
+          {
+            text: 'UnHealthyHostCount tăng từ 0 lên 2 lúc 14:05 (UTC+7)',
+            source: 'cloudwatch_get_metric_data',
+            value: '2',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: '2/2 target unhealthy, lý do Target.ResponseCodeMismatch (/health → 404)',
+            source: 'elbv2_describe_target_health',
+            resource_id: 'tg-web',
+            value: 'Target.ResponseCodeMismatch',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'Log ứng dụng: GET /health 404, GET /api/health 200 sau 14:03',
+            source: 'logs_insights_query',
+            verified: true,
+            verification: 'read',
+          },
+          {
+            text: 'UpdateService lúc 14:03 bởi deploy-bot; cấu hình target group không đổi',
+            source: 'cloudtrail_lookup_events',
+            verified: true,
+            verification: 'read',
+          },
+        ],
       },
     ],
     fix_steps: [
       'Cập nhật health check path của tg-web thành /api/health, hoặc',
       'Bổ sung lại route /health trong ứng dụng rồi triển khai lại',
+      'Nếu dùng Auto Scaling với health check kiểu ELB: sửa ngay, vì instance sẽ bị thay liên tục',
     ],
     unverified: [],
     confidence: 'high',
@@ -261,15 +319,7 @@ const fallback: Scenario = {
   content: 'Chưa đủ thông tin để kết luận. Hãy mô tả rõ hơn tài nguyên và triệu chứng.',
   answer: {
     summary: 'Chưa đủ thông tin để kết luận.',
-    cause:
-      'Câu hỏi chưa nêu tài nguyên cụ thể (instance, tên miền, load balancer) hoặc triệu chứng (mã lỗi, thời điểm) nên agent chưa khoanh vùng được.',
-    evidence: [
-      {
-        text: 'Tài khoản 123456789012 có 3 instance (2 running, 1 stopped)',
-        source: 'describe_instances',
-        verified: true,
-      },
-    ],
+    root_causes: [],
     fix_steps: ['Mô tả lại sự cố kèm tên tài nguyên, mã lỗi và thời điểm bắt đầu'],
     unverified: [
       {

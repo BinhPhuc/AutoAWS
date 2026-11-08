@@ -5,15 +5,46 @@ import type { DiagnosisAnswer } from '@/api/types'
 import { DiagnosisCard } from './DiagnosisCard'
 
 const answer: DiagnosisAnswer = {
-  summary: 'Subnet không có đường ra Internet.',
-  cause: 'Route table rtb-07c9 không có tuyến 0.0.0.0/0.',
-  evidence: [
-    { text: 'rtb-07c9 chỉ có tuyến local', source: 'describe_route_tables', verified: true },
-    { text: 'Có thể do deploy gần đây', source: 'describe_instances', verified: false },
+  summary: 'Tên miền trỏ IP cũ và Security Group chưa mở 8080.',
+  root_causes: [
+    {
+      statement: 'Bản ghi A của app.example.com trỏ về IP cũ 13.212.10.20.',
+      confidence: 'high',
+      evidence: [
+        {
+          text: 'Route 53 trả 13.212.10.20',
+          source: 'route53_list_records',
+          resource_id: 'app.example.com',
+          value: '13.212.10.20',
+          verified: true,
+          verification: 'read',
+        },
+        {
+          text: 'Có thể instance đã stop/start',
+          source: 'describe_instances',
+          verified: false,
+          verification: 'inferred',
+        },
+      ],
+    },
+    {
+      statement: 'Security Group sg-0d4e chưa mở inbound TCP/8080.',
+      confidence: 'medium',
+      evidence: [
+        {
+          text: 'Không thấy luật 8080',
+          source: 'describe_security_groups',
+          resource_id: 'sg-0bogus',
+          verified: false,
+          verification: 'not_found',
+        },
+      ],
+    },
   ],
-  fix_steps: ['Thêm tuyến 0.0.0.0/0 → igw'],
-  unverified: [{ text: 'sshd có chạy không', how_to_check: 'systemctl status sshd' }],
+  fix_steps: ['Gắn Elastic IP', 'Mở TCP/8080'],
+  unverified: [{ text: 'Container có chạy không', how_to_check: 'docker ps' }],
   confidence: 'high',
+  limit_reached: 'time',
 }
 
 function wrap(ui: React.ReactElement) {
@@ -22,18 +53,30 @@ function wrap(ui: React.ReactElement) {
 }
 
 describe('DiagnosisCard', () => {
-  it('renders the four sections with badges', () => {
+  it('renders every root cause with its evidence and the server checks', () => {
     render(wrap(<DiagnosisCard answer={answer} />))
-    expect(screen.getByText('Root cause')).toBeInTheDocument()
-    expect(screen.getByText('Evidence')).toBeInTheDocument()
+    expect(screen.getByText('Root causes (2)')).toBeInTheDocument()
+    expect(screen.getAllByTestId('root-cause')).toHaveLength(2)
     expect(screen.getByText('How to fix')).toBeInTheDocument()
     expect(screen.getByText('Not verified')).toBeInTheDocument()
     expect(screen.getByText('Verified from AWS')).toBeInTheDocument()
     expect(screen.getByText('Inferred')).toBeInTheDocument()
+    expect(screen.getByText('Not found in data read')).toBeInTheDocument()
+    expect(screen.getByText('app.example.com = 13.212.10.20')).toBeInTheDocument()
     expect(screen.getByText('Check manually')).toBeInTheDocument()
-    expect(screen.getByText('High confidence')).toBeInTheDocument()
-    expect(screen.getByText('systemctl status sshd')).toBeInTheDocument()
+    expect(screen.getAllByText('High confidence')).toHaveLength(2) // overall + first cause
+    expect(screen.getByText('Medium confidence')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('time limit')
     // Vietnamese content is rendered as-is
-    expect(screen.getByText('Subnet không có đường ra Internet.')).toBeInTheDocument()
+    expect(
+      screen.getByText('Tên miền trỏ IP cũ và Security Group chưa mở 8080.'),
+    ).toBeInTheDocument()
+  })
+
+  it('handles an answer without root causes', () => {
+    render(wrap(<DiagnosisCard answer={{ ...answer, root_causes: [], limit_reached: null }} />))
+    expect(screen.getByText('Root cause')).toBeInTheDocument()
+    expect(screen.getByText(/No misconfiguration found/)).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })
