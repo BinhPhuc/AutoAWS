@@ -8,10 +8,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ConnectionCard } from '@/components/connections/ConnectionCard'
 import { ConnectionForm } from '@/components/connections/ConnectionForm'
+import { ConnectionsTable } from '@/components/connections/ConnectionsTable'
+import { PageBody, PageHeader } from '@/components/layout/PageHeader'
+import { Panel } from '@/components/layout/Panel'
 import { EmptyState, PageError } from '@/components/layout/PageState'
 import { useConnections } from '@/hooks/useConnections'
 import { S } from '@/lib/strings'
@@ -20,25 +21,30 @@ export function ConnectPage() {
   const { data, isPending, isError, error, refetch } = useConnections()
   const [open, setOpen] = useState(false)
   const t = S.connections
+  const add = (
+    <Button onClick={() => setOpen(true)}>
+      <Plus />
+      {t.add}
+    </Button>
+  )
 
   return (
-    <ScrollArea className="h-full">
-      <div className="mx-auto max-w-3xl space-y-6 p-4 md:p-8">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="font-heading text-xl font-semibold">{t.title}</h1>
-            <p className="text-sm text-muted-foreground">{t.subtitle}</p>
-          </div>
-          <Button onClick={() => setOpen(true)}>
-            <Plus />
-            {t.add}
-          </Button>
-        </div>
+    <PageBody>
+      <PageHeader title={t.title} description={t.subtitle} actions={add} />
 
+      <Panel
+        title={t.listTitle}
+        extra={
+          data && (
+            <span className="tabular text-xs text-muted-foreground">{t.count(data.length)}</span>
+          )
+        }
+        flush
+      >
         {isPending ? (
-          <div className="space-y-3">
-            <Skeleton className="h-36" />
-            <Skeleton className="h-36" />
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-9" />
+            <Skeleton className="h-9" />
           </div>
         ) : isError ? (
           <PageError error={error} onRetry={() => void refetch()} />
@@ -47,21 +53,12 @@ export function ConnectPage() {
             icon={<Plug className="size-8" />}
             title={t.empty}
             body={t.emptyHint}
-            action={
-              <Button onClick={() => setOpen(true)}>
-                <Plus />
-                {t.add}
-              </Button>
-            }
+            action={add}
           />
         ) : (
-          <div className="space-y-3">
-            {data.map((c) => (
-              <ConnectionCard key={c.id} connection={c} />
-            ))}
-          </div>
+          <ConnectionsTable connections={data} />
         )}
-      </div>
+      </Panel>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -72,6 +69,6 @@ export function ConnectPage() {
           <ConnectionForm onCreated={() => setOpen(false)} />
         </DialogContent>
       </Dialog>
-    </ScrollArea>
+    </PageBody>
   )
 }

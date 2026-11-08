@@ -1,48 +1,55 @@
 import { AlertTriangle, CheckCircle2, CircleHelp, Lightbulb, Search } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { Confidence, DiagnosisAnswer, Evidence, RootCause } from '@/api/types'
+import { Panel } from '@/components/layout/Panel'
+import { StatusTag, type Tone } from '@/components/ui/status-tag'
+import { Mono, TBody, THead, Table, Td, Th, Tr } from '@/components/ui/table'
 import { useToolLookup } from '@/hooks/useTools'
+import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
-import { cn } from '@/lib/utils'
 import { CopyButton } from '@/components/connections/CloudFormationSnippet'
 
-const confidenceClass: Record<Confidence, string> = {
-  high: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-  medium: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-  low: 'bg-muted text-muted-foreground',
+const confidenceTone: Record<Confidence, Tone> = {
+  high: 'success',
+  medium: 'warning',
+  low: 'neutral',
 }
 
-function ConfidenceBadge({ value }: { value: Confidence }) {
+function ConfidenceTag({ value }: { value: Confidence }) {
   return (
-    <Badge variant="outline" className={cn('border-transparent', confidenceClass[value])}>
-      {S.diagnosis.confidence[value] ?? value}
-    </Badge>
+    <StatusTag tone={confidenceTone[value]}>{S.diagnosis.confidence[value] ?? value}</StatusTag>
   )
 }
 
-export function DiagnosisCard({ answer }: { answer: DiagnosisAnswer }) {
+export function DiagnosisCard({ answer, time }: { answer: DiagnosisAnswer; time?: string }) {
   const t = S.diagnosis
   const causes = answer.root_causes ?? []
 
   return (
-    <Card data-testid="diagnosis-card">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-start justify-between gap-2">
-          <span className="leading-snug">{answer.summary}</span>
-          <ConfidenceBadge value={answer.confidence} />
-        </CardTitle>
+    <div data-testid="diagnosis-card">
+      <Panel
+        title={t.title}
+        extra={
+          <>
+            {time && (
+              <span className="tabular text-xs text-muted-foreground">{formatTime(time)}</span>
+            )}
+            <ConfidenceTag value={answer.confidence} />
+          </>
+        }
+        bodyClassName="space-y-5"
+      >
+        <p className="text-[15px] leading-relaxed font-medium">{answer.summary}</p>
+
         {answer.limit_reached && (
           <p
             role="status"
-            className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300 [&_svg]:size-3.5"
+            className="flex items-center gap-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-warning"
           >
-            <AlertTriangle />
+            <AlertTriangle className="size-4 shrink-0" aria-hidden />
             {t.limitReached[answer.limit_reached] ?? answer.limit_reached}
           </p>
         )}
-      </CardHeader>
-      <CardContent className="space-y-5">
+
         <Section
           icon={<Search />}
           title={causes.length > 1 ? t.rootCauses(causes.length) : t.rootCause}
@@ -60,7 +67,7 @@ export function DiagnosisCard({ answer }: { answer: DiagnosisAnswer }) {
 
         {answer.fix_steps.length > 0 && (
           <Section icon={<Lightbulb />} title={t.howToFix}>
-            <ol className="list-decimal space-y-1 pl-5 leading-relaxed">
+            <ol className="list-decimal space-y-1 pl-5 leading-relaxed marker:text-muted-foreground">
               {answer.fix_steps.map((s, i) => (
                 <li key={i}>{s}</li>
               ))}
@@ -69,123 +76,143 @@ export function DiagnosisCard({ answer }: { answer: DiagnosisAnswer }) {
         )}
 
         {answer.unverified.length > 0 && (
-          <Section icon={<CircleHelp />} title={t.notVerified}>
-            <ul className="space-y-2">
-              {answer.unverified.map((u, i) => (
-                <li key={i} className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span>{u.text}</span>
-                    <Badge
-                      variant="outline"
-                      className="border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                    >
-                      {t.checkManually}
-                    </Badge>
-                  </div>
-                  {u.how_to_check && (
-                    <div className="flex items-center gap-2">
-                      <code className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
-                        {u.how_to_check}
-                      </code>
-                      <CopyButton text={u.how_to_check} />
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+          <Section
+            icon={<CircleHelp />}
+            title={t.notVerified}
+            extra={<StatusTag tone="warning">{t.checkManually}</StatusTag>}
+          >
+            <div className="rounded-md border">
+              <Table>
+                <THead>
+                  <Tr>
+                    <Th>{t.colWhat}</Th>
+                    <Th>{t.colHow}</Th>
+                  </Tr>
+                </THead>
+                <TBody>
+                  {answer.unverified.map((u, i) => (
+                    <Tr key={i}>
+                      <Td className="w-1/2">{u.text}</Td>
+                      <Td>
+                        {u.how_to_check && (
+                          <div className="flex items-start gap-1.5">
+                            <code className="min-w-0 flex-1 rounded-sm bg-muted px-2 py-1 font-mono text-xs [overflow-wrap:anywhere]">
+                              {u.how_to_check}
+                            </code>
+                            <CopyButton text={u.how_to_check} />
+                          </div>
+                        )}
+                      </Td>
+                    </Tr>
+                  ))}
+                </TBody>
+              </Table>
+            </div>
           </Section>
         )}
-      </CardContent>
-    </Card>
+      </Panel>
+    </div>
   )
 }
 
 function RootCauseItem({ cause, index }: { cause: RootCause; index: number | null }) {
+  const t = S.diagnosis
   return (
     <li className="space-y-2" data-testid="root-cause">
-      <div className="flex flex-wrap items-start gap-2">
+      <div className="flex items-start gap-2">
         {index !== null && (
-          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-sm bg-primary text-xs font-semibold text-primary-foreground">
             {index}
           </span>
         )}
         <p className="flex-1 leading-relaxed">{cause.statement}</p>
-        <ConfidenceBadge value={cause.confidence} />
+        <ConfidenceTag value={cause.confidence} />
       </div>
       {cause.evidence.length > 0 && (
-        <ul className="space-y-1.5 border-l pl-3">
-          {cause.evidence.map((e, i) => (
-            <EvidenceItem key={i} evidence={e} />
-          ))}
-        </ul>
+        <div className="rounded-md border">
+          <Table>
+            <THead>
+              <Tr>
+                <Th>{t.colEvidence}</Th>
+                <Th>{t.colSource}</Th>
+                <Th>{t.colResource}</Th>
+                <Th>{t.colCheck}</Th>
+              </Tr>
+            </THead>
+            <TBody>
+              {cause.evidence.map((e, i) => (
+                <EvidenceRow key={i} evidence={e} />
+              ))}
+            </TBody>
+          </Table>
+        </div>
       )}
     </li>
   )
 }
 
-function EvidenceItem({ evidence: e }: { evidence: Evidence }) {
+function EvidenceRow({ evidence: e }: { evidence: Evidence }) {
   const lookup = useToolLookup()
   const t = S.diagnosis
   // Older answers carry only `verified`; the server sets `verification` for new ones.
   const verification = e.verification ?? (e.verified ? 'read' : 'inferred')
   return (
-    <li className="flex flex-wrap items-start gap-x-2 gap-y-1">
-      <span className="leading-relaxed">{e.text}</span>
-      {e.resource_id && (
-        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs break-all">
-          {e.resource_id}
-          {e.value ? ` = ${e.value}` : ''}
-        </code>
-      )}
-      <span className="flex items-center gap-1">
-        <Badge variant="outline" className="font-mono text-[10px]">
-          {lookup(e.source).label}
-        </Badge>
+    <Tr>
+      <Td className="min-w-48">{e.text}</Td>
+      <Td className="whitespace-nowrap">
+        <span className="block">{lookup(e.source).label}</span>
+        <Mono className="text-muted-foreground">{e.source}</Mono>
+      </Td>
+      <Td>
+        {e.resource_id ? (
+          <Mono>
+            {e.resource_id}
+            {e.value ? ` = ${e.value}` : ''}
+          </Mono>
+        ) : (
+          '—'
+        )}
+      </Td>
+      <Td className="whitespace-nowrap">
         {verification === 'read' && (
-          <Badge
-            variant="outline"
-            className="border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-          >
-            <CheckCircle2 />
+          <StatusTag tone="success">
+            <CheckCircle2 aria-hidden />
             {t.verifiedBadge}
-          </Badge>
+          </StatusTag>
         )}
-        {verification === 'inferred' && (
-          <Badge variant="outline" className="text-muted-foreground">
-            {t.inferredBadge}
-          </Badge>
-        )}
+        {verification === 'inferred' && <StatusTag tone="neutral">{t.inferredBadge}</StatusTag>}
         {verification === 'not_found' && (
-          <Badge
-            variant="outline"
-            title={t.notFoundHint}
-            className="border-transparent bg-red-500/15 text-red-700 dark:text-red-300"
-          >
-            <AlertTriangle />
+          <StatusTag tone="danger" title={t.notFoundHint}>
+            <AlertTriangle aria-hidden />
             {t.notFoundBadge}
-          </Badge>
+          </StatusTag>
         )}
-      </span>
-    </li>
+      </Td>
+    </Tr>
   )
 }
 
 function Section({
   icon,
   title,
+  extra,
   children,
 }: {
   icon: React.ReactNode
   title: string
+  extra?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
-    <section className="space-y-1.5">
-      <h4 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase [&_svg]:size-3.5">
-        {icon}
-        {title}
-      </h4>
-      <div className="text-sm">{children}</div>
+    <section className="space-y-2">
+      <div className="flex items-center gap-2">
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold [&_svg]:size-4 [&_svg]:text-muted-foreground">
+          {icon}
+          {title}
+        </h3>
+        {extra}
+      </div>
+      <div>{children}</div>
     </section>
   )
 }

@@ -162,7 +162,9 @@ export function ConnectionForm({ onCreated }: Props) {
         </TabsContent>
 
         <TabsContent value="access_key" className="space-y-3 pt-1">
-          <p className="text-xs text-amber-700 dark:text-amber-300">{t.accessKeyNote}</p>
+          <p className="rounded-sm border border-warning-border bg-warning-bg px-2 py-1 text-xs text-warning">
+            {t.accessKeyNote}
+          </p>
           <Field label={t.accessKeyId} error={errors.accessKeyId} htmlFor="conn-akid">
             <Input
               id="conn-akid"
