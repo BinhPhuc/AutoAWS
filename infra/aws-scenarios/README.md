@@ -63,4 +63,9 @@ $PY infra/eval/run_eval.py --answers infra/aws-scenarios/answers.aws.json --runs
 - **LocalStack**: script có `--endpoint-url http://localhost:4566` để thử nhanh, nhưng CloudFormation của LocalStack
   Community không tạo rule SG/NACL và không có ALB, UserData không chạy — kết quả không đúng như AWS.
   Mô phỏng trên LocalStack dùng `infra/localstack/seed.py`.
-- Template đã kiểm bằng `cfn-lint` (`pip install cfn-lint; cfn-lint infra/aws-scenarios/templates/*.yaml`).
+- App giả lập của KB3 và KB7 nằm ở `infra/demo-apps/` (chạy được cả trên máy). Template chỉ có dòng
+  `#@include ../../demo-apps/<app>.py`; `scenario.py` chèn code vào UserData lúc deploy, nên **deploy bằng
+  `scenario.py`**, không upload thẳng file template. Cần file đã chèn (console, cfn-lint):
+  `scenario.py render kb7 > kb7.rendered.yaml`.
+- Template đã kiểm bằng `cfn-lint` (`pip install cfn-lint; cfn-lint infra/aws-scenarios/templates/*.yaml`),
+  kể cả bản đã chèn app.

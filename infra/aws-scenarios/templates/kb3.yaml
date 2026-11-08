@@ -98,27 +98,7 @@ Resources:
             dnf install -y amazon-cloudwatch-agent
             mkdir -p /opt/app
             cat > /opt/app/server.py <<'PY'
-            import http.server, logging, pathlib
-            logging.basicConfig(filename="/var/log/app.log", level=logging.INFO,
-                                format="%(asctime)s %(levelname)s %(message)s")
-            VERSION = pathlib.Path("/opt/app/VERSION")
-
-            class Handler(http.server.BaseHTTPRequestHandler):
-                def do_GET(self):
-                    v = VERSION.read_text().strip()
-                    # v2 renamed the health endpoint; the target group still checks /health
-                    health = "/api/health" if v.startswith("2") else "/health"
-                    code = 200 if self.path in ("/", health) else 404
-                    self.send_response(code)
-                    self.end_headers()
-                    self.wfile.write(("web v" + v + "\n").encode())
-                    logging.info("GET %s %s (v%s)", self.path, code, v)
-
-                def log_message(self, *args):
-                    pass
-
-            logging.info("starting web v%s", VERSION.read_text().strip())
-            http.server.ThreadingHTTPServer(("", 80), Handler).serve_forever()
+            #@include ../../demo-apps/web_health.py
             PY
             echo 1.4.2 > /opt/app/VERSION
             cat > /etc/systemd/system/app.service <<'UNIT'

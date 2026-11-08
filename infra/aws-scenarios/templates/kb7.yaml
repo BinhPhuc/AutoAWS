@@ -84,46 +84,7 @@ Resources:
           dnf install -y amazon-cloudwatch-agent
           mkdir -p /opt/app
           cat > /opt/app/server.py <<'PY'
-          import http.server, logging, pathlib, socket
-          logging.basicConfig(filename="/var/log/app.log", level=logging.INFO,
-                              format="%(asctime)s %(levelname)s %(message)s")
-          VERSION = pathlib.Path("/opt/app/VERSION")
-          DB = ("10.70.9.15", 5432)  # orders-db.internal; nothing listens there
-
-          class OperationalError(Exception):
-              pass
-
-          def connect_db():
-              try:
-                  socket.create_connection(DB, timeout=3).close()
-              except OSError as e:
-                  raise OperationalError(
-                      "could not connect to server: Connection timed out. Is the server "
-                      'running on host "orders-db.internal" (10.70.9.15) and accepting '
-                      "TCP/IP connections on port 5432?"
-                  ) from e
-
-          class Handler(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  v = VERSION.read_text().strip()
-                  code = 200
-                  if self.path.startswith("/api/") and v.startswith("2.5"):
-                      try:
-                          connect_db()
-                      except OperationalError:
-                          logging.exception("GET %s failed", self.path)
-                          code = 500
-                  self.send_response(code)
-                  self.end_headers()
-                  self.wfile.write(("orders-api v" + v + "\n").encode())
-                  level = logging.ERROR if code >= 500 else logging.INFO
-                  logging.log(level, "GET %s %s", self.path, code)
-
-              def log_message(self, *args):
-                  pass
-
-          logging.info("starting orders-api v%s", VERSION.read_text().strip())
-          http.server.ThreadingHTTPServer(("", 80), Handler).serve_forever()
+          #@include ../../demo-apps/orders_api.py
           PY
           echo 2.4.3 > /opt/app/VERSION
           cat > /etc/systemd/system/app.service <<'UNIT'

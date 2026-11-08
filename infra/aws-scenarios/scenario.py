@@ -20,6 +20,7 @@ infra/eval/run_eval.py reads (--answers infra/aws-scenarios/answers.aws.json).
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -115,6 +116,25 @@ def write_answer(ctx: Ctx, kb: str, **extra) -> None:
 # ---- stack lifecycle ---------------------------------------------------------------------
 
 
+_INCLUDE = re.compile(r"^( *)#@include (\S+)$", re.M)
+
+
+def render(kb: str) -> str:
+    """Template with `#@include <path>` lines replaced by that file, at the same indent.
+
+    The mock apps live in infra/demo-apps/ so they can also run locally; their code goes
+    into the instance's UserData here. `${` is escaped for Fn::Sub.
+    """
+    path = TEMPLATES / f"{kb}.yaml"
+
+    def include(m: re.Match) -> str:
+        source = (path.parent / m.group(2)).resolve()
+        lines = source.read_text().replace("${", "${!").splitlines()
+        return "\n".join(m.group(1) + line if line else "" for line in lines)
+
+    return _INCLUDE.sub(include, path.read_text())
+
+
 def up(ctx: Ctx, kb: str) -> None:
     params = dict(p.split("=", 1) for p in ctx.args.param)
     if kb == "kb2" and not {"HostedZoneId", "DomainName"} <= params.keys():
@@ -124,7 +144,7 @@ def up(ctx: Ctx, kb: str) -> None:
     print(f"Creating stack {ctx.stack(kb)}…")
     ctx.cfn.create_stack(
         StackName=ctx.stack(kb),
-        TemplateBody=(TEMPLATES / f"{kb}.yaml").read_text(),
+        TemplateBody=render(kb),
         Parameters=[{"ParameterKey": k, "ParameterValue": v} for k, v in params.items()],
         Capabilities=["CAPABILITY_IAM"],
         Tags=TAGS + [{"Key": "autoaws:scenario", "Value": kb}],
@@ -318,7 +338,7 @@ def fix(ctx: Ctx, kb: str, quiet: bool = False) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("action", choices=["up", "fault", "fix", "down", "status"])
+    p.add_argument("action", choices=["up", "fault", "fix", "down", "status", "render"])
     p.add_argument("scenario", help="kb1..kb7, or all")
     p.add_argument("--profile", default=None, help="AWS profile of the TEST account")
     p.add_argument("--region", default=None)
@@ -335,6 +355,10 @@ def main() -> None:
         sys.exit(f"Unknown scenario {args.scenario}; use kb1..kb7 or all")
     if args.action == "up" and args.scenario == "all":
         sys.exit("Create scenarios one at a time (kb2 needs a domain, kb3 has an ALB)")
+    if args.action == "render":  # offline: the template as deployed, for cfn-lint / the console
+        for kb in kbs:
+            print(render(kb))
+        return
     ctx = Ctx(args)
 
     if args.action in ("up", "fault", "fix", "down") and not args.yes:
