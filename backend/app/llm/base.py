@@ -1,7 +1,7 @@
-"""Provider-neutral LLM interface. PLACEHOLDER: the real provider is not chosen yet.
+"""Provider-neutral LLM interface.
 
 The agent loop only talks to ``LLMProvider``. A provider converts ``LLMMessage``s and
-``ToolSpec``s into its own API format (Anthropic Messages, Bedrock Converse, ...) and
+``ToolSpec``s into its own API format (OpenAI Chat Completions, Bedrock Converse, ...) and
 returns an ``LLMResponse`` that is either final text or a list of tool calls.
 """
 

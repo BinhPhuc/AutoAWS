@@ -165,3 +165,33 @@ Hoàn thành 2026-10-16. Đã kiểm tra tích hợp thật với backend (khôn
 3. Mọi text hiển thị cho người dùng **tiếng Anh**, gom trong `src/lib/strings.ts`; không hard-code chuỗi trong component.
 4. Không lưu secret vào localStorage; không log body request chứa secret.
 5. Component mới dùng shadcn/ui trước khi tự viết; kiểm tra `ui-ux-pro-max` skill khi cần quyết định UI.
+
+## Hướng dẫn kết nối AWS thật (2026-10-25)
+
+- [x] Tab IAM Role có nút trợ giúp dưới ô Role ARN, mở popup riêng hướng dẫn lấy ARN và tạo role với trust policy/External ID của form.
+- [x] Form kết nối chỉ dùng IAM Role; hai tab Manual setup (IAM)/Automatic setup (CloudFormation), không có trường nhập access key/secret.
+- [x] Hướng dẫn customer từ đầu theo 6 bước: vào IAM trong account customer, trust/External ID → Add permissions (chọn Create inline policy, thay toàn bộ JSON ngay tại mục Policy) → Name, review, and create (role `AutoAWSReadOnly`, path mặc định), copy ARN, lưu và Verify.
+- [x] Policy trust/quyền đọc hiển thị tại bước cần dùng, có nút sao chép tên role và External ID; CLI là tùy chọn. Hướng dẫn customer không yêu cầu tạo IAM user hay sửa quyền backend. Account ID AutoAWS lấy tự động từ API setup; policy sẵn để copy, không yêu cầu người dùng hiểu cấu hình backend hay sửa placeholder. Khi setup chưa sẵn sàng, không hiện nút copy trust policy.
+- [x] Hộp thoại cuộn theo chiều cao màn hình; popup có hai tab Manual setup (IAM)/Automatic setup (CloudFormation) trước khi lưu connection.
+- [x] Nội dung tiếng Anh trong strings.ts, kèm liên kết tài liệu AWS chính thức.
+
+- [x] Nội dung hướng dẫn viết trực tiếp cho người dùng cuối (“your AWS account”), giải thích mục đích và thao tác; không dùng phân vai customer/backend, cấu hình model hoặc yêu cầu tắt demo.
+
+- [x] Popup lồng nhau có backdrop riêng để click bên ngoài chỉ đóng lớp trên cùng; Escape hoạt động và dữ liệu form được giữ.
+- [x] Hướng dẫn role có Retry khi chưa lấy được policy; region menu neo dưới trigger, không căn theo mục đã chọn/không lật lên trên, giới hạn chiều cao và hiển thị tên địa điểm cùng region code.
+
+- [x] Region có cột riêng cho dấu chọn; popup select/dialog giữ khung bo góc bên ngoài và chỉ cuộn nội dung bên trong.
+
+- [x] Hướng dẫn role có thẻ bước đánh số, nhấn mạnh menu/nút AWS, khối tên role “Required · exact name”, External ID “Keep unchanged”, kèm nút Copy tại bước cần dùng.
+
+- [x] Thứ tự hướng dẫn khớp wizard AWS: Select trusted entity → Add permissions → Name, review, and create; inline policy được nhập trước khi tạo role; không mở tab tạo managed policy riêng.
+
+- [x] Đối chiếu trực tiếp AWS Console: Add permissions có radio “Use existing policy”/“Create inline policy”; nhánh inline hiển thị JSON tại mục Policy, không có ô tên policy ở bước này. Hướng dẫn dán JSON, kiểm tra Errors rồi Next.
+
+- [x] Đối chiếu trực tiếp trang Name, review, and create: Role details có Role name/Description; Step 2 Add permissions có Inline policy summary/Inline policy name; thêm tên policy gợi ý và checklist trust/Allow/Explicit deny/tags ở đúng bước cuối.
+
+- [x] CloudFormation preview không cần tạo connection; tải/copy template điền sẵn account ID/External ID, hướng dẫn IAM acknowledgement → CREATE_COMPLETE → Outputs RoleArn. Hai cách cùng trở về form Save & verify; bỏ phần tạo role trên card/sau khi lưu connection.
+
+- [x] Chọn cách tạo role ngay trên form; popup hướng dẫn đồng bộ tab đang chọn, giữ nguyên ARN/External ID khi đổi cách. Request tạo connection từ UI luôn có type=role.
+
+- [x] Hai tab khác nhau ngay trên form: IAM có tên role bắt buộc và nút mở hướng dẫn thủ công; CloudFormation hiển thị tải/copy template và hướng dẫn stack trực tiếp, không ẩn trong popup chung. Các trường ARN/Region/External ID giữ chung.

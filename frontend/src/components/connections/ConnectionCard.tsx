@@ -18,7 +18,6 @@ import { useActiveConnection } from '@/hooks/useActiveConnection'
 import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { StatusBadge } from '@/components/layout/ConnectionBadge'
-import { CloudFormationSnippet } from './CloudFormationSnippet'
 
 export function ConnectionCard({ connection: c }: { connection: Connection }) {
   const navigate = useNavigate()
@@ -26,7 +25,6 @@ export function ConnectionCard({ connection: c }: { connection: Connection }) {
   const remove = useDeleteConnection()
   const { setActiveConnectionId } = useActiveConnection(undefined)
   const [confirm, setConfirm] = useState(false)
-  const [showCfn, setShowCfn] = useState(false)
   const t = S.connections
 
   return (
@@ -82,7 +80,6 @@ export function ConnectionCard({ connection: c }: { connection: Connection }) {
             {c.last_error}
           </p>
         )}
-        {showCfn && c.type === 'role' && <CloudFormationSnippet connectionId={c.id} />}
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -92,11 +89,6 @@ export function ConnectionCard({ connection: c }: { connection: Connection }) {
           >
             {verify.isPending ? t.verifying : t.verify}
           </Button>
-          {c.type === 'role' && (
-            <Button variant="ghost" size="sm" onClick={() => setShowCfn((v) => !v)}>
-              {t.cfn.title}
-            </Button>
-          )}
           {c.status === 'connected' && (
             <Button
               size="sm"

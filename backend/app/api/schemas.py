@@ -31,6 +31,10 @@ class RoleConnectionIn(BaseModel):
 ConnectionIn = Annotated[AccessKeyConnectionIn | RoleConnectionIn, Field(discriminator="type")]
 
 
+class CloudFormationPreviewIn(BaseModel):
+    external_id: str = Field(min_length=2, max_length=1224, pattern=r"^[A-Za-z0-9_+=,.@:/-]+$")
+
+
 class ConnectionOut(BaseModel):
     id: str
     name: str

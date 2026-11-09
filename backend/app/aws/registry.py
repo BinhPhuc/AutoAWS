@@ -15,7 +15,11 @@ from dataclasses import dataclass, field
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from app.config import get_settings
+
 log = logging.getLogger(__name__)
+
+AWSSession = boto3.Session
 
 ToolFn = Callable[[boto3.Session, dict], dict]
 
@@ -99,12 +103,14 @@ def tool(
 def list_tools() -> list[ToolSpec]:
     """Tools ordered by diagnosis path (group order) then name — stable for UI and prompts."""
     _ensure_loaded()
-    return sorted(REGISTRY.values(), key=lambda t: (GROUPS.index(t.group), t.name))
+    demo = get_settings().agent_demo_mode
+    selected = [t for t in REGISTRY.values() if (t.name == "demo_instance_status") == demo]
+    return sorted(selected, key=lambda t: (GROUPS.index(t.group), t.name))
 
 
 def get_tool(name: str) -> ToolSpec | None:
     _ensure_loaded()
-    return REGISTRY.get(name)
+    return next((spec for spec in list_tools() if spec.name == name), None)
 
 
 def all_aws_actions() -> list[str]:

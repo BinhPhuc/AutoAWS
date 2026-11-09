@@ -10,10 +10,26 @@ export const connectionKeys = {
   cfn: (id: string) => ['connections', id, 'cloudformation'] as const,
 }
 
+export function useConnectionSetup(enabled = true) {
+  return useQuery({
+    queryKey: ['connection-setup'],
+    queryFn: async () => (await connectionsApi.setup()).data,
+    enabled,
+  })
+}
+
 export function useConnections() {
   return useQuery({
     queryKey: connectionKeys.all,
     queryFn: async () => (await connectionsApi.list()).data,
+  })
+}
+
+export function useCloudFormationPreview(externalId: string) {
+  return useQuery({
+    queryKey: ['cloudformation-preview', externalId],
+    queryFn: async () => (await connectionsApi.cloudformationPreview(externalId)).data,
+    enabled: !!externalId,
   })
 }
 
