@@ -30,7 +30,7 @@ pnpm build    # tsc + vite build → dist/
 
 ```
 src/
-├── api/          client.ts (envelope + ApiError), sse.ts (POST + ReadableStream), types.ts (mirror contract), *.ts (endpoint modules)
+├── api/          client.ts (envelope + ApiError), jobs.ts (poll / cancel), proposals.ts, types.ts (mirror contract), *.ts (endpoint modules)
 ├── hooks/        useConnections, useConversations, useSendMessage (job + polling live state), useTools, useActiveConnection
 ├── pages/        ChatPage (Diagnose), ProposalsPage, ConnectPage, ToolsPage, ChecklistPage (placeholder), HomeRedirect
 ├── components/   layout/ (AppShell, Sidebar, HeaderBar, PageHeader, Panel), connections/ (ConnectionsTable, …), chat/ (DiagnosisCard, ToolCallTimeline, ConversationList, …), remediation/ (ProposalCard), ui/ (shadcn + status-tag, table)
