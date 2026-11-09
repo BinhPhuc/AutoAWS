@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Read-only IAM role that lets AutoAWS diagnose incidents in this account.
+
+Parameters:
+  PlatformAccountId:
+    Type: String
+    Default: ''
+    Description: AWS account id of the AutoAWS platform (the account that assumes this role)
+  ExternalId:
+    Type: String
+    Default: ''
+    Description: Unique external id shown in the AutoAWS app for this connection
+
+Resources:
+  AutoAWSReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AutoAWSReadOnly
+      Description: Read-only access for AutoAWS incident diagnosis
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${PlatformAccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: AutoAWSReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowReadOnlyDiagnostics
+                Effect: Allow
+                Resource: '*'
+                Action:
+                  - cloudtrail:LookupEvents
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInternetGateways
+                  - ec2:DescribeNetworkAcls
+                  - ec2:DescribeRegions
+                  - ec2:DescribeRouteTables
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - elasticloadbalancing:DescribeListeners
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTargetGroups
+                  - elasticloadbalancing:DescribeTargetHealth
+                  - logs:DescribeLogGroups
+                  - logs:GetQueryResults
+                  - logs:StartQuery
+                  - route53:ListHostedZones
+                  - route53:ListResourceRecordSets
+                  - ssm:DescribeInstanceInformation
+                  - sts:GetCallerIdentity
+              - Sid: DenyBusinessData
+                Effect: Deny
+                Resource: '*'
+                Action:
+                  - s3:GetObject*
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter*
+                  - kms:Decrypt
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - rds-data:*
+
+Outputs:
+  RoleArn:
+    Description: Paste this ARN into AutoAWS
+    Value: !GetAtt AutoAWSReadOnlyRole.Arn

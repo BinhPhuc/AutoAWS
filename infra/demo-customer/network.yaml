@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  AutoAWS demo-customer network (task 11) - VPC with 2 public subnets in 2 AZs,
+  an Internet Gateway, a public route table and a spare isolated route table for KB1.
+  All resources are free of charge. Deploy with --tags Project=autoaws-demo.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+  SubnetACidr:
+    Type: String
+    Default: 10.20.1.0/24
+  SubnetBCidr:
+    Type: String
+    Default: 10.20.2.0/24
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - {Key: Name, Value: demo-customer-vpc}
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - {Key: Name, Value: demo-customer-igw}
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - {Key: Name, Value: demo-public-a}
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - {Key: Name, Value: demo-public-b}
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: demo-public-rt}
+
+  DefaultRouteToInternet:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # Only the implicit local route. KB1 (task 13) moves a subnet onto this table
+  # with ReplaceRouteTableAssociation to cut its internet access.
+  IsolatedRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: demo-isolated-rt}
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+  InternetGatewayId:
+    Value: !Ref InternetGateway
+  PublicSubnetA:
+    Value: !Ref PublicSubnetA
+  PublicSubnetAZoneA:
+    Value: !GetAtt PublicSubnetA.AvailabilityZone
+  PublicSubnetB:
+    Value: !Ref PublicSubnetB
+  PublicSubnetAZoneB:
+    Value: !GetAtt PublicSubnetB.AvailabilityZone
+  PublicRouteTable:
+    Value: !Ref PublicRouteTable
+  PublicSubnetARouteTableAssociation:
+    Description: Association id needed by KB1 (aws ec2 replace-route-table-association)
+    Value: !Ref PublicSubnetARouteTableAssociation
+  IsolatedRouteTable:
+    Value: !Ref IsolatedRouteTable
