@@ -64,7 +64,7 @@ export function ConnectPage() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] overflow-hidden sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{t.form.title}</DialogTitle>
             <DialogDescription>{t.form.description}</DialogDescription>

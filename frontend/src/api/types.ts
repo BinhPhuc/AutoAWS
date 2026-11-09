@@ -36,6 +36,11 @@ export interface Health {
 export type ConnectionType = 'access_key' | 'role'
 export type ConnectionStatus = 'pending' | 'connected' | 'failed'
 
+export interface ConnectionSetup {
+  account_id: string | null
+  role_name: string
+}
+
 export interface Connection {
   id: string
   name: string

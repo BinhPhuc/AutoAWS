@@ -15,10 +15,13 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 
 - [x] Kế hoạch backend/frontend (`docs/*_PLAN.md`) — đã duyệt, mọi task B1–B10, F1–F8 đã tick
 - [x] Hợp đồng API `docs/API_CONTRACT.md`
-- [x] `backend/` FastAPI: connections (access key + role/ExternalId + CloudFormation), 13 tool AWS thật + 3 stub M3, agent loop + SSE, sanitizer, MockProvider; 25 test (moto)
+- [x] `backend/` FastAPI: connections (access key + role/ExternalId + CloudFormation), 13 tool AWS thật + 3 stub M3, agent loop + SSE, sanitizer, mock/Bedrock/OpenAI-compatible; 91 test (2026-10-26, AWS giả lập bằng moto)
 - [x] `frontend/` Vite + React 19 + TS + Tailwind + shadcn (Base UI): Connect, Chat (stream, timeline, DiagnosisCard), Checklist placeholder; MSW mock; 6 test
-- [x] `docker-compose.yml` (backend + frontend/nginx)
-- [ ] **Tiếp theo**: `AnthropicProvider` / `BedrockProvider` thật (`backend/app/llm/anthropic.py`, `bedrock.py` có hướng dẫn trong docstring); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
+- [x] Connect: giao diện chỉ dùng IAM Role với hai cách IAM thủ công/CloudFormation trước khi lưu connection; popup hướng dẫn tạo `AutoAWSReadOnly` từ đầu, trust/permissions policy điền sẵn account AutoAWS và lấy ARN; CLI tùy chọn; popup đóng khi bấm ngoài, Region neo bên dưới (2026-10-25).
+- [x] `docker-compose.yml` (backend + frontend/nginx); AssumeRole/Bedrock đọc credentials trực tiếp từ `backend/.env`, không cần AWS profile trên host (2026-10-25).
+- [x] Bedrock Converse + tool use, demo API/UI với tool giả, tối đa 10 lượt; đã cấu hình Nova Micro và gọi Bedrock thật, đang bị AWS từ chối `Operation not allowed` ở cấp tài khoản (2026-10-26); backend đã báo lỗi cụ thể và log Request ID.
+- [x] Ưu tiên OpenAI-compatible (`LLM_PROVIDER=openai`): Chat Completions/tool calling async, cấu hình endpoint/model/key trong `.env`, hỗ trợ local Ollama không cần key; kiểm thử protocol/SSE/sanitizer/giới hạn 10 vòng (2026-10-26). Đã smoke test Ollama thật với `qwen2.5:latest` (2026-11-09): chọn đúng tool từ danh sách 16 tool, demo trả câu trả lời tiếng Việt qua SSE; model còn bỏ sót `unverified` hoặc gọi lặp tới giới hạn 10 vòng tùy câu hỏi. Chưa xác minh chẩn đoán AWS thật bằng model này.
+- [ ] **Tiếp theo**: cải thiện độ ổn định tool calling/đầu ra chẩn đoán với model OpenAI-compatible; tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito. Anthropic còn stub, chưa ưu tiên.
 
 ## Bố cục repo
 
@@ -65,7 +68,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 | # | Quyết định | Lý do |
 |---|---|---|
 | 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE |
-| 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
+| 2 | **Ưu tiên OpenAI-compatible** (Ollama tự host) qua `LLM_PROVIDER=openai`; Bedrock Converse là lựa chọn khác, mock mặc định cho test; Anthropic còn stub | Đổi endpoint/model qua `.env`, agent/tool AWS dùng chung; chạy pipeline được khi chưa có model server |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
 | 4 | **Chưa có auth**, chế độ 1 người dùng | Init tập trung luồng kết nối → chat; chừa middleware |
 | 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**, SSE qua fetch stream | Nhẹ, đầu ra tĩnh cho S3/CloudFront sau |

@@ -3,7 +3,7 @@
 Turn 1: pick tools from keywords in the user's question.
 Turn 2: once tool results are in the conversation, build a DiagnosisAnswer that simply
 lists what was read. It does not reason; its job is to exercise the UI, the tool layer
-and the streaming path. Replace via LLM_PROVIDER=anthropic|bedrock once implemented.
+and the streaming path. Replace via LLM_PROVIDER=openai|bedrock for real inference.
 """
 
 import json
@@ -124,7 +124,7 @@ class MockProvider:
             summary="Đây là kết quả từ MockProvider: hệ thống đã đọc dữ liệu AWS thật nhưng "
             "chưa có mô hình ngôn ngữ để suy luận.",
             cause="MockProvider — chưa cấu hình LLM, chỉ liệt kê bằng chứng chưa suy luận. "
-            "Đặt LLM_PROVIDER=anthropic hoặc bedrock trong backend/.env để nhận chẩn đoán thật.",
+            "Đặt LLM_PROVIDER=openai hoặc bedrock trong backend/.env để nhận chẩn đoán thật.",
             evidence=evidence,
             fix_steps=[
                 "Cấu hình LLM provider thật trong backend/.env (xem docs/BACKEND_PLAN.md §4.3).",

@@ -41,10 +41,27 @@ export const handlers = [
     return ok(db.connections)
   }),
 
+  http.get('/api/connections/setup', () =>
+    ok({ account_id: '111122223333', role_name: 'AutoAWSReadOnly' }),
+  ),
+
   http.get('/api/connections/:id', async ({ params, request }) => {
     const c = db.connections.find((x) => x.id === params.id)
     if (!c) return fail(404, 'CONNECTION_NOT_FOUND', 'Connection not found', pathOf(request))
     return ok(c)
+  }),
+
+  http.post('/api/connections/cloudformation-preview', async ({ request }) => {
+    const body = (await request.json()) as { external_id: string }
+    if (!/^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(body.external_id ?? ''))
+      return fail(422, 'VALIDATION_ERROR', 'Invalid External ID', pathOf(request))
+    return ok<CloudFormationInfo>({
+      stack_name: 'AutoAWSReadOnlyRole',
+      role_name: 'AutoAWSReadOnly',
+      external_id: body.external_id,
+      platform_account_id: '111122223333',
+      template_yaml: cfnTemplate(body.external_id),
+    })
   }),
 
   http.post('/api/connections', async ({ request }) => {
@@ -284,6 +301,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
+                  - ec2:DescribeRegions
                   - ec2:Describe*
                   - elasticloadbalancing:Describe*
                   - route53:List*

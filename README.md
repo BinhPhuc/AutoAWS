@@ -13,7 +13,7 @@ Người dùng kết nối tài khoản AWS của mình bằng **quyền chỉ �
 ┌─────────────┐  REST + SSE   ┌──────────────────────────────────┐
 │  Frontend   │ ────────────► │  Backend (FastAPI)               │
 │  React/Vite │ ◄──────────── │  ┌────────────┐  ┌────────────┐ │
-└─────────────┘               │  │ Agent loop │─►│ LLM provider│ │  mock | anthropic | bedrock
+└─────────────┘               │  │ Agent loop │─►│ LLM provider│ │  openai (Ollama) | bedrock | mock
                               │  └─────┬──────┘  └────────────┘ │
                               │        │ tool calls (chỉ đọc)    │
                               │  ┌─────▼──────┐  ┌────────────┐ │
@@ -32,7 +32,7 @@ Kiến trúc đích (serverless: Cognito, API Gateway, Lambda, Step Functions, D
 
 ## Trạng thái
 
-✅ **Init hoàn thành** — chạy end-to-end local với LLM giả lập (`LLM_PROVIDER=mock`). Chưa có: LLM thật (Anthropic/Bedrock), tool CloudWatch/CloudTrail, checklist, đăng nhập. Chi tiết ở `AGENTS.md` mục "Trạng thái hiện tại".
+✅ **Init hoàn thành** — chạy end-to-end local với LLM giả lập (`LLM_PROVIDER=mock`), đã triển khai OpenAI-compatible và Bedrock Converse. Ưu tiên `LLM_PROVIDER=openai` để dùng Ollama tự host hoặc API tương thích khác; xem [cấu hình model](backend/README.md#llm-ưu-tiên-openai-compatible--ollama). Đã smoke test Ollama `qwen2.5:latest` với tool demo và SSE (2026-11-09); độ ổn định đầu ra/tool calling còn hạn chế. Bedrock hiện bị hạn chế ở cấp tài khoản. Chưa có: tool CloudWatch/CloudTrail đầy đủ, checklist, đăng nhập. Chi tiết ở `AGENTS.md` mục "Trạng thái hiện tại".
 
 ## Tài liệu
 

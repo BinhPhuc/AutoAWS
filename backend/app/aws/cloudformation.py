@@ -25,7 +25,7 @@ DENIED_ACTIONS = [
 
 
 def render_template(platform_account_id: str, external_id: str) -> str:
-    allow = [a for a in all_aws_actions() if a]
+    allow = sorted(set(all_aws_actions()) | {"sts:GetCallerIdentity", "ec2:DescribeRegions"})
     actions_yaml = "\n".join(f"                  - {a}" for a in allow)
     denies_yaml = "\n".join(f"                  - {a}" for a in DENIED_ACTIONS)
     return f"""AWSTemplateFormatVersion: '2010-09-09'
@@ -87,7 +87,13 @@ def render_policy_json() -> str:
         {
             "Version": "2012-10-17",
             "Statement": [
-                {"Effect": "Allow", "Action": all_aws_actions(), "Resource": "*"},
+                {
+                    "Effect": "Allow",
+                    "Action": sorted(
+                        set(all_aws_actions()) | {"sts:GetCallerIdentity", "ec2:DescribeRegions"}
+                    ),
+                    "Resource": "*",
+                },
                 {"Effect": "Deny", "Action": DENIED_ACTIONS, "Resource": "*"},
             ],
         },
