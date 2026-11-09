@@ -259,4 +259,5 @@ thuộc identity nền tảng, không thêm vào policy tool đọc AWS của t�
 - [x] Kiểm thử protocol và SSE: tool giả → kết quả đã sanitize → DiagnosisAnswer/lưu lịch sử; tool ngoài registry bị từ chối; lỗi kết thúc stream; tối đa 10 lượt.
 - [x] Hướng dẫn dùng Ollama, endpoint tương thích khác, restart backend và Docker gọi model server trên host trong `backend/README.md`.
 - [x] Kiểm tra backend: 91 test pass (40 test OpenAI-compatible mới), `ruff check app tests` và kiểm tra format các file Python đã sửa đều pass.
-- [ ] Smoke test inference với Ollama thật: máy hiện chưa cài/chạy model server; không tải model tự động.
+- [x] Smoke test inference với Ollama thật (2026-11-09): `qwen2.5:latest` qua `/v1/chat/completions` chọn `describe_instances` từ danh sách 16 tool; kiểm tra API chat/SSE với tool demo và SQLite tạm, có câu trả lời tiếng Việt và lịch sử được lưu. Không gọi AWS thật; bước xác thực AWS được thay thế riêng trong smoke test, không thay đổi điều kiện kết nối của API đang chạy. 40 test OpenAI-compatible pass.
+- [ ] Cải thiện độ ổn định đầu ra `qwen2.5:latest`: thử nghiệm có lượt bỏ trống `unverified`; câu hỏi demo dài hơn khiến model đưa JSON kết luận vào arguments và gọi lặp tool tới `MAX_ITERATIONS`. Chưa xác minh chất lượng chẩn đoán AWS thật.

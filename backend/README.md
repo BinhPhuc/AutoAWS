@@ -24,7 +24,7 @@ Với Ollama đã cài, khởi động server nếu chưa chạy và tải model
 ```bash
 ollama serve
 # Trong terminal khác; chọn model phù hợp RAM/VRAM của máy.
-ollama pull qwen3:8b
+ollama pull qwen2.5:latest
 ollama list
 curl http://localhost:11434/v1/models
 ```
@@ -34,7 +34,7 @@ Sửa hoặc thêm các dòng sau trong **`backend/.env` hiện có** (giữ cá
 ```dotenv
 LLM_PROVIDER=openai
 OPENAI_BASE_URL=http://localhost:11434/v1
-OPENAI_MODEL=qwen3:8b
+OPENAI_MODEL=qwen2.5:latest
 OPENAI_API_KEY=
 OPENAI_TIMEOUT_SECONDS=120
 OPENAI_MAX_TOKENS=4096
@@ -71,6 +71,13 @@ sẽ không được dùng để thực thi tool; tăng `OPENAI_MAX_TOKENS` nế
 Chi tiết lỗi từ server không được đưa vào SSE để tránh lộ keys hoặc nội dung request.
 Backend không tự chuyển provider khi gặp lỗi; đổi `LLM_PROVIDER` rõ ràng để chọn nơi
 gửi dữ liệu. Bedrock vẫn dùng được bằng `LLM_PROVIDER=bedrock` với cấu hình riêng bên dưới.
+
+Đã smoke test `qwen2.5:latest` trên Ollama local (2026-11-09): model chọn đúng
+`describe_instances` từ danh sách 16 tool; API chat/SSE chạy được tool demo, trả lời
+tiếng Việt và lưu lịch sử trong SQLite tạm. Smoke test không gọi AWS thật và thay thế
+bước xác thực kết nối riêng trong tiến trình test. Model còn bỏ sót `unverified` hoặc
+đưa JSON kết luận vào arguments rồi gọi lặp tool đến giới hạn 10 vòng ở một số câu hỏi.
+Kết quả này xác nhận luồng tích hợp, chưa xác nhận độ chính xác chẩn đoán AWS thật.
 
 Tham chiếu giao thức: [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling),
 [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility),

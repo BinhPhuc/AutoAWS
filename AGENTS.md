@@ -20,8 +20,8 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Connect: giao diện chỉ dùng IAM Role với hai cách IAM thủ công/CloudFormation trước khi lưu connection; popup hướng dẫn tạo `AutoAWSReadOnly` từ đầu, trust/permissions policy điền sẵn account AutoAWS và lấy ARN; CLI tùy chọn; popup đóng khi bấm ngoài, Region neo bên dưới (2026-10-25).
 - [x] `docker-compose.yml` (backend + frontend/nginx); AssumeRole/Bedrock đọc credentials trực tiếp từ `backend/.env`, không cần AWS profile trên host (2026-10-25).
 - [x] Bedrock Converse + tool use, demo API/UI với tool giả, tối đa 10 lượt; đã cấu hình Nova Micro và gọi Bedrock thật, đang bị AWS từ chối `Operation not allowed` ở cấp tài khoản (2026-10-26); backend đã báo lỗi cụ thể và log Request ID.
-- [x] Ưu tiên OpenAI-compatible (`LLM_PROVIDER=openai`): Chat Completions/tool calling async, cấu hình endpoint/model/key trong `.env`, hỗ trợ local Ollama không cần key; kiểm thử protocol/SSE/sanitizer/giới hạn 10 vòng (2026-10-26). Chưa smoke test model Ollama thật vì máy chưa có server/model.
-- [ ] **Tiếp theo**: smoke test Ollama thật; `AnthropicProvider` thật (`backend/app/llm/anthropic.py`); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
+- [x] Ưu tiên OpenAI-compatible (`LLM_PROVIDER=openai`): Chat Completions/tool calling async, cấu hình endpoint/model/key trong `.env`, hỗ trợ local Ollama không cần key; kiểm thử protocol/SSE/sanitizer/giới hạn 10 vòng (2026-10-26). Đã smoke test Ollama thật với `qwen2.5:latest` (2026-11-09): chọn đúng tool từ danh sách 16 tool, demo trả câu trả lời tiếng Việt qua SSE; model còn bỏ sót `unverified` hoặc gọi lặp tới giới hạn 10 vòng tùy câu hỏi. Chưa xác minh chẩn đoán AWS thật bằng model này.
+- [ ] **Tiếp theo**: cải thiện độ ổn định tool calling/đầu ra chẩn đoán với model OpenAI-compatible; tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito. Anthropic còn stub, chưa ưu tiên.
 
 ## Bố cục repo
 

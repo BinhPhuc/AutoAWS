@@ -32,7 +32,7 @@ Kiến trúc đích (serverless: Cognito, API Gateway, Lambda, Step Functions, D
 
 ## Trạng thái
 
-✅ **Init hoàn thành** — chạy end-to-end local với LLM giả lập (`LLM_PROVIDER=mock`), đã triển khai OpenAI-compatible và Bedrock Converse. Ưu tiên `LLM_PROVIDER=openai` để dùng Ollama tự host hoặc API tương thích khác; xem [cấu hình model](backend/README.md#llm-ưu-tiên-openai-compatible--ollama). Inference Ollama thật chưa được smoke test; Bedrock hiện bị hạn chế ở cấp tài khoản. Chưa có: tool CloudWatch/CloudTrail đầy đủ, checklist, đăng nhập. Chi tiết ở `AGENTS.md` mục "Trạng thái hiện tại".
+✅ **Init hoàn thành** — chạy end-to-end local với LLM giả lập (`LLM_PROVIDER=mock`), đã triển khai OpenAI-compatible và Bedrock Converse. Ưu tiên `LLM_PROVIDER=openai` để dùng Ollama tự host hoặc API tương thích khác; xem [cấu hình model](backend/README.md#llm-ưu-tiên-openai-compatible--ollama). Đã smoke test Ollama `qwen2.5:latest` với tool demo và SSE (2026-11-09); độ ổn định đầu ra/tool calling còn hạn chế. Bedrock hiện bị hạn chế ở cấp tài khoản. Chưa có: tool CloudWatch/CloudTrail đầy đủ, checklist, đăng nhập. Chi tiết ở `AGENTS.md` mục "Trạng thái hiện tại".
 
 ## Tài liệu
 
