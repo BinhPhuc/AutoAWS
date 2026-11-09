@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from app.api.schemas import DecisionIn, DecisionOut, ProposalOut, RemediationActionOut
 from app.aws.remediation.catalog import CATALOG
 from app.errors import AppError, NotFound
+from app.platform import dispatch
 from app.remediation.service import decide, execute_proposal, expire_due
 from app.responses import ok
 from app.storage.base import Store
@@ -60,8 +61,8 @@ def decide_proposal(
     if body.decision == "feedback" and not body.feedback.strip():
         raise AppError("VALIDATION_ERROR", 422, "Invalid request: feedback is required")
     proposal, followup = decide(store, _get(store, proposal_id), body.decision, body.feedback)
-    if body.decision == "approve":
-        background.add_task(_run, proposal.id)
+    if body.decision == "approve" and not dispatch.is_lambda():
+        background.add_task(_run, proposal.id)  # on AWS remediation-flow runs the steps
     out = DecisionOut(proposal=ProposalOut.from_model(proposal), followup_question=followup)
     return ok(out, _MESSAGES[body.decision])
 

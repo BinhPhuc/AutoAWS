@@ -2,7 +2,6 @@
 pre-checks and stores, the user decides, the executor writes, re-checks and verifies."""
 
 import dataclasses
-import json
 from datetime import timedelta
 
 import pytest
@@ -73,24 +72,18 @@ class ProposingProvider:
 def _ask(
     client, connection, monkeypatch, proposals, conv_id=None
 ) -> tuple[str, dict, ProposingProvider]:
-    from app.api import conversations as conversations_api
+    from app import worker
 
     provider = ProposingProvider(proposals)
-    monkeypatch.setattr(conversations_api, "get_provider", lambda: provider)
+    monkeypatch.setattr(worker, "get_provider", lambda: provider)
     if conv_id is None:
         conv_id = client.post(
             "/api/conversations", json={"connection_id": connection["id"]}
         ).json()["data"]["id"]
-    answer = None
-    with client.stream(
-        "POST", f"/api/conversations/{conv_id}/messages", json={"content": "Không SSH được"}
-    ) as r:
-        event = None
-        for line in r.iter_lines():
-            if line.startswith("event:"):
-                event = line[6:].strip()
-            elif line.startswith("data:") and event == "answer":
-                answer = json.loads(line[5:])["answer"]
+    from tests.conftest import ask
+
+    _, events = ask(client, conv_id, "Không SSH được")
+    answer = next((d["answer"] for t, d in events if t == "answer"), None)
     return conv_id, answer, provider
 
 

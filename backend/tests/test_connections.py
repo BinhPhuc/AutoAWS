@@ -33,14 +33,14 @@ def test_create_and_verify_access_key(client, aws):
 
 
 def test_verify_failure_marks_failed(client, monkeypatch):
-    from app.api import connections as connections_api
+    from app import worker
     from app.aws.credentials import CredentialError
 
     def rejected(_session):
         raise CredentialError("InvalidClientTokenId: The security token included is invalid")
 
     # No network: simulate AWS rejecting the credentials.
-    monkeypatch.setattr(connections_api, "verify_session", rejected)
+    monkeypatch.setattr(worker, "verify_session", rejected)
     r = client.post(
         "/api/connections",
         json={

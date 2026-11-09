@@ -8,7 +8,14 @@ from pydantic import BaseModel, Field
 
 from app.agent.schemas import DiagnosisAnswer
 from app.aws.remediation.sessions import remediation_enabled
-from app.storage.models import Connection, Conversation, Message, Proposal, ToolCallRecord
+from app.storage.models import (
+    Connection,
+    Conversation,
+    Job,
+    Message,
+    Proposal,
+    ToolCallRecord,
+)
 
 # ---- connections -------------------------------------------------------------
 
@@ -248,3 +255,35 @@ class RemediationActionOut(BaseModel):
     description: str
     input_schema: dict
     aws_actions: list[str]
+
+
+# ---- jobs ------------------------------------------------------------------------
+
+
+class JobOut(BaseModel):
+    id: str
+    type: str
+    conversation_id: str
+    status: str
+    cancel_requested: bool
+    message_id: str | None
+    error: dict | None
+    events: list[dict]
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, j: Job, after: int = -1) -> "JobOut":
+        events = json.loads(j.events_json or "[]")
+        return cls(
+            id=j.id,
+            type=j.type,
+            conversation_id=j.conversation_id,
+            status=j.status,
+            cancel_requested=bool(j.cancel_requested),
+            message_id=j.message_id,
+            error=json.loads(j.error_json) if j.error_json else None,
+            events=[e for e in events if e["seq"] > after],
+            created_at=j.created_at,
+            updated_at=j.updated_at,
+        )

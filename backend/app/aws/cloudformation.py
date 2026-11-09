@@ -39,11 +39,23 @@ def remediation_actions() -> dict[str, list[str]]:
     return groups
 
 
-def _remediation_yaml() -> str:
+def _principal(role_arns: list[str]) -> str:
+    """Trust exactly these platform roles; none set (dev) = the whole platform account."""
+    arns = [a for a in role_arns if a]
+    if not arns:
+        return "              AWS: !Sub 'arn:aws:iam::${PlatformAccountId}:root'"
+    roles = [a.split(":role/", 1)[1] for a in arns]  # keep PlatformAccountId the source
+    return "              AWS:\n" + "\n".join(
+        f"                - !Sub 'arn:aws:iam::${{PlatformAccountId}}:role/{r}'" for r in roles
+    )
+
+
+def _remediation_yaml(executor_role_arn: str = "") -> str:
     groups = remediation_actions()
     region_yaml = "\n".join(f"                  - {a}" for a in groups["region"])
     r53_yaml = "\n".join(f"                  - {a}" for a in groups["route53"])
     denied_yaml = "\n".join(f"                  - {a}" for a in REMEDIATION_DENIED)
+    principal = _principal([executor_role_arn])
     return f"""  AutoAWSRemediationRole:
     Type: AWS::IAM::Role
     Condition: RemediationEnabled
@@ -56,7 +68,7 @@ def _remediation_yaml() -> str:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !Sub 'arn:aws:iam::${{PlatformAccountId}}:root'
+{principal}
             Action: sts:AssumeRole
             Condition:
               StringEquals:
@@ -91,11 +103,20 @@ def _remediation_yaml() -> str:
 """
 
 
-def render_template(platform_account_id: str, external_id: str) -> str:
+def render_template(
+    platform_account_id: str,
+    external_id: str,
+    agent_role_arn: str = "",
+    executor_role_arn: str = "",
+) -> str:
+    """Customer template. With the platform role ARNs (CDK deployment), the read-only role
+    trusts only agent-worker (+ action-executor, which re-reads before writing) and the
+    remediation role only action-executor (report §2.6.1)."""
+    read_principal = _principal([agent_role_arn, executor_role_arn])
     allow = policy_actions()
     actions_yaml = "\n".join(f"                  - {a}" for a in allow)
     denies_yaml = "\n".join(f"                  - {a}" for a in DENIED_ACTIONS)
-    remediation_yaml = _remediation_yaml()
+    remediation_yaml = _remediation_yaml(executor_role_arn)
     return f"""AWSTemplateFormatVersion: '2010-09-09'
 Description: Read-only IAM role that lets AutoAWS diagnose incidents in this account.
 
@@ -131,7 +152,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !Sub 'arn:aws:iam::${{PlatformAccountId}}:root'
+{read_principal}
             Action: sts:AssumeRole
             Condition:
               StringEquals:

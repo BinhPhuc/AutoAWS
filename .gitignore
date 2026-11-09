@@ -44,3 +44,6 @@ Thumbs.db
 infra/localstack/answers.local.json
 infra/eval/results/
 infra/aws-scenarios/answers.aws.json
+infra/cdk/.venv/
+infra/cdk/build/
+infra/cdk/cdk.out/

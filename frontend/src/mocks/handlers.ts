@@ -1,5 +1,6 @@
 import { HttpResponse, delay, http } from 'msw'
 import type {
+  AgentEvent,
   ApiErrorBody,
   CloudFormationInfo,
   Connection,
@@ -7,6 +8,7 @@ import type {
   CreateConnectionInput,
   CreateConversationInput,
   DiagnosisAnswer,
+  Job,
   Message,
   Proposal,
   SendMessageInput,
@@ -14,7 +16,9 @@ import type {
   VerifyResult,
 } from '@/api/types'
 import { db, nextId, seed, tools } from './db'
-import { pickScenario, scenarioEvents } from './sseFixtures'
+import { pickScenario, scenarioEvents } from './scenarios'
+
+const STOPPED_NOTE = 'Lượt chẩn đoán đã bị dừng trước khi có kết luận.'
 
 seed()
 
@@ -188,6 +192,15 @@ export const handlers = [
     const body = (await request.json()) as SendMessageInput
     if (!body.content?.trim())
       return fail(422, 'VALIDATION_ERROR', 'Invalid request: content is required', pathOf(request))
+    if (
+      db.jobs.some((j) => j.conversation_id === conv.id && ['queued', 'running'].includes(j.status))
+    )
+      return fail(
+        409,
+        'JOB_IN_PROGRESS',
+        'A diagnosis is already running in this conversation',
+        pathOf(request),
+      )
 
     const list = db.messages.get(conv.id) ?? []
     list.push({
@@ -198,63 +211,39 @@ export const handlers = [
       tool_calls: [],
       created_at: now(),
     })
+    db.messages.set(conv.id, list)
     if (!conv.title) conv.title = body.content.slice(0, 60)
     conv.updated_at = now()
 
-    const scenario = pickScenario(body.content)
-    const messageId = nextId('msg')
-    const events = scenarioEvents(scenario, messageId)
-    const encoder = new TextEncoder()
+    const job: Job = {
+      id: nextId('job'),
+      type: 'diagnosis',
+      conversation_id: conv.id,
+      status: 'queued',
+      cancel_requested: false,
+      message_id: null,
+      error: null,
+      events: [],
+      created_at: now(),
+      updated_at: now(),
+    }
+    db.jobs.push(job)
+    void runMockJob(job, conv, list, body.content)
+    return ok({ ...job, events: [] }, 'Diagnosis started', 202)
+  }),
 
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const toolCalls = new Map<string, ToolCall>()
-        for (const { delay: ms, event } of events) {
-          await new Promise((r) => setTimeout(r, ms))
-          if (event.type === 'tool_call') {
-            toolCalls.set(event.data.id, {
-              id: event.data.id,
-              tool: event.data.tool,
-              input: event.data.input,
-              output_summary: '',
-              status: 'ok',
-              error: null,
-              duration_ms: 0,
-            })
-          } else if (event.type === 'tool_result') {
-            const tc = toolCalls.get(event.data.id)
-            if (tc) {
-              tc.output_summary = event.data.output_summary
-              tc.status = event.data.status
-              tc.duration_ms = event.data.duration_ms
-            }
-          } else if (event.type === 'answer') {
-            event.data.answer = withMockProposals(event.data.answer, conv.id, messageId)
-            // Persist before `done`, as the contract requires.
-            const assistant: Message = {
-              id: messageId,
-              role: 'assistant',
-              content: event.data.content,
-              answer: event.data.answer,
-              tool_calls: Array.from(toolCalls.values()),
-              created_at: now(),
-            }
-            list.push(assistant)
-            db.messages.set(conv.id, list)
-            conv.updated_at = now()
-          }
-          controller.enqueue(
-            encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`),
-          )
-        }
-        controller.close()
-      },
-    })
+  http.get('/api/jobs/:id', async ({ params, request }) => {
+    const job = db.jobs.find((x) => x.id === params.id)
+    if (!job) return fail(404, 'JOB_NOT_FOUND', 'Job not found', pathOf(request))
+    const after = Number(new URL(request.url).searchParams.get('after') ?? -1)
+    return ok({ ...job, events: job.events.filter((e) => e.seq > after) })
+  }),
 
-    return new HttpResponse(stream, {
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-    })
+  http.post('/api/jobs/:id/cancel', async ({ params, request }) => {
+    const job = db.jobs.find((x) => x.id === params.id)
+    if (!job) return fail(404, 'JOB_NOT_FOUND', 'Job not found', pathOf(request))
+    if (['queued', 'running'].includes(job.status)) job.cancel_requested = true
+    return ok(job, 'Cancel requested')
   }),
 
   // ---------- remediation (human-in-the-loop) ----------
@@ -419,4 +408,65 @@ function withMockProposals(answer: DiagnosisAnswer, conversationId: string, mess
       { action: p.action, params: p.params, reason: p.reason, proposal_id: p.id, error: null },
     ],
   }
+}
+
+/** Plays a scripted scenario into the job, like the agent-worker would. */
+async function runMockJob(job: Job, conv: Conversation, list: Message[], question: string) {
+  const scenario = pickScenario(question)
+  const messageId = nextId('msg')
+  const toolCalls = new Map<string, ToolCall>()
+  job.status = 'running'
+  const emit = (event: AgentEvent) => {
+    job.events.push({ ...event, seq: job.events.length } as Job['events'][number])
+    job.updated_at = now()
+  }
+  for (const { delay: ms, event } of scenarioEvents(scenario, messageId)) {
+    await new Promise((r) => setTimeout(r, ms))
+    if (job.cancel_requested) {
+      list.push({
+        id: nextId('msg'),
+        role: 'assistant',
+        content: STOPPED_NOTE,
+        answer: null,
+        tool_calls: Array.from(toolCalls.values()),
+        created_at: now(),
+      })
+      emit({ type: 'error', data: { error: 'CANCELLED', message: 'Stopped by the user' } })
+      emit({ type: 'done', data: {} })
+      job.status = 'cancelled'
+      return
+    }
+    if (event.type === 'tool_call') {
+      toolCalls.set(event.data.id, {
+        id: event.data.id,
+        tool: event.data.tool,
+        input: event.data.input,
+        output_summary: '',
+        status: 'ok',
+        error: null,
+        duration_ms: 0,
+      })
+    } else if (event.type === 'tool_result') {
+      const tc = toolCalls.get(event.data.id)
+      if (tc) {
+        tc.output_summary = event.data.output_summary
+        tc.status = event.data.status
+        tc.duration_ms = event.data.duration_ms
+      }
+    } else if (event.type === 'answer') {
+      event.data.answer = withMockProposals(event.data.answer, conv.id, messageId)
+      list.push({
+        id: messageId,
+        role: 'assistant',
+        content: event.data.content,
+        answer: event.data.answer,
+        tool_calls: Array.from(toolCalls.values()),
+        created_at: now(),
+      })
+      conv.updated_at = now()
+      job.message_id = messageId
+    }
+    emit(event)
+  }
+  job.status = 'succeeded'
 }

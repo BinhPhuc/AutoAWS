@@ -3,7 +3,7 @@
 > Hợp đồng dùng chung để frontend và backend làm **song song**. Mọi thay đổi endpoint/schema phải sửa file này trước, rồi mới sửa code hai phía.
 > Base URL dev: `http://localhost:8000`. Mọi endpoint có tiền tố `/api`. JSON, UTF-8. Thời gian ISO-8601 UTC.
 > Bản init **không có auth**; sau này thêm header `Authorization: Bearer <JWT>` không đổi payload.
-> **Ngôn ngữ:** `message`, status SSE, label/mô tả tool, UI → **tiếng Anh**. Riêng **câu trả lời của agent** (`DiagnosisAnswer` và `content` của assistant) → **tiếng Việt**. Tài liệu này tiếng Việt.
+> **Ngôn ngữ:** `message`, event `status` của job, label/mô tả tool, UI → **tiếng Anh**. Riêng **câu trả lời của agent** (`DiagnosisAnswer` và `content` của assistant) → **tiếng Việt**. Tài liệu này tiếng Việt.
 
 ## 0. Quy ước response (áp dụng cho MỌI endpoint JSON)
 
@@ -42,8 +42,10 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `AWS_AUTH_FAILED` | 400 | `"AWS authentication failed: <reason>"` | Credentials sai, AssumeRole bị từ chối |
 | `AWS_ACCESS_DENIED` | 403 | `"AWS access denied: <action>"` | Role thiếu quyền cho một lệnh đọc |
 | `LLM_UNAVAILABLE` | 503 | `"LLM provider is unavailable"` | Provider lỗi / chưa cấu hình / không có MCP client trả lời kịp (`LLM_PROVIDER=mcp`) |
-| `MAX_ITERATIONS` | — | `"Stopped after 10 reasoning steps without a conclusion"` | **Chỉ qua SSE `error`**: agent hết số vòng và lượt chốt cuối (mục 3) cũng không ra kết luận |
-| `AGENT_LIMIT` | — | `"Stopped at the time limit (240 s) without a conclusion"` | **Chỉ qua SSE `error`**: chạm giới hạn thời gian / token / số lần gọi công cụ và lượt chốt cuối không ra kết luận |
+| `MAX_ITERATIONS` | — | `"Stopped after 10 reasoning steps without a conclusion"` | **Chỉ là event `error` của job**: agent hết số vòng và lượt chốt cuối (mục 3) cũng không ra kết luận |
+| `AGENT_LIMIT` | — | `"Stopped at the time limit (240 s) without a conclusion"` | **Chỉ là event `error` của job**: chạm giới hạn thời gian / token / số lần gọi công cụ và lượt chốt cuối không ra kết luận |
+| `JOB_NOT_FOUND` | 404 | `"Job not found"` | |
+| `JOB_IN_PROGRESS` | 409 | `"A diagnosis is already running in this conversation"` | Gửi câu hỏi khi job trước của hội thoại chưa xong |
 | `PROPOSAL_NOT_FOUND` | 404 | `"Proposal not found"` | |
 | `PROPOSAL_NOT_PENDING` | 409 | `"Proposal is not waiting for a decision (status SUCCEEDED)"` | Quyết định cho đề xuất đã duyệt / từ chối / hết hạn (mục 7) |
 | `REMEDIATION_DISABLED` | 400 | `"Remediation is not enabled for this connection"` | Duyệt đề xuất trên connection không có quyền sửa (mục 7) |
@@ -52,8 +54,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `NOT_IMPLEMENTED` | 501 | `"Checklist runs are not available yet"` | Tính năng chưa có (checklist) |
 | `INTERNAL` | 500 | `"Internal server error"` | Lỗi không lường trước |
 
-### Ngoại lệ: SSE stream
-`POST /api/conversations/{id}/messages` trả `text/event-stream`, **không** dùng envelope. Lỗi **trước khi** stream bắt đầu (404, 400…) vẫn trả JSON lỗi theo quy ước trên; lỗi **trong lúc** stream gửi bằng event `error` (mục 3).
+Không còn endpoint SSE: lỗi xảy ra **trong lúc** agent chạy nằm trong `events` của job (mục 8), event `error`.
 
 ---
 
@@ -229,7 +230,7 @@ ProposalRef {
 
 **Model kết thúc bằng công cụ `submit_diagnosis`** (input = `DiagnosisAnswer` không có `verification`/`limit_reached`). Đây là kênh trả lời, không phải công cụ AWS: không có trong `GET /api/tools`, không phát `tool_call`/`tool_result`. Provider không gọi được công cụ thì vẫn trả lời bằng JSON thuần cùng schema.
 
-**Giới hạn mỗi lượt** (cấu hình trong `.env`): `MAX_AGENT_ITERATIONS` (10 vòng), `MAX_AGENT_SECONDS` (240 giây; không áp cho `LLM_PROVIDER=mcp`), `MAX_TURN_TOKENS` (token vào + ra; chỉ khi provider báo usage), `MAX_TOOL_CALLS` (40). Chạm giới hạn → agent gọi model thêm **một lần chốt** (chỉ được `submit_diagnosis`) để trả phần đã xác nhận, kèm `limit_reached`; lần chốt cũng không ra kết luận → SSE `error` `MAX_ITERATIONS` / `AGENT_LIMIT`.
+**Giới hạn mỗi lượt** (cấu hình trong `.env`): `MAX_AGENT_ITERATIONS` (10 vòng), `MAX_AGENT_SECONDS` (240 giây; không áp cho `LLM_PROVIDER=mcp`), `MAX_TURN_TOKENS` (token vào + ra; chỉ khi provider báo usage), `MAX_TOOL_CALLS` (40). Chạm giới hạn → agent gọi model thêm **một lần chốt** (chỉ được `submit_diagnosis`) để trả phần đã xác nhận, kèm `limit_reached`; lần chốt cũng không ra kết luận → event `error` `MAX_ITERATIONS` / `AGENT_LIMIT`.
 
 ### `POST /api/conversations`
 ```json
@@ -253,32 +254,30 @@ Query tuỳ chọn: `?connection_id=conn_...` để lọc.
 200 { "status_code": 200, "message": "Conversation deleted", "data": null }
 ```
 
-### `POST /api/conversations/{id}/messages` — **streaming SSE** (ngoại lệ của envelope)
+### `POST /api/conversations/{id}/messages` — tạo công việc chẩn đoán (job)
 Request:
 ```json
 { "content": "Tôi không SSH được vào instance web-server, Security Group đã mở port 22 rồi." }
 ```
-Response: `200`, `Content-Type: text/event-stream`. Mỗi event dạng:
+Server lưu câu hỏi, tạo một `Job` rồi giao cho agent-worker chạy **bất đồng bộ** (Lambda gọi kiểu Event; chạy local thì chạy nền trong tiến trình). Trả ngay:
+```json
+202 { "status_code": 202, "message": "Diagnosis started", "data": Job }   // status "queued"
 ```
-event: <type>
-data: <JSON một dòng>
+Lỗi trước khi tạo job (hội thoại không tồn tại, connection chưa verify, đang có job khác chạy trong hội thoại này → `409 JOB_IN_PROGRESS`, body sai) → JSON lỗi theo mục 0.
+Client hỏi lại `GET /api/jobs/{id}` (mục 8) mỗi 1–2 giây, đọc thêm `events` mới (theo `seq`) để vẽ timeline, tới khi `status` ∉ `queued | running`. Sau đó `GET /api/conversations/{id}` trả về đúng message của lượt này (server lưu trước khi job kết thúc).
 
-```
-Thứ tự điển hình: `status` → (`tool_call` → `tool_result`)* → `answer` → `done`. Lỗi: `error` rồi `done`.
+Các `events` của job (thứ tự điển hình: `status` → (`tool_call` → `tool_result`)* → `answer` → `done`; lỗi: `error` rồi `done`):
 
-| event | data | Ý nghĩa |
+| type | data | Ý nghĩa |
 |---|---|---|
 | `status` | `{ "text": "Planning checks…" }` | Trạng thái để hiển thị dòng "…ing" (`"Reading security groups…"`, `"Analyzing results…"`) |
 | `tool_call` | `{ "id": "tc_1", "tool": "describe_instances", "input": {...} }` | Agent gọi công cụ |
 | `tool_result` | `{ "id": "tc_1", "status": "ok", "output_summary": "...", "duration_ms": 300, "cached": false }` | Kết quả rút gọn; `cached: true` = lấy từ cache của hội thoại (mục 4) |
 | `answer` | `{ "message_id": "msg_...", "content": "...", "answer": DiagnosisAnswer }` | Câu trả lời cuối |
-| `error` | `{ "error": "LLM_UNAVAILABLE", "message": "LLM provider is unavailable" }` | Lỗi trong lúc stream (cùng tên trường với JSON lỗi) |
-| `done` | `{}` | Kết thúc stream |
+| `error` | `{ "error": "LLM_UNAVAILABLE", "message": "LLM provider is unavailable" }` | Lỗi trong lúc chạy (cùng tên trường với JSON lỗi) |
+| `done` | `{}` | Kết thúc |
 
-Lỗi trước khi stream bắt đầu (hội thoại không tồn tại, connection chưa verify, body sai) → JSON lỗi theo mục 0, không phải SSE.
-Client dùng `fetch` + `ReadableStream` (vì là POST). Khi stream kết thúc, `GET /api/conversations/{id}` phải trả về đúng message vừa stream (server lưu trước khi gửi `done`).
-
-**Lượt không có kết luận vẫn được lưu.** Khi stream đã bắt đầu (server đã lưu câu hỏi) mà lượt kết thúc không có `answer` (event `error`, hết vòng, hoặc client ngắt kết nối / bấm Stop), server lưu một message assistant với `answer: null`, `content` là câu giải thích tiếng Việt (ví dụ `"Chưa hoàn thành chẩn đoán: LLM provider is unavailable"`, `"Lượt chẩn đoán đã bị dừng trước khi có kết luận."`) và `tool_calls` gồm các công cụ đã chạy. Nhờ vậy lịch sử luôn xen kẽ user/assistant. Client ngắt kết nối = dừng agent.
+**Lượt không có kết luận vẫn được lưu.** Khi lượt kết thúc không có `answer` (event `error`, hết vòng, worker lỗi, hoặc người dùng bấm Stop → `POST /api/jobs/{id}/cancel`), server lưu một message assistant với `answer: null`, `content` là câu giải thích tiếng Việt (ví dụ `"Chưa hoàn thành chẩn đoán: LLM provider is unavailable"`, `"Lượt chẩn đoán đã bị dừng trước khi có kết luận."`) và `tool_calls` gồm các công cụ đã chạy. Nhờ vậy lịch sử luôn xen kẽ user/assistant.
 
 ---
 
@@ -310,7 +309,7 @@ Dự kiến: `POST /api/checklists/runs`, `GET /api/checklists/runs/{id}` (kết
 
 ## 6. MCP bridge — MCP client đóng vai LLM (chỉ dev/test)
 
-Chỉ bật khi `LLM_PROVIDER=mcp`. Dùng khi chưa có quyền gọi Bedrock/Anthropic: mỗi lượt `provider.chat()` của agent được xếp hàng, một MCP client (ví dụ Claude Code) lấy về, suy luận và trả lời. Vòng lặp agent, công cụ, sanitizer, SSE giữ nguyên. **Không phải endpoint cho FE**, không theo envelope (giao thức MCP).
+Chỉ bật khi `LLM_PROVIDER=mcp`. Dùng khi chưa có quyền gọi Bedrock/Anthropic: mỗi lượt `provider.chat()` của agent được xếp hàng, một MCP client (ví dụ Claude Code) lấy về, suy luận và trả lời. Vòng lặp agent, công cụ, sanitizer, job giữ nguyên. **Không phải endpoint cho FE**, không theo envelope (giao thức MCP).
 
 - Endpoint: `http://localhost:8000/mcp/` (MCP Streamable HTTP; có dấu `/` cuối). Kết nối Claude Code: `claude mcp add --transport http autoaws-llm http://localhost:8000/mcp/`.
 - Không có auth → chỉ chạy trên máy dev (bind `127.0.0.1`).
@@ -360,6 +359,7 @@ Văn bản trong `preview` là tiếng Anh do server sinh (nhãn) + ID tài nguy
 - Lỗi khi gọi API ghi → `FAILED` (kèm `error`).
 - Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
 - Thực thi chạy nền: response của quyết định trả `APPROVED`; client hỏi lại `GET /api/proposals/{id}` tới khi hết `APPROVED` / `EXECUTING`.
+- Trên AWS (`RUNTIME=lambda`, mục 9): mỗi đề xuất là một lượt chạy state machine `remediation-flow` (Step Functions): gửi email SNS → chờ duyệt `.waitForTaskToken` (24 giờ, hết hạn → `EXPIRED`) → agent-worker kiểm tra lại (role chỉ đọc) → action-executor thực thi (role `AutoAWSRemediation`) → agent-worker kiểm chứng → email kết quả. Quyết định của người dùng được chuyển vào state machine bằng `SendTaskSuccess` / `SendTaskFailure`. Chạy local (`RUNTIME=local`) thì các bước này chạy nền trong backend, cùng trạng thái và API.
 
 ### `GET /api/proposals`
 Query tuỳ chọn `?conversation_id=…`, `?status=PENDING_APPROVAL`. Mới nhất trước.
@@ -389,6 +389,45 @@ Danh mục hành động: `[{ "name", "label", "description", "input_schema", "a
 | `allocate_and_associate_eip` | KB2 | ec2:AllocateAddress, AssociateAddress | Instance đang chạy, chưa có Elastic IP | Public IP của instance = Elastic IP | DisassociateAddress + ReleaseAddress |
 | `upsert_a_record` | KB2 | route53:ChangeResourceRecordSets (UPSERT A) | Bản ghi A **đã có** trong hosted zone của tài khoản; IP mới là IP của tài khoản (hoặc `instance_id` → IP hiện tại lúc thực thi) | Route 53 trả giá trị mới, thay đổi INSYNC | UPSERT lại giá trị cũ |
 | `modify_health_check_path` | KB3 | elasticloadbalancing:ModifyTargetGroup | Đường dẫn bắt đầu bằng `/` | Mọi target healthy (chờ tối đa ~5 chu kỳ) | Đặt lại đường dẫn cũ |
+
+---
+
+## 8. Jobs — công việc chạy nền
+
+### Schema `Job`
+```json
+{
+  "id": "job_...", "type": "diagnosis", "conversation_id": "conv_...",
+  "status": "queued" | "running" | "succeeded" | "failed" | "cancelled",
+  "cancel_requested": false,
+  "message_id": "msg_..." | null,        // message assistant đã lưu (khi xong)
+  "error": null | { "error": "LLM_UNAVAILABLE", "message": "..." },
+  "events": [ { "seq": 0, "type": "status", "data": { "text": "Reasoning…" } } ],   // mục 3
+  "created_at": "...", "updated_at": "..."
+}
+```
+`succeeded` = có `answer`; `failed` = kết thúc bằng event `error`; `cancelled` = dừng theo yêu cầu. Job tự xoá sau `JOB_TTL_DAYS` (mặc định 7, DynamoDB TTL); hội thoại và message vẫn còn.
+
+### `GET /api/jobs/{id}`
+Query tuỳ chọn `?after=<seq>`: chỉ trả các event có `seq` > giá trị này (client đã có phần trước).
+```json
+200 { "status_code": 200, "message": "OK", "data": Job }
+```
+Job `queued` / `running` mà quá `JOB_STALE_SECONDS` (mặc định 900) không cập nhật → server đánh dấu `failed` (`WORKER_LOST`) và lưu ghi chú như lượt không có kết luận.
+
+### `POST /api/jobs/{id}/cancel`
+Yêu cầu dừng: agent-worker kiểm tra cờ giữa các bước và kết thúc lượt (`cancelled`, ghi chú `"Lượt chẩn đoán đã bị dừng trước khi có kết luận."`). Job đã kết thúc → trả nguyên trạng.
+```json
+200 { "status_code": 200, "message": "Cancel requested", "data": Job }
+```
+
+---
+
+## 9. Triển khai (thông tin cho FE/BE, không đổi API)
+
+- `RUNTIME=local` (mặc định): một tiến trình FastAPI; job và luồng duyệt chạy nền trong tiến trình.
+- `RUNTIME=lambda`: API Gateway HTTP API → Lambda `api-handler` (cùng app FastAPI, adapter Mangum) · Lambda `agent-worker` (chẩn đoán, kiểm tra kết nối, kiểm tra lại / kiểm chứng đề xuất) · Lambda `action-executor` (thực thi đề xuất đã duyệt, lưu task token) · Step Functions `remediation-flow` · SNS. Hạ tầng: `infra/cdk/`.
+- `POST /api/connections/{id}/verify` chạy trong agent-worker (gọi đồng bộ): api-handler không có quyền vào tài khoản người dùng.
 
 ---
 

@@ -25,6 +25,8 @@ export type ApiErrorCode =
   | 'LLM_UNAVAILABLE'
   | 'MAX_ITERATIONS'
   | 'AGENT_LIMIT'
+  | 'JOB_NOT_FOUND'
+  | 'JOB_IN_PROGRESS'
   | 'PROPOSAL_NOT_FOUND'
   | 'PROPOSAL_NOT_PENDING'
   | 'REMEDIATION_DISABLED'
@@ -241,7 +243,7 @@ export interface SendMessageInput {
   content: string
 }
 
-// ---------- SSE events ----------
+// ---------- Job events (API_CONTRACT §3, §8) ----------
 export interface StatusEvent {
   type: 'status'
   data: { text: string }
@@ -275,6 +277,24 @@ export interface DoneEvent {
 
 export type AgentEvent =
   StatusEvent | ToolCallEvent | ToolResultEvent | AnswerEvent | ErrorEvent | DoneEvent
+
+export type JobEvent = AgentEvent & { seq: number }
+
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+/** A background diagnosis turn; the client polls it (API_CONTRACT §8). */
+export interface Job {
+  id: string
+  type: 'diagnosis'
+  conversation_id: string
+  status: JobStatus
+  cancel_requested: boolean
+  message_id: string | null
+  error: { error: ApiErrorCode | string; message: string } | null
+  events: JobEvent[]
+  created_at: string
+  updated_at: string
+}
 
 // ---------- Tools ----------
 export type ToolGroup = 'compute' | 'network' | 'dns' | 'elb' | 'metrics' | 'logs' | 'cloudtrail'

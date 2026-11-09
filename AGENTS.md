@@ -29,7 +29,8 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
   - seed LocalStack KB1, KB2, KB4–KB7 khớp Bảng 2.14, thêm KB8 (instance stop) và KB9 (prompt injection); file đáp án + `infra/eval/run_eval.py` chấm theo Bảng 2.15.
   - 152 test BE, 10 test FE.
 - [x] Khắc phục có phê duyệt (2026-11-08, nhánh `feat/remediation`): danh mục 6 hành động (`app/aws/remediation/catalog.py`), session ghi khoá theo hành động, luồng duyệt / từ chối / góp ý / hết hạn / STALE / kiểm chứng / đề xuất hoàn tác (`app/remediation/service.py`), API `/api/proposals*`, role `AutoAWSRemediation` trong CloudFormation (`EnableRemediation`), UI duyệt trong chat + trang Proposals. Ràng buộc #1 đã đổi tương ứng. 174 test BE, 12 test FE; chạy thật trên LocalStack (KB1).
-- [ ] **Tiếp theo**: chạy `run_eval.py --runs 5` với Bedrock thật; môi trường AWS thật cho KB3 + CloudTrail; email SNS + Step Functions cho luồng duyệt khi lên AWS; checklist runner; auth Cognito
+- [x] Serverless đúng báo cáo (2026-11-09, nhánh `feat/serverless`): bỏ SSE → job + hỏi lại (`/api/jobs/{id}`, huỷ, phát hiện worker mất); `RUNTIME=local|lambda` (`app/platform/dispatch.py`); handler `app/handlers/{api,agent_worker,action_executor}.py`; luồng duyệt tách 3 bước cho Step Functions (task token); trust policy template khách thu hẹp vào role `autoaws-agent-worker` / `autoaws-action-executor`; CDK `infra/cdk/` 6 stack (Data, Agent, Workflow, Api, Frontend, Ops) synth + cfn-lint sạch — **chưa deploy** (không có tài khoản AWS). 190 test BE, 7 test FE, 7 test CDK.
+- [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; auth Cognito (stack Auth, JWT authorizer, phân vùng `userId`); checklist runner
 
 ## Bố cục repo
 
@@ -40,11 +41,12 @@ AutoAWS/
 ├── AutoAWS.docx                        # tài liệu gốc (không đọc trực tiếp; dùng docs/SYSTEM_OVERVIEW.md)
 ├── docs/
 │   ├── SYSTEM_OVERVIEW.md   # hệ thống làm gì, 3 kịch bản test, 7 khối, 7 nhóm tool, ràng buộc
-│   ├── API_CONTRACT.md      # endpoint, schema, SSE event — NGUỒN SỰ THẬT cho FE↔BE
+│   ├── API_CONTRACT.md      # endpoint, schema, job event — NGUỒN SỰ THẬT cho FE↔BE
 │   ├── BACKEND_PLAN.md      # cấu trúc backend/, thiết kế, lộ trình B1–B10
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
 ├── frontend/                # Vite + React + TS — src/{api,hooks,pages,components,lib,mocks} (xem frontend/README.md)
+├── infra/                   # localstack/ (seed), aws-scenarios/ (KB1–KB7), demo-apps/, eval/, cdk/ (hạ tầng nền tảng)
 ├── docker-compose.yml
 └── .claude/ .agents/ .gemini/   # skills của AI tool — gitignore, mỗi người tự cài
 ```
@@ -79,7 +81,8 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 | 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
 | 4 | **Chưa có auth**, chế độ 1 người dùng | Init tập trung luồng kết nối → chat; chừa middleware |
-| 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**, SSE qua fetch stream | Nhẹ, đầu ra tĩnh cho S3/CloudFront sau |
+| 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**; tiến trình chẩn đoán = job + hỏi lại (`GET /api/jobs/{id}`) | Nhẹ, đầu ra tĩnh cho S3/CloudFront |
+| 7 | Triển khai **serverless đúng báo cáo** (`RUNTIME=lambda`): API Gateway HTTP API → Lambda api-handler / agent-worker / action-executor, Step Functions `remediation-flow`, SNS; hạ tầng CDK `infra/cdk/`. Local vẫn chạy 1 tiến trình (`RUNTIME=local`) | API Gateway giới hạn 30 giây → bỏ SSE; agent-worker không bao giờ có quyền ghi |
 | 6 | Checklist, metrics/logs/CloudTrail đầy đủ, DynamoDB, Lambda → **sau init** | |
 
 ## Ràng buộc cứng — KHÔNG được vi phạm
@@ -92,13 +95,13 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 2. **Không log / in / commit credentials**, secret, `.env`. Credentials tạm thời chỉ ở bộ nhớ.
 3. Dữ liệu AWS đưa vào LLM **phải** qua `app/sanitizer.py`.
 4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py` (cộng `submit_diagnosis` — kênh trả lời do vòng lặp xử lý, không chạm AWS); boto3 dùng cho **tài khoản người dùng** chỉ xuất hiện trong `app/aws/` (ngoại lệ dev: `infra/localstack/seed.py` tạo tài nguyên, chỉ chạy với LocalStack; `infra/aws-scenarios/` tạo/sửa tài nguyên kịch bản trong **tài khoản AWS test**, không bao giờ do app gọi).
-5. Đổi endpoint/schema/SSE event → sửa `docs/API_CONTRACT.md` **trước** rồi mới sửa code 2 phía.
-   Mọi response JSON theo envelope: thành công `{status_code, message, data}`, lỗi `{status_code, message, error, path, timestamp}` (contract mục 0). Chỉ SSE là ngoại lệ.
+5. Đổi endpoint/schema/job event → sửa `docs/API_CONTRACT.md` **trước** rồi mới sửa code 2 phía.
+   Mọi response JSON theo envelope: thành công `{status_code, message, data}`, lỗi `{status_code, message, error, path, timestamp}` (contract mục 0), không có ngoại lệ.
 6. Kết luận chẩn đoán phải có bằng chứng; không chắc → `unverified` + lệnh tự kiểm tra, **không đoán**.
 
 ## Quy ước
 
-- **UI và API text tiếng Anh**: label/button/toast/empty state trên UI, `message` trong API, status SSE, label/mô tả tool. FE gom chuỗi trong `src/lib/strings.ts`.
+- **UI và API text tiếng Anh**: label/button/toast/empty state trên UI, `message` trong API, event `status` của job, label/mô tả tool. FE gom chuỗi trong `src/lib/strings.ts`.
 - **Câu trả lời của agent tiếng Việt**: `DiagnosisAnswer` và `content` của assistant (system prompt ép đầu ra tiếng Việt; tên tài nguyên/lệnh/mã lỗi AWS giữ nguyên).
 - Tài liệu trong `docs/` và commit body: tiếng Việt. Code (tên biến/hàm/file, comment), commit subject: tiếng Anh, dạng conventional (`feat(backend): add describe_route_tables tool`).
 - Python: ruff (lint + format), type hints đầy đủ, pytest + moto cho mọi tool AWS.

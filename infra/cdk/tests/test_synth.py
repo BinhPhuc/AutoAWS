@@ -1,0 +1,171 @@
+"""Synthesize the platform and check the properties the design depends on (report §2.6)."""
+
+import json
+
+import aws_cdk as cdk
+import pytest
+from app import build
+from aws_cdk.assertions import Match, Template
+
+
+@pytest.fixture(scope="module")
+def stacks(tmp_path_factory):
+    mp = pytest.MonkeyPatch()
+    mp.setenv("CDK_DEFAULT_ACCOUNT", "111122223333")
+    mp.setenv("CDK_DEFAULT_REGION", "ap-southeast-1")
+    asset = tmp_path_factory.mktemp("lambda")
+    (asset / "app").mkdir()
+    (asset / "app" / "__init__.py").write_text("")
+    app = cdk.App(
+        outdir=str(tmp_path_factory.mktemp("cdk.out")),
+        context={
+            "lambdaAsset": str(asset),
+            "notificationEmail": "team@example.com",
+            "alarmEmail": "ops@example.com",
+        },
+    )
+    built = build(app)
+    out = {name: Template.from_stack(stack) for name, stack in built.items()}
+    mp.undo()
+    return out
+
+
+def _statements(template: Template, role_logical_prefix: str) -> list[dict]:
+    out = []
+    for lid, res in template.to_json()["Resources"].items():
+        if res["Type"] == "AWS::IAM::Policy" and lid.startswith(role_logical_prefix):
+            out += res["Properties"]["PolicyDocument"]["Statement"]
+    return out
+
+
+def _actions(statements: list[dict], effect: str = "Allow") -> set[str]:
+    acts = set()
+    for st in statements:
+        if st["Effect"] != effect:
+            continue
+        a = st["Action"]
+        acts |= set(a if isinstance(a, list) else [a])
+    return acts
+
+
+def _resources(statements: list[dict], action: str) -> list:
+    out = []
+    for st in statements:
+        a = st["Action"] if isinstance(st["Action"], list) else [st["Action"]]
+        if action in a and st["Effect"] == "Allow":
+            r = st["Resource"]
+            out += r if isinstance(r, list) else [r]
+    return out
+
+
+def test_table_is_encrypted_with_ttl_and_pitr(stacks):
+    stacks["data"].has_resource_properties(
+        "AWS::DynamoDB::GlobalTable",
+        {
+            "TimeToLiveSpecification": {"AttributeName": "ttl", "Enabled": True},
+            "SSESpecification": {"SSEEnabled": True, "SSEType": "KMS"},
+            "Replicas": [
+                Match.object_like(
+                    {"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": True}}
+                )
+            ],
+        },
+    )
+    stacks["data"].has_resource_properties("AWS::KMS::Key", {"EnableKeyRotation": True})
+
+
+def test_only_the_executor_can_write_to_user_accounts(stacks):
+    agent = stacks["agent"]
+    agent_st = _statements(agent, "AgentWorkerRole")
+    exec_st = _statements(agent, "ActionExecutorRole")
+    assert _resources(agent_st, "sts:AssumeRole") == ["arn:aws:iam::*:role/AutoAWSReadOnly"]
+    assert "arn:aws:iam::*:role/AutoAWSRemediation" in _resources(exec_st, "sts:AssumeRole")
+    # the LLM side and the writer never mix
+    assert "bedrock-mantle:CreateInference" in _actions(agent_st)
+    assert {"bedrock:*", "bedrock-mantle:*"} <= _actions(exec_st, effect="Deny")
+    # the API cannot reach users' accounts at all
+    api_st = _statements(stacks["api"], "ApiHandlerRole")
+    assert "sts:AssumeRole" in _actions(api_st, effect="Deny")
+    assert "sts:AssumeRole" not in _actions(api_st)
+
+
+def test_role_names_match_the_customer_template_trust(stacks):
+    agent = stacks["agent"]
+    agent.has_resource_properties("AWS::IAM::Role", {"RoleName": "autoaws-agent-worker"})
+    agent.has_resource_properties("AWS::IAM::Role", {"RoleName": "autoaws-action-executor"})
+    env = agent.find_resources("AWS::Lambda::Function")
+    for fn in env.values():
+        variables = fn["Properties"]["Environment"]["Variables"]
+        assert variables["RUNTIME"] == "lambda" and variables["STORAGE_BACKEND"] == "dynamodb"
+        assert "role/autoaws-agent-worker" in json.dumps(variables["PLATFORM_AGENT_ROLE_ARN"])
+
+
+def test_agent_worker_is_bounded_and_never_retried(stacks):
+    agent = stacks["agent"]
+    agent.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Handler": "app.handlers.agent_worker.handler",
+            "Runtime": "python3.12",
+            "ReservedConcurrentExecutions": 5,
+            "Timeout": 300,
+            "TracingConfig": {"Mode": "Active"},
+        },
+    )
+    agent.has_resource_properties("AWS::Lambda::EventInvokeConfig", {"MaximumRetryAttempts": 0})
+
+
+def test_remediation_flow_waits_for_a_person(stacks):
+    flow = stacks["workflow"]
+    flow.has_resource_properties(
+        "AWS::StepFunctions::StateMachine",
+        {"StateMachineName": "autoaws-remediation-flow", "StateMachineType": "STANDARD"},
+    )
+    text = json.dumps(flow.find_resources("AWS::StepFunctions::StateMachine"))
+    assert "waitForTaskToken" in text and '\\"TimeoutSeconds\\":86400' in text
+    for state in ("Recheck", "Execute", "Verify", "Expire", "NotifyPending", "NotifyResult"):
+        assert state in text
+    flow.has_resource_properties(
+        "AWS::SNS::Subscription", {"Protocol": "email", "Endpoint": "team@example.com"}
+    )
+
+
+def test_api_is_throttled_and_served_under_the_site(stacks):
+    stacks["api"].has_resource_properties(
+        "AWS::ApiGatewayV2::Stage",
+        {
+            "StageName": "$default",
+            "DefaultRouteSettings": {"ThrottlingRateLimit": 20, "ThrottlingBurstLimit": 40},
+        },
+    )
+    stacks["frontend"].has_resource_properties(
+        "AWS::CloudFront::Distribution",
+        {
+            "DistributionConfig": Match.object_like(
+                {
+                    "CacheBehaviors": [Match.object_like({"PathPattern": "/api/*"})],
+                    "DefaultRootObject": "index.html",
+                }
+            )
+        },
+    )
+    stacks["frontend"].has_resource_properties(
+        "AWS::S3::Bucket",
+        {
+            "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": True,
+                "BlockPublicPolicy": True,
+                "IgnorePublicAcls": True,
+                "RestrictPublicBuckets": True,
+            }
+        },
+    )
+
+
+def test_alarms_and_budget(stacks):
+    ops = stacks["ops"]
+    assert len(ops.find_resources("AWS::CloudWatch::Alarm")) == 7  # 3 x (errors, throttles) + flow
+    ops.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 20, "Unit": "USD"}})},
+    )

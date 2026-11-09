@@ -163,6 +163,7 @@ export const S = {
       'Từ chiều nay CloudWatch liên tục cảnh báo UnHealthyHostCount, cả 2 target đều unhealthy dù website vẫn vào được.',
     ],
     thinking: 'Thinking…',
+    stopping: 'Stopping…',
     streamError: 'The diagnosis was interrupted',
     deleteConversation: 'Delete conversation',
   },

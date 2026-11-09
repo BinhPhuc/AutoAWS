@@ -5,6 +5,8 @@ Items (PK / SK):
   conversation  CONV#<id>              / META                      GSI1: CONVS#<connection_id>
   message       CONV#<conversation_id> / MSG#<created_at>#<id>     (tool calls embedded)
   proposal      PROP#<id>              / META                      GSI1: PROPOSALS
+  job           JOB#<id>               / META                      GSI1: JOBS#<conversation_id>
+                                                                   (attribute ttl: DynamoDB TTL)
 
 Indexes:
   GSI1  (GSI1PK, GSI1SK)  listings — connections newest first, conversations of a connection
@@ -32,6 +34,7 @@ from botocore.exceptions import ClientError
 from app.storage.models import (
     Connection,
     Conversation,
+    Job,
     Message,
     Proposal,
     ToolCallRecord,
@@ -42,7 +45,7 @@ log = logging.getLogger(__name__)
 
 GSI1 = "GSI1"
 BY_ID = "ById"
-_KEY_ATTRS = {"PK", "SK", "GSI1PK", "GSI1SK", "entity"}
+_KEY_ATTRS = {"PK", "SK", "GSI1PK", "GSI1SK", "entity", "ttl"}
 _serializer = TypeSerializer()
 _deserializer = TypeDeserializer()
 
@@ -94,6 +97,12 @@ def ensure_table(client, table: str, kms_key_id: str = "") -> bool:
         SSESpecification=sse,
     )
     client.get_waiter("table_exists").wait(TableName=table)
+    try:  # jobs expire on their own (the CDK stack sets the same)
+        client.update_time_to_live(
+            TableName=table, TimeToLiveSpecification={"Enabled": True, "AttributeName": "ttl"}
+        )
+    except ClientError as e:
+        log.warning("Could not enable TTL on %s: %s", table, e)
     log.info("Created DynamoDB table %s", table)
     return True
 
@@ -150,6 +159,7 @@ class DynamoStore:
         # The conversation item and all its messages share the partition CONV#<id>.
         keys = [(i["PK"]["S"], i["SK"]["S"]) for i in self._query(f"CONV#{conv.id}")]
         keys += [(f"PROP#{p.id}", "META") for p in self.list_proposals(conversation_id=conv.id)]
+        keys += [(f"JOB#{j.id}", "META") for j in self.list_jobs(conv.id)]
         self._delete_keys(keys)
 
     def touch_conversation(self, conv: Conversation, title: str | None = None) -> None:
@@ -221,23 +231,88 @@ class DynamoStore:
 
     def update_proposal(self, proposal: Proposal, expected_status: str | None = None) -> bool:
         proposal.updated_at = utcnow()
-        item = {k: _serializer.serialize(v) for k, v in self._proposal_item(proposal).items()}
-        kwargs: dict = {}
+        fields = proposal.model_dump(mode="json", exclude={"id", "task_token"})
+        names = {f"#f{i}": key for i, key in enumerate(fields)}
+        values = {f":v{i}": _serializer.serialize(v) for i, v in enumerate(fields.values())}
+        condition = "attribute_exists(PK)"
         if expected_status is not None:
-            kwargs = {
-                "ConditionExpression": "#s = :expected",
-                "ExpressionAttributeNames": {"#s": "status"},  # reserved word
-                "ExpressionAttributeValues": {":expected": {"S": expected_status}},
-            }
+            names["#s"] = "status"  # reserved word
+            values[":expected"] = {"S": expected_status}
+            condition += " AND #s = :expected"
         try:
-            self.client.put_item(TableName=self.table, Item=item, **kwargs)
+            self.client.update_item(
+                TableName=self.table,
+                Key={"PK": {"S": f"PROP#{proposal.id}"}, "SK": {"S": "META"}},
+                UpdateExpression="SET " + ", ".join(f"#f{i} = :v{i}" for i in range(len(fields))),
+                ConditionExpression=condition,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return False
             raise
         return True
 
+    def set_proposal_token(self, proposal_id: str, task_token: str | None) -> None:
+        self.client.update_item(
+            TableName=self.table,
+            Key={"PK": {"S": f"PROP#{proposal_id}"}, "SK": {"S": "META"}},
+            UpdateExpression="SET task_token = :t",
+            ConditionExpression="attribute_exists(PK)",
+            ExpressionAttributeValues={":t": _serializer.serialize(task_token)},
+        )
+
+    # ---- jobs ----------------------------------------------------------------
+
+    def create_job(self, job: Job) -> Job:
+        self._put(self._job_item(job), new=True)
+        return job
+
+    def get_job(self, job_id: str) -> Job | None:
+        item = self._get(f"JOB#{job_id}", "META")
+        return Job.model_validate(self._fields(item)) if item else None
+
+    def list_jobs(self, conversation_id: str) -> list[Job]:
+        return [
+            Job.model_validate(self._fields(i)) for i in self._query_gsi1(f"JOBS#{conversation_id}")
+        ]
+
+    def update_job(self, job_id: str, **fields) -> None:
+        fields["updated_at"] = utcnow()
+        values = Job.model_validate({"conversation_id": "", **fields}).model_dump(mode="json")
+        names, exprs, attrs = {}, [], {}
+        for i, key in enumerate(fields):
+            names[f"#f{i}"] = key
+            attrs[f":v{i}"] = _serializer.serialize(values[key])
+            exprs.append(f"#f{i} = :v{i}")
+        self.client.update_item(
+            TableName=self.table,
+            Key={"PK": {"S": f"JOB#{job_id}"}, "SK": {"S": "META"}},
+            UpdateExpression="SET " + ", ".join(exprs),
+            ConditionExpression="attribute_exists(PK)",
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=attrs,
+        )
+
     # ---- items -----------------------------------------------------------------
+
+    @staticmethod
+    def _job_item(job: Job) -> dict:
+        item = {
+            "PK": f"JOB#{job.id}",
+            "SK": "META",
+            "GSI1PK": f"JOBS#{job.conversation_id}",
+            "GSI1SK": f"{_ts(job.created_at)}#{job.id}",
+            "entity": "job",
+            **job.model_dump(mode="json"),
+        }
+        if job.expires_at:
+            expires = (
+                job.expires_at if job.expires_at.tzinfo else job.expires_at.replace(tzinfo=UTC)
+            )
+            item["ttl"] = int(expires.timestamp())
+        return item
 
     @staticmethod
     def _proposal_item(p: Proposal) -> dict:

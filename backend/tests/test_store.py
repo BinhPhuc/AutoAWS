@@ -192,10 +192,18 @@ def test_dynamodb_table_is_encrypted_and_indexed(aws):
 
 
 @pytest.fixture
-def dynamo_api(app, aws):
+def dynamo_api(app, aws, monkeypatch):
+    from app.storage import store as store_module
+
     client = aws.client("dynamodb")
     ensure_table(client, "autoaws-api")
+
+    def dynamo():
+        yield DynamoStore(client, "autoaws-api")
+
     app.dependency_overrides[get_store] = lambda: DynamoStore(client, "autoaws-api")
+    # background work (worker, remediation) opens its own store
+    monkeypatch.setattr(store_module, "get_store", dynamo)
     with TestClient(app) as c:
         yield c, client
     app.dependency_overrides.clear()
@@ -222,15 +230,11 @@ def test_api_flow_on_dynamodb(dynamo_api, aws):
     assert api.get(f"/api/connections/{conn['id']}").json()["data"]["status"] == "connected"
     conv = api.post("/api/conversations", json={"connection_id": conn["id"]}).json()["data"]
 
-    with api.stream(
-        "POST",
-        f"/api/conversations/{conv['id']}/messages",
-        json={"content": "I can't SSH into my instance"},
-    ) as r:
-        events = [
-            line.split(":", 1)[1].strip() for line in r.iter_lines() if line.startswith("event:")
-        ]
-    assert events[-2:] == ["answer", "done"]
+    from tests.conftest import ask
+
+    job, events = ask(api, conv["id"], "I can't SSH into my instance")
+    assert [t for t, _ in events][-2:] == ["answer", "done"]
+    assert job["status"] == "succeeded" and job["message_id"]
 
     got = api.get(f"/api/conversations/{conv['id']}").json()["data"]
     assert got["title"] == "I can't SSH into my instance"

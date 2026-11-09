@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     user_timezone: str = "Asia/Ho_Chi_Minh"
     assume_role_duration_seconds: int = 900
 
+    # Where background work runs (docs/API_CONTRACT.md §9): local = in this process;
+    # lambda = API Gateway + Lambda api-handler / agent-worker / action-executor + Step Functions
+    runtime: Literal["local", "lambda"] = "local"
+    agent_worker_function: str = ""  # RUNTIME=lambda: function name / ARN of agent-worker
+    remediation_state_machine_arn: str = ""  # RUNTIME=lambda: remediation-flow
+    frontend_url: str = "http://localhost:5173"  # links in notification emails
+    job_ttl_days: int = 7
+    # A queued/running job without an update for this long is reported as failed (worker lost)
+    job_stale_seconds: int = 900
+    # Platform roles the customer's CloudFormation roles trust (empty = the whole platform
+    # account, for dev). The CDK stack sets them to the agent-worker / action-executor roles.
+    platform_agent_role_arn: str = ""
+    platform_executor_role_arn: str = ""
+
     # Human-in-the-loop remediation (docs/API_CONTRACT.md §7)
     # Dev only: let access-key connections execute approved proposals (LocalStack, test
     # accounts). Role connections use their AutoAWSRemediation role instead.

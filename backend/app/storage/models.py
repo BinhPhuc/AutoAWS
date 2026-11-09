@@ -92,3 +92,22 @@ class Proposal(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime | None = None
+    # RUNTIME=lambda: Step Functions task token of the approval wait (never sent to clients)
+    task_token: str | None = None
+
+
+class Job(SQLModel, table=True):
+    """One background diagnosis turn (docs/API_CONTRACT.md §8)."""
+
+    id: str = Field(default_factory=lambda: new_id("job"), primary_key=True)
+    type: str = "diagnosis"
+    conversation_id: str = Field(index=True)
+    question: str = ""
+    status: str = "queued"  # queued | running | succeeded | failed | cancelled
+    cancel_requested: bool = False
+    message_id: str | None = None
+    error_json: str | None = None
+    events_json: str = "[]"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime | None = None  # DynamoDB TTL

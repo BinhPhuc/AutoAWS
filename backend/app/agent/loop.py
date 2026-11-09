@@ -1,6 +1,7 @@
 """The agent loop: plan -> call tools -> analyze -> conclude, streamed as AgentEvents.
 
-Blocking boto3 calls run in a worker thread so the SSE stream keeps flowing.
+Blocking boto3 calls run in a worker thread so the event loop stays free (the job keeps
+receiving events, the MCP bridge keeps answering).
 
 - The model ends a turn with the ``submit_diagnosis`` tool (plain JSON text is accepted
   too); every evidence item is then checked against the tool results (app.agent.evidence).

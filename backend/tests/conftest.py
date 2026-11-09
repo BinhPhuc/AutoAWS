@@ -88,3 +88,14 @@ def store(request, app, aws):
         client = aws.client("dynamodb")
         ensure_table(client, "autoaws-test")
         yield DynamoStore(client, "autoaws-test")
+
+
+def ask(client, conv_id: str, content: str) -> tuple[dict, list[tuple[str, dict]]]:
+    """Start a diagnosis job and return (job, [(event type, data), ...]).
+
+    RUNTIME=local runs the job as a BackgroundTask; TestClient returns the POST response
+    only after background tasks finished, so the job is already done here."""
+    r = client.post(f"/api/conversations/{conv_id}/messages", json={"content": content})
+    assert r.status_code == 202, r.text
+    job = client.get(f"/api/jobs/{r.json()['data']['id']}").json()["data"]
+    return job, [(e["type"], e["data"]) for e in job["events"]]

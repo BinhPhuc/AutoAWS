@@ -1,18 +1,13 @@
-import json
+from fastapi import APIRouter, BackgroundTasks, Depends
 
-from fastapi import APIRouter, Depends
-from sse_starlette.sse import EventSourceResponse
-
-from app.agent.loop import run_agent
-from app.api.schemas import ConversationIn, ConversationOut, MessageIn, MessageOut
-from app.aws.credentials import CredentialError, resolve_session
+from app.api.schemas import ConversationIn, ConversationOut, JobOut, MessageIn, MessageOut
 from app.errors import AppError, NotFound
-from app.llm.base import LLMError
-from app.llm.factory import get_provider
+from app.platform import dispatch
 from app.responses import ok
 from app.storage.base import Store
 from app.storage.models import Conversation
 from app.storage.store import get_store
+from app.worker import ACTIVE, expire_stale, new_job
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -61,20 +56,24 @@ def delete_conversation(conv_id: str, store: Store = Depends(get_store)):
 
 
 @router.post("/{conv_id}/messages")
-async def send_message(conv_id: str, body: MessageIn, store: Store = Depends(get_store)):
+def send_message(
+    conv_id: str,
+    body: MessageIn,
+    background: BackgroundTasks,
+    store: Store = Depends(get_store),
+):
+    """Start a diagnosis job (docs/API_CONTRACT.md §3, §8); the client polls the job."""
     conv = _get(store, conv_id)
-    conn = _connected(store, conv.connection_id)
+    _connected(store, conv.connection_id)
+    for job in store.list_jobs(conv.id):
+        if expire_stale(store, job).status in ACTIVE:
+            raise AppError(
+                "JOB_IN_PROGRESS", 409, "A diagnosis is already running in this conversation"
+            )
+    job = store.create_job(new_job(conv, body.content))
     try:
-        aws_session = resolve_session(conn)
-    except CredentialError as e:
-        raise AppError("AWS_AUTH_FAILED", 400, f"AWS authentication failed: {e}") from e
-    try:
-        provider = get_provider()
-    except LLMError as e:
-        raise AppError("LLM_UNAVAILABLE", 503, f"LLM provider is unavailable: {e}") from e
-
-    async def events():
-        async for event in run_agent(store, conv, body.content, aws_session, provider):
-            yield {"event": event.type, "data": json.dumps(event.data, default=str)}
-
-    return EventSourceResponse(events(), ping=15)
+        dispatch.start_job(job.id, background)
+    except dispatch.DispatchError as e:
+        store.update_job(job.id, status="failed", error_json='{"error": "INTERNAL"}')
+        raise AppError("INTERNAL", 500, "Could not start the diagnosis") from e
+    return ok(JobOut.from_model(job), "Diagnosis started", 202)

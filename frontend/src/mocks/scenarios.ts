@@ -1,7 +1,7 @@
 import type { AgentEvent, DiagnosisAnswer } from '@/api/types'
 
 /**
- * Scripted SSE sequences for the three reference scenarios (KB1–KB3 in docs/SYSTEM_OVERVIEW.md).
+ * Scripted job event sequences for the three reference scenarios (KB1–KB3 in docs/SYSTEM_OVERVIEW.md).
  * Status text: English. Diagnosis content: Vietnamese (matches backend contract).
  */
 

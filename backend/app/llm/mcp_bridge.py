@@ -5,7 +5,7 @@ client (e.g. Claude Code connected to http://localhost:8000/mcp/) fetches the ol
 with ``next_llm_request``, reasons over the system prompt, the conversation and the tool
 results, and answers with ``respond_llm_request``: either tool calls (to read more AWS
 data) or the final DiagnosisAnswer JSON. Everything else — agent loop, AWS tools,
-sanitizer, SSE, storage — runs exactly as with a real provider.
+sanitizer, jobs, storage — runs exactly as with a real provider.
 
 The MCP server is mounted in the FastAPI app (same process and event loop as the agent
 loop), so the queue is a plain dict of futures. See docs/API_CONTRACT.md §6.

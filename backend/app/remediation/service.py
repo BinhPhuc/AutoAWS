@@ -30,6 +30,7 @@ from app.aws.remediation.sessions import (
 )
 from app.config import get_settings
 from app.errors import AppError
+from app.platform import dispatch
 from app.storage.base import Store
 from app.storage.models import Connection, Conversation, Proposal, new_id, utcnow
 
@@ -79,9 +80,24 @@ def transition(
 
 
 def expire_due(store: Store, p: Proposal) -> Proposal:
-    if p.status == PENDING and p.expires_at and _aware(p.expires_at) <= datetime.now(UTC):
-        transition(store, p, EXPIRED, "no decision within the approval window", expected=PENDING)
+    due = p.status == PENDING and p.expires_at and _aware(p.expires_at) <= datetime.now(UTC)
+    if due and transition(
+        store, p, EXPIRED, "no decision within the approval window", expected=PENDING
+    ):
+        dispatch.send_decision(store.get_proposal(p.id))
     return p
+
+
+def store_task_token(store: Store, proposal_id: str, task_token: str) -> dict:
+    """remediation-flow is now waiting for the decision (action-executor). If the user
+    already decided before the token was stored, deliver that decision right away."""
+    store.set_proposal_token(proposal_id, task_token)
+    p = store.get_proposal(proposal_id)
+    if p is None:
+        return {"ok": False, "status": "MISSING"}
+    if p.status != PENDING:
+        dispatch.send_decision(p)
+    return {"ok": True, "status": p.status}
 
 
 # ---- proposals from an answer ---------------------------------------------------------
@@ -156,6 +172,7 @@ def attach_proposals(
             ),
         )
         store.create_proposal(proposal)
+        dispatch.start_remediation_flow(proposal)
         ref.proposal_id = proposal.id
 
 
@@ -193,6 +210,7 @@ def decide(
         )
     if not ok:
         raise AppError("PROPOSAL_NOT_PENDING", 409, "Proposal was decided by someone else")
+    dispatch.send_decision(store.get_proposal(p.id))  # fresh: carries the stored task token
     return p, followup
 
 
@@ -200,101 +218,167 @@ def decide(
 
 
 def execute_proposal(store: Store, proposal_id: str) -> None:
-    """Re-check, execute and verify one APPROVED proposal. Never raises."""
+    """RUNTIME=local: re-check, execute and verify one APPROVED proposal. Never raises.
+    (RUNTIME=lambda runs the same three steps as states of remediation-flow.)"""
+    if recheck_step(store, proposal_id)["ok"] and execute_step(store, proposal_id)["ok"]:
+        verify_step(store, proposal_id)
+
+
+def _guarded(store: Store, proposal_id: str, step):
+    """Run one step; any unexpected error ends the proposal in FAILED."""
     p = store.get_proposal(proposal_id)
-    if p is None or p.status != APPROVED:
-        return
-    if not transition(store, p, EXECUTING, "re-checking the resource", expected=APPROVED):
-        return
+    if p is None:
+        return {"ok": False, "status": "MISSING"}
     try:
-        _execute(store, p)
+        return step(p)
     except Exception as e:  # noqa: BLE001 — the proposal must end in a final state
         log.exception("Proposal %s failed", p.id)
         transition(store, p, FAILED, "unexpected error", error=f"{type(e).__name__}: {e}")
+        return {"ok": False, "status": FAILED}
 
 
-def _execute(store: Store, p: Proposal) -> None:
+def _context(store: Store, p: Proposal):
     spec = get_action(p.action)
     conn = store.get_connection(p.connection_id)
-    params = json.loads(p.params_json)
-    if spec is None or conn is None:
-        transition(store, p, FAILED, "action or connection no longer exists")
-        return
     parent = store.get_proposal(p.parent_id) if p.kind == "rollback" and p.parent_id else None
-    if p.kind == "rollback" and parent is None:
-        transition(store, p, FAILED, "the proposal to roll back no longer exists")
-        return
+    return spec, conn, json.loads(p.params_json), parent
 
-    try:
-        read = resolve_session(conn)
-        current = spec.snapshot(read, params)
-    except Exception as e:  # noqa: BLE001
-        transition(store, p, FAILED, "could not re-read the resource", error=str(e))
-        return
-    if snapshot_hash(current) != p.snapshot_hash:
-        transition(
-            store,
-            p,
-            STALE,
-            "the resource changed since the preview; nothing was changed",
-            error="Resource changed since the preview — propose again",
-        )
-        return
 
-    try:
-        write = remediation_session(conn, spec.write_actions, p.id)
-        if p.kind == "fix":
-            result = spec.execute(read, write, params, current)
-        else:
-            spec.undo(
-                read,
-                write,
-                params,
-                json.loads(parent.snapshot_json),
-                json.loads(parent.result_json or "{}"),
+def recheck_step(store: Store, proposal_id: str) -> dict:
+    """APPROVED -> EXECUTING, then compare the resource with the preview snapshot (read-only).
+    Runs in agent-worker on AWS."""
+
+    def step(p: Proposal) -> dict:
+        if p.status == APPROVED and not transition(
+            store, p, EXECUTING, "re-checking the resource", expected=APPROVED
+        ):
+            return {"ok": False, "status": p.status}
+        if p.status != EXECUTING:
+            return {"ok": False, "status": p.status}
+        spec, conn, params, parent = _context(store, p)
+        if spec is None or conn is None:
+            transition(store, p, FAILED, "action or connection no longer exists")
+            return {"ok": False, "status": FAILED}
+        if p.kind == "rollback" and parent is None:
+            transition(store, p, FAILED, "the proposal to roll back no longer exists")
+            return {"ok": False, "status": FAILED}
+        try:
+            current = spec.snapshot(resolve_session(conn), params)
+        except Exception as e:  # noqa: BLE001
+            transition(store, p, FAILED, "could not re-read the resource", error=str(e))
+            return {"ok": False, "status": FAILED}
+        if snapshot_hash(current) != p.snapshot_hash:
+            transition(
+                store,
+                p,
+                STALE,
+                "the resource changed since the preview; nothing was changed",
+                error="Resource changed since the preview — propose again",
             )
-            result = {}
-    except (RemediationDisabled, CredentialError) as e:
-        transition(store, p, FAILED, "no write access", error=str(e))
-        return
-    except Exception as e:  # noqa: BLE001 — AWS rejected the change
-        transition(store, p, FAILED, "the change was rejected", error=f"{type(e).__name__}: {e}")
-        return
-    p.result_json = json.dumps(result, default=str)
+            return {"ok": False, "status": STALE}
+        return {"ok": True, "status": EXECUTING}
 
-    if p.kind == "fix":
-        ok, details = spec.verify(read, params, current, result)
-        verification = json.dumps({"ok": ok, "details": details}, ensure_ascii=False)
-        if ok:
-            transition(store, p, SUCCEEDED, "verified", verification_json=verification)
-            return
-        transition(store, p, VERIFY_FAILED, "verification failed", verification_json=verification)
-        _propose_rollback(store, p, spec, read, params)
-        return
+    return _guarded(store, proposal_id, step)
 
-    after = spec.snapshot(read, params)
-    restored = snapshot_hash(after) == parent.snapshot_hash
-    verification = json.dumps(
-        {
-            "ok": restored,
-            "details": "state matches the one before the change"
+
+def execute_step(store: Store, proposal_id: str) -> dict:
+    """The only write: the approved action through the locked write session. Runs in
+    action-executor on AWS. Idempotent: a retried step does not write twice."""
+
+    def step(p: Proposal) -> dict:
+        if p.status != EXECUTING:
+            return {"ok": False, "status": p.status}
+        if p.result_json is not None:  # already executed (Step Functions retry)
+            return {"ok": True, "status": EXECUTING}
+        spec, conn, params, parent = _context(store, p)
+        read = resolve_session(conn)
+        snapshot = json.loads(p.snapshot_json)
+        try:
+            write = remediation_session(conn, spec.write_actions, p.id)
+            if p.kind == "fix":
+                result = spec.execute(read, write, params, snapshot)
+            else:
+                spec.undo(
+                    read,
+                    write,
+                    params,
+                    json.loads(parent.snapshot_json),
+                    json.loads(parent.result_json or "{}"),
+                )
+                result = {}
+        except (RemediationDisabled, CredentialError) as e:
+            transition(store, p, FAILED, "no write access", error=str(e))
+            return {"ok": False, "status": FAILED}
+        except Exception as e:  # noqa: BLE001 — AWS rejected the change
+            transition(
+                store, p, FAILED, "the change was rejected", error=f"{type(e).__name__}: {e}"
+            )
+            return {"ok": False, "status": FAILED}
+        p.result_json = json.dumps(result, default=str)
+        store.update_proposal(p)
+        return {"ok": True, "status": EXECUTING}
+
+    return _guarded(store, proposal_id, step)
+
+
+def verify_step(store: Store, proposal_id: str) -> dict:
+    """Read the resource again (read-only) and check the action's post-condition.
+    Runs in agent-worker on AWS. A failed check proposes a rollback (needs approval)."""
+
+    def step(p: Proposal) -> dict:
+        if p.status != EXECUTING or p.result_json is None:
+            return {"ok": False, "status": p.status}
+        spec, conn, params, parent = _context(store, p)
+        read = resolve_session(conn)
+        snapshot = json.loads(p.snapshot_json)
+        result = json.loads(p.result_json)
+        if p.kind == "fix":
+            ok, details = spec.verify(read, params, snapshot, result)
+            verification = json.dumps({"ok": ok, "details": details}, ensure_ascii=False)
+            if ok:
+                transition(store, p, SUCCEEDED, "verified", verification_json=verification)
+                return {"ok": True, "status": SUCCEEDED}
+            transition(
+                store, p, VERIFY_FAILED, "verification failed", verification_json=verification
+            )
+            rollback = _propose_rollback(store, p, spec, read, params)
+            return {"ok": False, "status": VERIFY_FAILED, "rollback_id": rollback}
+        after = spec.snapshot(read, params)
+        restored = snapshot_hash(after) == parent.snapshot_hash
+        details = (
+            "state matches the one before the change"
             if restored
-            else "state differs from the one before the change",
-        },
-    )
-    if restored:
-        transition(store, p, SUCCEEDED, "rolled back and verified", verification_json=verification)
-        transition(store, parent, ROLLED_BACK, f"rolled back by {p.id}")
-    else:
+            else "state differs from the one before the change"
+        )
+        verification = json.dumps({"ok": restored, "details": details})
+        if restored:
+            transition(
+                store, p, SUCCEEDED, "rolled back and verified", verification_json=verification
+            )
+            transition(store, parent, ROLLED_BACK, f"rolled back by {p.id}")
+            return {"ok": True, "status": SUCCEEDED}
         transition(store, p, VERIFY_FAILED, "rollback not verified", verification_json=verification)
+        return {"ok": False, "status": VERIFY_FAILED}
+
+    return _guarded(store, proposal_id, step)
 
 
-def _propose_rollback(store: Store, p: Proposal, spec: ActionSpec, read, params: dict) -> None:
+def expire_step(store: Store, proposal_id: str) -> dict:
+    """The approval wait timed out (remediation-flow)."""
+    p = store.get_proposal(proposal_id)
+    if p is not None and p.status == PENDING:
+        transition(store, p, EXPIRED, "no decision within the approval window", expected=PENDING)
+    return {"ok": True, "status": p.status if p else "MISSING"}
+
+
+def _propose_rollback(
+    store: Store, p: Proposal, spec: ActionSpec, read, params: dict
+) -> str | None:
     try:
         after = spec.snapshot(read, params)
     except Exception:  # noqa: BLE001
         log.exception("Could not snapshot %s for its rollback", p.id)
-        return
+        return None
     undo = spec.undo_description(params, json.loads(p.snapshot_json))
     rollback = Proposal(
         id=new_id("prop"),
@@ -324,3 +408,5 @@ def _propose_rollback(store: Store, p: Proposal, spec: ActionSpec, read, params:
         ),
     )
     store.create_proposal(rollback)
+    dispatch.start_remediation_flow(rollback)
+    return rollback.id

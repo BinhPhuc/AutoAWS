@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import checklists, connections, conversations, health, proposals, tools
+from app.api import checklists, connections, conversations, health, jobs, proposals, tools
 from app.config import get_settings
 from app.errors import install_exception_handlers
 from app.storage.store import init_storage
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
         health.router,
         connections.router,
         conversations.router,
+        jobs.router,
         tools.router,
         checklists.router,
         proposals.router,

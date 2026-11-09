@@ -1,5 +1,4 @@
 import secrets
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 
@@ -11,9 +10,10 @@ from app.api.schemas import (
     VerifyOut,
 )
 from app.aws import cloudformation
-from app.aws.credentials import CredentialError, forget_session, resolve_session, verify_session
+from app.aws.credentials import forget_session
 from app.config import get_settings
 from app.errors import AppError, NotFound
+from app.platform import dispatch
 from app.responses import ok
 from app.storage.base import Store
 from app.storage.models import Connection
@@ -84,34 +84,17 @@ def delete_connection(conn_id: str, store: Store = Depends(get_store)):
 
 @router.post("/{conn_id}/verify")
 def verify_connection(conn_id: str, store: Store = Depends(get_store)):
-    conn = _get(store, conn_id)
-    forget_session(conn.id)
-    checked_at = datetime.now(UTC)
+    _get(store, conn_id)
     try:
-        identity = verify_session(resolve_session(conn))
-    except CredentialError as e:
-        conn.status = "failed"
-        conn.last_error = str(e)[:500]
-        conn.last_verified_at = checked_at
-        store.save_connection(conn)
-        result = VerifyOut(
-            status="failed", account_id=None, arn=None, checked_at=checked_at, error=conn.last_error
-        )
-        return ok(result, "Connection verification failed")
-
-    conn.status = "connected"
-    conn.account_id = identity["account_id"]
-    conn.last_error = None
-    conn.last_verified_at = checked_at
-    store.save_connection(conn)
-    result = VerifyOut(
-        status="connected",
-        account_id=identity["account_id"],
-        arn=identity["arn"],
-        checked_at=checked_at,
-        error=None,
+        result = VerifyOut.model_validate(dispatch.verify_connection(conn_id))
+    except dispatch.DispatchError as e:
+        raise AppError("INTERNAL", 500, "Could not verify the connection") from e
+    message = (
+        "Connection verified"
+        if result.status == "connected"
+        else ("Connection verification failed")
     )
-    return ok(result, "Connection verified")
+    return ok(result, message)
 
 
 @router.get("/{conn_id}/cloudformation")
@@ -129,6 +112,11 @@ def get_cloudformation(conn_id: str, store: Store = Depends(get_store)):
         role_name=cloudformation.ROLE_NAME,
         external_id=conn.external_id or "",
         platform_account_id=platform_account,
-        template_yaml=cloudformation.render_template(platform_account, conn.external_id or ""),
+        template_yaml=cloudformation.render_template(
+            platform_account,
+            conn.external_id or "",
+            agent_role_arn=get_settings().platform_agent_role_arn,
+            executor_role_arn=get_settings().platform_executor_role_arn,
+        ),
     )
     return ok(out)

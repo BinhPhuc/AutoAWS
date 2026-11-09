@@ -1,24 +1,13 @@
 """End-to-end chat with MockProvider: SSE event sequence + persistence."""
 
-import json
-
 import pytest
 
 
 def _stream(client, conv_id, content):
-    events = []
-    with client.stream(
-        "POST", f"/api/conversations/{conv_id}/messages", json={"content": content}
-    ) as r:
-        assert r.status_code == 200
-        assert r.headers["content-type"].startswith("text/event-stream")
-        event = None
-        for line in r.iter_lines():
-            if line.startswith("event:"):
-                event = line.split(":", 1)[1].strip()
-            elif line.startswith("data:") and event:
-                events.append((event, json.loads(line.split(":", 1)[1].strip())))
-                event = None
+    from tests.conftest import ask
+
+    job, events = ask(client, conv_id, content)
+    assert job["status"] in ("succeeded", "failed", "cancelled")
     return events
 
 
@@ -137,9 +126,9 @@ def _new_conversation(client, connection) -> str:
 
 
 def test_failed_turn_is_stored_with_a_note(client, connection, monkeypatch):
-    from app.api import conversations as conversations_api
+    from app import worker
 
-    monkeypatch.setattr(conversations_api, "get_provider", lambda: _FailingProvider())
+    monkeypatch.setattr(worker, "get_provider", lambda: _FailingProvider())
     conv_id = _new_conversation(client, connection)
     events = _stream(client, conv_id, "Website báo 502")
     assert [t for t, _ in events][-2:] == ["error", "done"]
@@ -152,10 +141,10 @@ def test_failed_turn_is_stored_with_a_note(client, connection, monkeypatch):
 
 
 def test_max_iterations_turn_keeps_its_tool_calls(client, connection, monkeypatch):
-    from app.api import conversations as conversations_api
+    from app import worker
     from app.config import get_settings
 
-    monkeypatch.setattr(conversations_api, "get_provider", lambda: _AlwaysToolsProvider())
+    monkeypatch.setattr(worker, "get_provider", lambda: _AlwaysToolsProvider())
     monkeypatch.setattr(get_settings(), "max_agent_iterations", 3)
     conv_id = _new_conversation(client, connection)
     events = _stream(client, conv_id, "Kiểm tra giúp")
