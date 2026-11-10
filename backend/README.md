@@ -12,6 +12,34 @@ cp .env.example .env          # Điền DYNAMODB_TABLE, DYNAMODB_REGION và cred
 uvicorn app.main:app --reload # http://localhost:8000/docs
 ```
 
+### Windows / PowerShell
+
+Dùng Python của `.venv` trực tiếp để tránh cài nhầm vào Python hệ thống:
+
+```powershell
+cd backend
+py -m venv .venv              # Chỉ cần khi chưa có .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+Nếu Python 3.15 báo `Failed building wheel for PyYAML` và yêu cầu Microsoft Visual C++,
+pip đang biên dịch extension C vì không tìm được wheel phù hợp. Có thể dùng bản Python
+thuần bằng biến build [PyYAML hỗ trợ](https://github.com/yaml/pyyaml/blob/6.0.3/setup.py):
+
+```powershell
+$env:PYYAML_FORCE_LIBYAML = '0'
+try {
+    .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+} finally {
+    Remove-Item Env:PYYAML_FORCE_LIBYAML
+}
+.\.venv\Scripts\python.exe -c "import yaml; print(yaml.__version__, yaml.__with_libyaml__)"
+```
+
+`__with_libyaml__ = False` nghĩa là đang dùng bản Python thuần; vẫn đọc/ghi YAML bình thường.
+Các cảnh báo `License classifiers` / `bdist_wheel` không phải nguyên nhân gây lỗi này.
+
 ## Deploy backend trên EC2
 
 Frontend build riêng và phục vụ từ S3 qua CloudFront. Trên EC2 đã cài Docker Engine
