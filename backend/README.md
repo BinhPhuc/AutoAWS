@@ -81,6 +81,9 @@ File Compose không cấu hình TLS, DNS hay Security Group.
 Trước khi mở API cho người dùng, đặt `AUTH_MODE=cognito`, `COGNITO_USER_POOL_ID`,
 `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` theo stack Auth hiện có (xem README gốc, mục
 chạy local với Cognito thật). Cơ chế auth và phân vùng người dùng giữ nguyên từ `main`.
+Với bản EC2 không dùng CDK, có thể tạo stack Cognito độc lập bằng
+[`cognito.yaml`](../infra/cloudformation/cognito.yaml); xem
+[`hướng dẫn cấu hình và kiểm tra đăng nhập`](../infra/cloudformation/COGNITO.md).
 
 `docker-compose.yml` ở thư mục gốc vẫn dùng cho phát triển local cả backend và frontend.
 

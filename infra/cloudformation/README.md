@@ -1,5 +1,8 @@
 # DynamoDB cho backend EC2
 
+Đăng nhập Cognito cho cùng mô hình triển khai: dùng [`cognito.yaml`](cognito.yaml)
+và hướng dẫn [`COGNITO.md`](COGNITO.md) (Hosted UI + PKCE, Outputs cho backend).
+
 Template `dynamodb.yaml` tạo một bảng trong **tài khoản nền tảng AutoAWS**, dùng đúng
 schema của `backend/app/storage/dynamo.py`: khoá `PK`/`SK`, hai GSI `GSI1` và `ById`
 (projection `ALL`), TTL trên thuộc tính `ttl`, trả phí theo yêu cầu và mã hoá KMS
