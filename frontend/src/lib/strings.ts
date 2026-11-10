@@ -220,6 +220,7 @@ export const S = {
     subtitle:
       'Fixes the agent proposed from the fixed catalogue. Nothing changes in your account until you approve a proposal; every change is verified afterwards and can be rolled back.',
     pageTitle: 'Proposals',
+    waiting: 'waiting for approval',
     approve: 'Approve',
     reject: 'Reject',
     feedback: 'Feedback',

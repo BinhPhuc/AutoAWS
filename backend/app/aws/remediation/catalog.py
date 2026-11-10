@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import boto3
+from botocore.exceptions import ClientError
 
 from app.config import get_settings
 
@@ -47,6 +48,32 @@ class ActionSpec:
     verify: Callable[[Session, dict, dict, dict], tuple[bool, str]]
     undo: Callable[[Session, Session, dict, dict, dict], None]
     undo_description: Callable[[dict, dict], str] = field(default=lambda p, s: "")
+    # The same write call with DryRun=True (EC2 only): permission check, nothing changes
+    dry_run: Callable[[Session, Session, dict, dict], None] | None = None
+
+
+class DryRunDenied(Exception):
+    """AWS refused the dry run: the remediation role lacks the permission."""
+
+
+class DryRunIgnored(Exception):
+    """The endpoint did not answer DryRunOperation: it may have applied the change
+    (emulators such as moto / LocalStack ignore DryRun on some EC2 calls)."""
+
+
+def expect_dry_run(call: Callable[..., object], **kwargs) -> None:
+    """Run ``call(DryRun=True, **kwargs)``; AWS answers with error DryRunOperation when the
+    request would have succeeded. Anything else stops the execution."""
+    try:
+        call(DryRun=True, **kwargs)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code == "DryRunOperation":
+            return
+        if code in ("UnauthorizedOperation", "AccessDenied", "AccessDeniedException"):
+            raise DryRunDenied(e.response.get("Error", {}).get("Message", code)) from e
+        raise
+    raise DryRunIgnored("the endpoint ignored DryRun; stopping before any further write")
 
 
 CATALOG: dict[str, ActionSpec] = {}
@@ -199,6 +226,21 @@ def _rt_execute(read: Session, write: Session, p: dict, s: dict) -> dict:
     return {"association_id": new, "previous_route_table_id": current["RouteTableId"]}
 
 
+def _rt_dry_run(read: Session, write: Session, p: dict, s: dict) -> None:
+    _, assoc = _effective_route_table(read.client("ec2"), p["subnet_id"], s["vpc_id"])
+    ec2 = write.client("ec2")
+    if assoc:
+        expect_dry_run(
+            ec2.replace_route_table_association,
+            AssociationId=assoc,
+            RouteTableId=p["route_table_id"],
+        )
+    else:
+        expect_dry_run(
+            ec2.associate_route_table, RouteTableId=p["route_table_id"], SubnetId=p["subnet_id"]
+        )
+
+
 def _rt_verify(read: Session, p: dict, s: dict, r: dict) -> tuple[bool, str]:
     rt, _ = _effective_route_table(read.client("ec2"), p["subnet_id"], s["vpc_id"])
     ok = rt["RouteTableId"] == p["route_table_id"] and _has_igw_default(rt)
@@ -244,6 +286,7 @@ register(
         verify=_rt_verify,
         undo=_rt_undo,
         undo_description=_rt_undo_description,
+        dry_run=_rt_dry_run,
     )
 )
 
@@ -311,6 +354,15 @@ def _route_execute(read: Session, write: Session, p: dict, s: dict) -> dict:
     return {"gateway_id": igw}
 
 
+def _route_dry_run(read: Session, write: Session, p: dict, s: dict) -> None:
+    expect_dry_run(
+        write.client("ec2").create_route,
+        RouteTableId=p["route_table_id"],
+        DestinationCidrBlock="0.0.0.0/0",
+        GatewayId=_route_igw(p, s),
+    )
+
+
 def _route_verify(read: Session, p: dict, s: dict, r: dict) -> tuple[bool, str]:
     rt = read.client("ec2").describe_route_tables(RouteTableIds=[p["route_table_id"]])[
         "RouteTables"
@@ -348,6 +400,7 @@ register(
         verify=_route_verify,
         undo=_route_undo,
         undo_description=lambda p, s: f"Delete the 0.0.0.0/0 route from {p['route_table_id']}",
+        dry_run=_route_dry_run,
     )
 )
 
@@ -439,6 +492,14 @@ def _sg_execute(read: Session, write: Session, p: dict, s: dict) -> dict:
     return {"rule_ids": [r["SecurityGroupRuleId"] for r in resp.get("SecurityGroupRules", [])]}
 
 
+def _sg_dry_run(read: Session, write: Session, p: dict, s: dict) -> None:
+    expect_dry_run(
+        write.client("ec2").authorize_security_group_ingress,
+        GroupId=p["group_id"],
+        IpPermissions=[_permission(p)],
+    )
+
+
 def _sg_verify(read: Session, p: dict, s: dict, r: dict) -> tuple[bool, str]:
     now = _sg_snapshot(read, p)["inbound"]
     return _sg_new_rule(p) in now, f"{p['group_id']} inbound: {', '.join(now)}"
@@ -477,6 +538,7 @@ register(
         verify=_sg_verify,
         undo=_sg_undo,
         undo_description=lambda p, s: f"Revoke the new rule from {p['group_id']}",
+        dry_run=_sg_dry_run,
     )
 )
 
@@ -552,6 +614,11 @@ def _eip_execute(read: Session, write: Session, p: dict, s: dict) -> dict:
     }
 
 
+def _eip_dry_run(read: Session, write: Session, p: dict, s: dict) -> None:
+    # AssociateAddress needs a real allocation id: only the allocation can be dry-run
+    expect_dry_run(write.client("ec2").allocate_address, Domain="vpc")
+
+
 def _eip_verify(read: Session, p: dict, s: dict, r: dict) -> tuple[bool, str]:
     ip = _instance(read, p["instance_id"]).get("PublicIpAddress")
     return ip == r["public_ip"], f"{p['instance_id']} public IP {ip}, Elastic IP {r['public_ip']}"
@@ -588,6 +655,7 @@ register(
         verify=_eip_verify,
         undo=_eip_undo,
         undo_description=lambda p, s: "Detach and release the Elastic IP",
+        dry_run=_eip_dry_run,
     )
 )
 

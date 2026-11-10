@@ -73,10 +73,17 @@ class Settings(BaseSettings):
     # Dev only: let access-key connections execute approved proposals (LocalStack, test
     # accounts). Role connections use their AutoAWSRemediation role instead.
     remediation_allow_access_keys: bool = False
+    # Run EC2 changes with DryRun=True first (permission check, report §2.7.2). Only against
+    # real AWS: emulators (moto, LocalStack) ignore DryRun on some calls and APPLY the change.
+    remediation_dry_run: bool = True
     proposal_ttl_hours: int = 24
     # How long the post-change verification may wait (e.g. targets turning healthy)
     remediation_verify_timeout_seconds: int = 120
     remediation_verify_poll_seconds: float = 5.0
+
+    @property
+    def dry_run_enabled(self) -> bool:
+        return self.remediation_dry_run and not self.aws_endpoint_url
 
     @property
     def cors_origin_list(self) -> list[str]:

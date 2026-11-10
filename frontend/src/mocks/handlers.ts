@@ -257,8 +257,14 @@ export const handlers = [
   }),
 
   http.get('/api/proposals', async ({ request }) => {
-    const conv = new URL(request.url).searchParams.get('conversation_id')
-    return ok(db.proposals.filter((p) => !conv || p.conversation_id === conv))
+    const q = new URL(request.url).searchParams
+    const conv = q.get('conversation_id')
+    const status = q.get('status')
+    return ok(
+      db.proposals.filter(
+        (p) => (!conv || p.conversation_id === conv) && (!status || p.status === status),
+      ),
+    )
   }),
 
   http.get('/api/proposals/:id', async ({ params, request }) => {

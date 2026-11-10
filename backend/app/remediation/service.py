@@ -22,7 +22,7 @@ from jsonschema import Draft202012Validator
 
 from app.agent.schemas import DiagnosisAnswer
 from app.aws.credentials import CredentialError, resolve_session
-from app.aws.remediation.catalog import ActionSpec, get_action
+from app.aws.remediation.catalog import ActionSpec, DryRunDenied, DryRunIgnored, get_action
 from app.aws.remediation.sessions import (
     RemediationDisabled,
     remediation_enabled,
@@ -244,6 +244,40 @@ def _context(store: Store, p: Proposal):
     return spec, conn, json.loads(p.params_json), parent
 
 
+def _note(store: Store, p: Proposal, note: str) -> None:
+    """Add an audit entry without changing the status."""
+    history = _history(p)
+    history.append({"status": p.status, "at": utcnow().isoformat(), "note": note})
+    p.history_json = json.dumps(history, ensure_ascii=False)
+    store.update_proposal(p)
+
+
+def recover_interrupted(store: Store) -> list[str]:
+    """RUNTIME=local, at startup: proposals the previous process left mid-way.
+
+    APPROVED (nothing written yet) is executed again; EXECUTING with a stored result is
+    verified; EXECUTING without one may or may not have been applied, so it ends FAILED
+    with a note to check the resource (never written twice). Returns the ids handled."""
+    handled = []
+    for status in (APPROVED, EXECUTING):
+        for p in store.list_proposals(status=status):
+            handled.append(p.id)
+            if p.status == APPROVED:
+                execute_proposal(store, p.id)
+            elif p.result_json is not None:
+                verify_step(store, p.id)
+            else:
+                transition(
+                    store,
+                    p,
+                    FAILED,
+                    "interrupted while applying the change (backend restarted)",
+                    error="Interrupted: the change may or may not have been applied — check "
+                    "the resource, then ask again",
+                )
+    return handled
+
+
 def recheck_step(store: Store, proposal_id: str) -> dict:
     """APPROVED -> EXECUTING, then compare the resource with the preview snapshot (read-only).
     Runs in agent-worker on AWS."""
@@ -295,6 +329,16 @@ def execute_step(store: Store, proposal_id: str) -> dict:
         snapshot = json.loads(p.snapshot_json)
         try:
             write = remediation_session(conn, spec.write_actions, p.id)
+            if p.kind == "fix" and spec.dry_run and get_settings().dry_run_enabled:
+                try:
+                    spec.dry_run(read, write, params, snapshot)
+                except DryRunDenied as e:
+                    transition(store, p, FAILED, "dry run refused", error=f"Permission: {e}")
+                    return {"ok": False, "status": FAILED}
+                except DryRunIgnored as e:
+                    transition(store, p, FAILED, "dry run not honoured", error=str(e))
+                    return {"ok": False, "status": FAILED}
+                _note(store, p, "dry run passed")
             if p.kind == "fix":
                 result = spec.execute(read, write, params, snapshot)
             else:

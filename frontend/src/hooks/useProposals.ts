@@ -56,3 +56,15 @@ export function useDecide() {
     onError: (e) => toastApiError(e),
   })
 }
+
+/** Proposals waiting for a decision, for the navigation badge (report §3.3: the web UI
+ *  always shows pending proposals, emails may land in spam). */
+export function usePendingProposals(): number {
+  const { data } = useQuery({
+    queryKey: [...proposalKeys.all, 'pending'],
+    queryFn: async () => (await proposalsApi.list({ status: 'PENDING_APPROVAL' })).data,
+    refetchInterval: 15_000,
+    retry: false,
+  })
+  return data?.length ?? 0
+}

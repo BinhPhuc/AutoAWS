@@ -13,6 +13,20 @@ from app.storage.store import init_storage
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _recover_remediation() -> None:
+    """Finish or close proposals a previous local process left mid-way (no Step Functions)."""
+    from app.remediation.service import recover_interrupted
+    from app.storage.store import open_store
+
+    try:
+        with open_store() as store:
+            handled = recover_interrupted(store)
+        if handled:
+            logging.getLogger(__name__).warning("Recovered interrupted proposals: %s", handled)
+    except Exception:  # noqa: BLE001 — never block startup
+        logging.getLogger(__name__).exception("Proposal recovery failed")
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
 
@@ -27,6 +41,8 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         init_storage()
+        if settings.runtime == "local":
+            _recover_remediation()
         if mcp_server is None:
             yield
             return

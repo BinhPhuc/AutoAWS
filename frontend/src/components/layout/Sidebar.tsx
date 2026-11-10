@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { PanelLeftClose, PanelLeftOpen, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { usePendingProposals } from '@/hooks/useProposals'
 import { navItems } from '@/lib/nav'
 import { S } from '@/lib/strings'
 
@@ -14,6 +15,7 @@ export function Sidebar({
   onToggle?: () => void
   onNavigate?: () => void
 }) {
+  const pending = usePendingProposals()
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div
@@ -54,8 +56,27 @@ export function Sidebar({
               )
             }
           >
-            <Icon className="size-4 shrink-0" aria-hidden />
+            <span className="relative shrink-0">
+              <Icon className="size-4" aria-hidden />
+              {collapsed && to === '/proposals' && pending > 0 && (
+                <span
+                  aria-hidden
+                  className="absolute -top-1 -right-1 size-2 rounded-full bg-warning-border"
+                />
+              )}
+            </span>
             {collapsed ? <span className="sr-only">{label}</span> : <span>{label}</span>}
+            {to === '/proposals' && pending > 0 && (
+              <span
+                className={cn(
+                  'tabular ml-auto rounded-sm bg-warning-bg px-1.5 text-xs font-semibold text-warning',
+                  collapsed && 'sr-only',
+                )}
+              >
+                {pending}
+                <span className="sr-only"> {S.remediation.waiting}</span>
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

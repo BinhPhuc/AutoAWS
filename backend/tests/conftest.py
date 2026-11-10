@@ -10,6 +10,8 @@ os.environ.setdefault("LLM_PROVIDER", "mock")
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-southeast-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
+# moto ignores DryRun on some EC2 writes (it would apply the change): tested separately
+os.environ.setdefault("REMEDIATION_DRY_RUN", "false")
 
 REGION = "ap-southeast-1"
 FAKE_KEY = "AKIAIOSFODNN7EXAMPLE"

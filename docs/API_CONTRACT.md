@@ -356,7 +356,9 @@ Văn bản trong `preview` là tiếng Anh do server sinh (nhãn) + ID tài nguy
 `PENDING_APPROVAL` → (Duyệt) `APPROVED` → `EXECUTING` → `SUCCEEDED`.
 - Từ chối → `REJECTED`; không quyết định trong 24 giờ → `EXPIRED`; góp ý → `SUPERSEDED` (agent đề xuất lại trong lượt hỏi tiếp).
 - Lúc duyệt, server đọc lại tài nguyên: khác snapshot lúc xem trước → `STALE`, không ghi gì.
+- Trước khi ghi, các hành động EC2 chạy thử với `DryRun=True` (chỉ trên AWS thật, `REMEDIATION_DRY_RUN=true`): AWS trả `DryRunOperation` thì mới ghi thật (lịch sử có ghi chú `dry run passed`); bị từ chối quyền → `FAILED` (`error` bắt đầu bằng `Permission:`); endpoint không trả `DryRunOperation` (trình giả lập) → `FAILED`, không ghi tiếp. Route 53 và ELB không có DryRun.
 - Lỗi khi gọi API ghi → `FAILED` (kèm `error`).
+- `RUNTIME=local`, backend khởi động lại giữa chừng: `APPROVED` (chưa ghi) được chạy tiếp; `EXECUTING` đã có `result` được kiểm chứng; `EXECUTING` chưa có `result` → `FAILED` với `error` `"Interrupted: …"` (không ghi lại lần hai — người dùng kiểm tra tài nguyên rồi hỏi lại).
 - Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
 - Thực thi chạy nền: response của quyết định trả `APPROVED`; client hỏi lại `GET /api/proposals/{id}` tới khi hết `APPROVED` / `EXECUTING`.
 - Trên AWS (`RUNTIME=lambda`, mục 9): mỗi đề xuất là một lượt chạy state machine `remediation-flow` (Step Functions): gửi email SNS → chờ duyệt `.waitForTaskToken` (24 giờ, hết hạn → `EXPIRED`) → agent-worker kiểm tra lại (role chỉ đọc) → action-executor thực thi (role `AutoAWSRemediation`) → agent-worker kiểm chứng → email kết quả. Quyết định của người dùng được chuyển vào state machine bằng `SendTaskSuccess` / `SendTaskFailure`. Chạy local (`RUNTIME=local`) thì các bước này chạy nền trong backend, cùng trạng thái và API.
