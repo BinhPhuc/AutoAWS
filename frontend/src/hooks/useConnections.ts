@@ -17,6 +17,21 @@ export function useConnections() {
   })
 }
 
+export function useConnectionSetup() {
+  return useQuery({
+    queryKey: ['connection-setup'],
+    queryFn: async () => (await connectionsApi.setup()).data,
+  })
+}
+
+export function useCloudFormationPreview(externalId: string) {
+  return useQuery({
+    queryKey: ['cloudformation-preview', externalId],
+    queryFn: async () => (await connectionsApi.cloudformationPreview(externalId)).data,
+    enabled: /^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(externalId),
+  })
+}
+
 export function useCloudFormation(id: string | null) {
   return useQuery({
     queryKey: connectionKeys.cfn(id ?? ''),

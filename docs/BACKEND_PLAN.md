@@ -118,7 +118,7 @@ def tool(spec) -> decorator  # đăng ký vào REGISTRY
 - Mỗi tool: nhận `(session, input)`, trả **dict JSON-serializable, đã rút gọn** (chỉ trường cần cho chẩn đoán, ví dụ instance: id, name, state, public_ip, private_ip, subnet_id, vpc_id, sg_ids, status_checks). Phân trang bằng paginator; giới hạn `max_items`.
 - `AccessDenied`/`ClientError` → trả `{"error": "AccessDenied: ..."}` để agent biết và ghi vào `unverified`.
 
-### 4.3 LLM provider (`llm/base.py`) — PLACEHOLDER
+### 4.3 LLM provider (`llm/base.py`)
 ```python
 class LLMMessage(TypedDict): role: Literal["system","user","assistant","tool"]; content: str | list
 class ToolCallRequest(BaseModel): id: str; name: str; input: dict
@@ -129,7 +129,9 @@ class LLMProvider(Protocol):
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse: ...
 ```
 - `MockProvider` (demo không cần key): lượt 1 nhìn từ khoá trong câu hỏi → trả `tool_calls` (ví dụ chứa "ssh" → `describe_instances`, `describe_security_groups`, `describe_route_tables`; "502"/"5xx" → `elbv2_describe_load_balancers`, `elbv2_describe_target_health`; "dns"/"tên miền" → `resolve_dns_public`, `route53_list_records`, `describe_instances`); lượt 2 trả `text` là JSON `DiagnosisAnswer` **sinh từ kết quả tool thật** ở mức đơn giản (liệt kê bằng chứng, `confidence: "low"`, `cause` ghi "MockProvider — chưa cấu hình LLM, chỉ liệt kê bằng chứng chưa suy luận"). Mục đích: UI và pipeline chạy thật từ đầu đến cuối.
-- `AnthropicProvider`, `BedrockProvider`: file có class + docstring mô tả cách map (Anthropic Messages API tool use / Bedrock Converse toolConfig) + `raise NotImplementedError`. Người làm LLM (TV1) chỉ cần điền file này.
+- `AnthropicProvider`, `BedrockProvider`: đã triển khai qua Messages API dùng chung `app/llm/claude.py`; `McpBridgeProvider` cho phép MCP client đóng vai LLM. `OpenAICompatibleProvider` dùng Chat Completions cho Ollama hoặc endpoint tương thích.
+
+- [x] OpenAI-compatible / Ollama (2026-11-10): chuyển `OpenAICompatibleProvider` từ `dev`, chọn `LLM_PROVIDER=openai`; cấu hình URL/model/key/timeout/token qua `.env`. Ánh xạ tool calls và kết quả tool vào Chat Completions, hỗ trợ `submit_diagnosis`, thống kê token cho giới hạn lượt. Dùng lại sanitizer, registry chỉ đọc, job và kiểm bằng chứng; lỗi HTTP không phản chiếu nội dung server. Hướng dẫn: `backend/README.md`, mục Ollama.
 
 ### 4.4 Agent loop (`agent/loop.py`)
 ```
@@ -152,6 +154,7 @@ yield done
 ```
 - Lịch sử hội thoại: nạp lại messages trước (gồm tool results đã rút gọn) để "hỏi tiếp không phải đọc lại".
 - `SYSTEM_PROMPT` (tiếng Anh): vai trò, **thứ tự kiểm tra theo đường đi kết nối** (DNS → IP → route table → NACL → SG → LB → instance → app), quy tắc "mọi kết luận phải có bằng chứng", "không đoán — ghi vào unverified kèm lệnh tự kiểm tra", chỉ gọi tool trong danh sách, trả JSON đúng schema `DiagnosisAnswer`, **văn xuôi trong câu trả lời luôn là tiếng Việt** (giữ nguyên tên tài nguyên, lệnh, mã lỗi AWS). Prompt viết bằng tiếng Anh (model tuân thủ tốt hơn), chỉ có chỉ thị ngôn ngữ đầu ra là tiếng Việt.
+- [x] Điều chỉnh phạm vi và độ dài theo `dev` (2026-11-11): chỉ đọc dữ liệu câu hỏi cần, dừng khi nguyên nhân chặn đã được xác nhận đủ để trả lời; chỉ kiểm tra toàn diện khi được yêu cầu. Tóm tắt 1–2 câu, lời chào/cảm ơn và yêu cầu quá mơ hồ không gọi AWS, trả lời hoặc hỏi lại ngắn qua định dạng hiện có với các danh sách chẩn đoán rỗng. Giữ `submit_diagnosis`, kiểm chứng bằng chứng, cache, giới hạn lượt, job và đề xuất có phê duyệt; vẫn ghi nhiều nguyên nhân khi dữ liệu cho thấy. Mốc này thay chỉ thị cũ bắt buộc kiểm tra đủ mọi lớp ở mọi lượt. Thêm `infra/ollama/Modelfile` tạo biến thể Qwen context 16.384, temperature 0.2; so sánh trực tiếp thấy context 4.096 làm mất chỉ thị với bộ prompt/tool hiện tại.
 
 ### 4.5 Sanitizer (`sanitizer.py`)
 - Regex che: `AKIA[0-9A-Z]{16}`, chuỗi 40 ký tự base64 cạnh từ "secret", email, `Bearer …`, `password=…`, private key block.
@@ -175,7 +178,7 @@ DYNAMODB_TABLE=                # điền tên bảng từ CloudFormation Outputs
 DYNAMODB_REGION=               # điền region của bảng
 DYNAMODB_ENDPOINT_URL=         # để trống với AWS endpoint chuẩn
 DYNAMODB_CREATE_TABLE=false
-LLM_PROVIDER=mock              # mock | anthropic | bedrock
+LLM_PROVIDER=mock              # mock | openai | anthropic | bedrock | mcp
 ANTHROPIC_API_KEY=
 BEDROCK_MODEL_ID=
 BEDROCK_REGION=
@@ -212,6 +215,9 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 - Giới hạn chi phí: cache kết quả tool theo (connection, tool, input) trong phiên; đếm token.
 - [x] **Hợp nhất auth + DynamoDB (2026-11-10)**: giữ auth và schema phân vùng từ `main`, ghép cấu hình DynamoDB/CloudFormation/Compose EC2; xác nhận đăng nhập, chặn truy cập chéo người dùng và lưu người quyết định trên DynamoDB. 235 test BE, 16 test FE, 11 test CDK; chưa deploy AWS thật.
 - [x] **Cognito độc lập cho EC2 (2026-11-10)**: template `infra/cloudformation/cognito.yaml` tạo User Pool Lite, Hosted UI classic và public app client tương thích PKCE/callback hiện có; Outputs cho `AUTH_MODE=cognito`, hướng dẫn Console và CloudFront trong `infra/cloudformation/COGNITO.md`. cfn-lint sạch; chưa deploy AWS thật.
+- [x] **Cognito trên localhost (2026-11-10)**: `FrontendUrl` mặc định `http://localhost:5173`, cho phép HTTP chỉ tại localhost với port tuỳ chọn; không thêm callback/logout trùng khi bật `AllowLocalhost`. Hướng dẫn chạy local trong `infra/cloudformation/COGNITO.md`; cfn-lint và kiểm tra 13 trường hợp origin, 10 tổ hợp callback/logout đạt. Chưa thử đăng nhập Cognito thật.
+
+- [x] **Credentials cho uvicorn local (2026-11-10)**: nạp `.env` vào môi trường trước khi tạo Settings để boto3/SDK Bedrock dùng cùng credentials với cấu hình local, không ghi đè biến môi trường có sẵn. Test access key/session token cho session nền tảng và DynamoDB; backend đã startup với DynamoDB thật và health trả 200. Chưa kiểm tra đăng nhập Cognito/Bedrock thật.
 
 ## 7. Quy tắc bắt buộc (cho mọi người/agent sửa backend)
 1. Không thêm bất kỳ AWS action nào ngoài `Describe*/List*/Get*/LookupEvents/StartQuery/GetQueryResults/GetMetricData`. PR có action ghi → từ chối.

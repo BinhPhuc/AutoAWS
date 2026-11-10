@@ -33,7 +33,9 @@ class RoleConnectionIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     region: str = Field(min_length=1)
     role_arn: str = Field(pattern=r"^arn:aws:iam::\d{12}:role/.+")
-    external_id: str | None = None
+    external_id: str | None = Field(
+        default=None, min_length=2, max_length=1224, pattern=r"^[A-Za-z0-9_+=,.@:/-]+$"
+    )
     remediation_role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/.+")
 
 
@@ -42,6 +44,10 @@ class ConnectionPatch(BaseModel):
 
 
 ConnectionIn = Annotated[AccessKeyConnectionIn | RoleConnectionIn, Field(discriminator="type")]
+
+
+class CloudFormationPreviewIn(BaseModel):
+    external_id: str = Field(min_length=2, max_length=1224, pattern=r"^[A-Za-z0-9_+=,.@:/-]+$")
 
 
 class ConnectionOut(BaseModel):

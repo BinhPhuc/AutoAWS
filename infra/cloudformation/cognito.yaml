@@ -9,9 +9,10 @@ Parameters:
     Description: Environment label for the user pool, web client and default domain prefix.
   FrontendUrl:
     Type: String
-    AllowedPattern: 'https://[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?(?::[0-9]{1,5})?'
-    ConstraintDescription: Use the HTTPS frontend origin without a path, query or trailing slash.
-    Description: Frontend origin, e.g. https://d123example.cloudfront.net (no trailing slash).
+    Default: "http://localhost:5173"
+    AllowedPattern: '^(?:https://[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?(?::[0-9]{1,5})?|http://localhost(?::[0-9]{1,5})?)$'
+    ConstraintDescription: Use an HTTPS origin or http://localhost with an optional port, without a path, query or trailing slash.
+    Description: Frontend origin; defaults to http://localhost:5173 for local testing. Use HTTPS for a deployed frontend.
   DomainPrefix:
     Type: String
     Default: ""
@@ -23,7 +24,7 @@ Parameters:
     Type: String
     Default: "false"
     AllowedValues: ["true", "false"]
-    Description: Also allow http://localhost:5173 callback and logout URLs for Vite development.
+    Description: Also allow http://localhost:5173 when FrontendUrl uses another origin; not needed for the default local frontend.
   SelfSignUp:
     Type: String
     Default: "true"
@@ -32,7 +33,9 @@ Parameters:
 
 Conditions:
   HasDomainPrefix: !Not [!Equals [!Ref DomainPrefix, ""]]
-  LocalhostEnabled: !Equals [!Ref AllowLocalhost, "true"]
+  LocalhostEnabled: !And
+    - !Equals [!Ref AllowLocalhost, "true"]
+    - !Not [!Equals [!Ref FrontendUrl, "http://localhost:5173"]]
   SelfSignUpEnabled: !Equals [!Ref SelfSignUp, "true"]
 
 Resources:
@@ -137,7 +140,7 @@ Outputs:
     Description: JWT issuer; the backend derives this from COGNITO_USER_POOL_ID.
     Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${Users}"
   CallbackUrl:
-    Description: CloudFront must serve the React app at this path and preserve its query string.
+    Description: The frontend must serve the React app at this path and preserve its query string.
     Value: !Sub "${FrontendUrl}/auth/callback"
   LogoutUrl:
     Description: Post-logout redirect URL (the trailing slash is required by the React client).

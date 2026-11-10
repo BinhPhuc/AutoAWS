@@ -8,6 +8,10 @@ def get_provider() -> LLMProvider:
         from app.llm.mock import MockProvider
 
         return MockProvider()
+    if name == "openai":
+        from app.llm.openai_compatible import OpenAICompatibleProvider
+
+        return OpenAICompatibleProvider()
     if name == "anthropic":
         from app.llm.anthropic import AnthropicProvider
 

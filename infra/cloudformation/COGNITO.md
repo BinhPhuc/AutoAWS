@@ -1,14 +1,15 @@
 # Cognito cho AutoAWS hiện tại
 
 Template [`cognito.yaml`](cognito.yaml) tạo Cognito độc lập trong **tài khoản nền tảng
-AutoAWS**, phù hợp bản backend EC2 + frontend S3/CloudFront. Cấu hình bám theo
+AutoAWS**, dùng được khi backend/frontend chạy localhost hoặc triển khai bản
+backend EC2 + frontend S3/CloudFront. Cấu hình bám theo
 `infra/cdk/autoaws_cdk/auth.py` và hợp đồng `docs/API_CONTRACT.md` §0.1:
 
 - User Pool gói Lite, đăng nhập bằng email, xác minh email và khôi phục mật khẩu qua email.
 - Hosted UI classic, app client public **không có client secret**, OAuth Authorization
   Code; frontend hiện có gửi PKCE S256. Scope: `openid email profile`.
-- Callback `<FrontendUrl>/auth/callback`, logout `<FrontendUrl>/`; có thể bật thêm Vite
-  tại `http://localhost:5173`.
+- Callback `<FrontendUrl>/auth/callback`, logout `<FrontendUrl>/`; mặc định dùng Vite
+  tại `http://localhost:5173`, không cần có CloudFront.
 - Mật khẩu tối thiểu 12 ký tự, có chữ hoa, chữ thường và số; MFA TOTP tuỳ chọn.
 - Access/ID token sống 1 giờ, refresh token 7 ngày, bật token revocation.
 
@@ -27,9 +28,9 @@ stack CDK `Auth`, tiếp tục dùng Outputs của stack đó để giữ nguyê
 | Tham số | Giá trị |
 |---|---|
 | `EnvironmentName` | `dev` hoặc `demo`, `staging`, `prod` |
-| `FrontendUrl` | Origin HTTPS thực tế, ví dụ `https://d123example.cloudfront.net`; không thêm `/`, path hay query |
+| `FrontendUrl` | Mặc định `http://localhost:5173` để test local; chấp nhận `http://localhost` với port khác hoặc origin HTTPS khi triển khai, ví dụ `https://d123example.cloudfront.net`. Không thêm `/`, path hay query |
 | `DomainPrefix` | Để trống để dùng `autodiag-<environment>-<account>`, hoặc nhập prefix riêng chưa được sử dụng |
-| `AllowLocalhost` | `true` nếu muốn thử qua `http://localhost:5173`; mặc định `false` |
+| `AllowLocalhost` | Mặc định `false`; đặt `true` để thêm `http://localhost:5173` khi `FrontendUrl` là origin khác. Không cần bật khi dùng `FrontendUrl` mặc định; URL trùng chỉ được khai báo một lần |
 | `SelfSignUp` | `true` cho phép tự đăng ký; `false` nếu chỉ quản trị viên tạo tài khoản |
 
 4. Tạo stack và chờ `CREATE_COMPLETE`, sau đó mở tab **Outputs**.
@@ -84,7 +85,62 @@ Nếu API đi qua CloudFront cùng origin tại `/api/*`, để `VITE_API_URL` t
 Compose EC2 hiện ép `CORS_ORIGINS=*`; nếu chạy backend trực tiếp hoặc dùng Compose
 khác, cấu hình CORS cho origin frontend và header `Authorization`.
 
-## 3. CloudFront và kiểm tra đăng nhập
+## 3. Chạy thử trên localhost
+
+Tạo hoặc **Update stack hiện có** bằng template mới với `FrontendUrl=http://localhost:5173`.
+Có thể giữ `AllowLocalhost=false`: callback và logout local đã được tạo từ
+`FrontendUrl`. Cognito vẫn chạy trên AWS thật; chỉ backend và frontend chạy trên máy.
+Theo [tài liệu AWS](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-client-apps.html),
+Cognito cho phép callback HTTP tại localhost để kiểm thử.
+
+Điền ba biến `COGNITO_*` và `AUTH_MODE=cognito` như mục 2 vào `backend/.env`.
+Để thử đăng nhập mà chưa cần DynamoDB hay Bedrock, có thể đặt thêm:
+
+```dotenv
+RUNTIME=local
+STORAGE_BACKEND=sqlite
+DB_PATH=./autoaws.db
+LLM_PROVIDER=mock
+FRONTEND_URL=http://localhost:5173
+```
+
+Trong `frontend/.env`, dùng backend thật qua proxy có sẵn của Vite:
+
+```dotenv
+VITE_API_URL=
+VITE_USE_MOCK=false
+```
+
+Chạy hai terminal sau khi đã cài dependencies:
+
+```bash
+# Terminal 1, từ thư mục backend/ và đã kích hoạt virtualenv
+uvicorn app.main:app --reload --port 8000
+```
+
+```bash
+# Terminal 2, từ thư mục frontend/
+pnpm dev --port 5173 --strictPort
+```
+
+Mở đúng `http://localhost:5173` → **Sign in** → đăng ký/xác minh email nếu chưa có
+tài khoản → quay về `http://localhost:5173/auth/callback`. Thử **Sign out** và đăng
+nhập lại. Vite proxy `/api` đến backend port 8000 nên không cần thay CORS cho luồng này.
+`--strictPort` tránh Vite tự chuyển port làm sai callback đã đăng ký.
+Nếu muốn port khác, sửa `FrontendUrl` và port Vite cho khớp. Dùng hostname `localhost`,
+không mở bằng `127.0.0.1` vì frontend tạo callback theo origin trình duyệt.
+
+Có thể kiểm tra backend trước khi đăng nhập:
+
+```bash
+curl http://localhost:8000/api/auth/config
+curl -i http://localhost:8000/api/me
+```
+
+Request đầu phải có `data.mode="cognito"`; request thứ hai phải trả `401` khi chưa
+có token. Sau khi đăng nhập, request `/api/me` từ frontend phải trả `200`.
+
+## 4. CloudFront và kiểm tra đăng nhập
 
 - `/auth/callback?code=...&state=...` phải tải được React `index.html`, giữ query
   string trong URL trình duyệt. Cấu hình SPA rewrite ở viewer request cho phần giao
@@ -113,13 +169,13 @@ AutoAWS; kết nối AWS bằng role/access key vẫn được tạo riêng tron
 
 | Triệu chứng | Cách kiểm tra |
 |---|---|
-| `redirect_mismatch` | `FrontendUrl` phải đúng origin đang mở; callback có `/auth/callback`, không có `/` cuối; localhost cần `AllowLocalhost=true` |
+| `redirect_mismatch` | `FrontendUrl` phải đúng origin đang mở; callback có `/auth/callback`, không có `/` cuối; nếu origin chính khác localhost thì bật `AllowLocalhost=true` để thêm `http://localhost:5173` |
 | `/auth/callback` trả 403/404 hoặc XML của S3 | Sửa SPA rewrite CloudFront, upload đủ bản build frontend |
 | UI vẫn không yêu cầu đăng nhập | Kiểm tra `/api/auth/config`, recreate backend, tắt mock và bỏ cache API |
 | API trả 401 sau khi đăng nhập | Kiểm tra pool/client ID, token gửi là **access token**, và proxy chuyển tiếp `Authorization` |
 | Không nhận được email xác minh | Kiểm tra spam, email đã nhập và quota gửi email Cognito; dùng SES khi nhu cầu vượt cấu hình email mặc định |
 
-## 4. Cập nhật và giữ tài khoản
+## 5. Cập nhật và giữ tài khoản
 
 Khi đổi domain frontend, **Update stack hiện có** với `FrontendUrl` mới. Template
 thay danh sách callback/logout tương ứng; nếu còn mở origin cũ thì không đăng nhập
