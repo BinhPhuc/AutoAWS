@@ -32,9 +32,11 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
         raise SystemExit("Set the target Region: AWS_REGION / CDK_DEFAULT_REGION (or a profile)")
     env = cdk.Environment(account=os.environ.get("CDK_DEFAULT_ACCOUNT"), region=region)
     p = f"AutoAws-{cfg.env_name}"
+    # One straight dependency line, so a single `cdk deploy --all` works (see frontend.py)
     data = DataStack(app, f"{p}-Data", cfg, env=env)
-    auth = AuthStack(app, f"{p}-Auth", cfg, env=env)
-    agent = AgentStack(app, f"{p}-Agent", cfg, data.table, data.key, env=env)
+    frontend = FrontendStack(app, f"{p}-Frontend", cfg, env=env)
+    auth = AuthStack(app, f"{p}-Auth", cfg, frontend.site_url, env=env)
+    agent = AgentStack(app, f"{p}-Agent", cfg, data.table, data.key, frontend.site_url, env=env)
     workflow = WorkflowStack(
         app, f"{p}-Workflow", cfg, agent.agent_worker, agent.action_executor, env=env
     )
@@ -45,12 +47,13 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
         data.table,
         data.key,
         agent.agent_worker,
+        frontend.http_api,
+        frontend.site_url,
         auth.user_pool,
         auth.client,
         auth.domain_url,
         env=env,
     )
-    frontend = FrontendStack(app, f"{p}-Frontend", cfg, api.http_api, env=env)
     ops = OpsStack(
         app,
         f"{p}-Ops",

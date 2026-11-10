@@ -24,7 +24,7 @@ class Config:
     notification_email: str  # proposals waiting / results (SNS email)
     alarm_email: str  # operational alarms and the budget
     budget_usd: int
-    frontend_url: str  # links in emails; empty = the CloudFront URL after the first deploy
+    frontend_url: str  # site URL on a custom domain; empty = the CloudFront URL (one deploy)
     agent_concurrency: int  # reserved concurrency of agent-worker (Bedrock quota, cost)
     lambda_asset: Path  # built by build_lambda.sh
     destroy_data: bool  # dev: delete the table (and the user pool) with the stack

@@ -28,22 +28,24 @@ Trình duyệt ─► CloudFront ─┬─► S3 (giao diện React, OAC)
 | `Ops` | Alarm lỗi / throttle của 3 Lambda + flow thất bại, AWS Budgets 20 USD |
 
 Mọi route của HTTP API cần access token Cognito (JWT authorizer) **trừ** `GET /api/health` và `GET /api/auth/config`.
-Callback / logout URL của app client = `frontendUrl` (+ `http://localhost:5173` khi `envName=dev`) → **sau lần deploy đầu phải deploy lại với `-c frontendUrl=…`** (bước dưới) thì đăng nhập trên CloudFront mới chạy.
+Callback / logout URL của app client = URL CloudFront (hoặc `frontendUrl` nếu gắn tên miền riêng) + `http://localhost:5173` khi `envName=dev`.
+
+**Một lần `cdk deploy --all` là đủ.** CloudFront cần domain của HTTP API, Cognito cần URL CloudFront (callback), authorizer của API cần client Cognito — nếu HTTP API nằm trọn trong stack Api thì ba thứ này thành vòng. Vì vậy HTTP API (rỗng: chưa có stage, route) được tạo trong stack Frontend, và thứ tự là một đường thẳng (CDK tự sắp):
+`Data`, `Frontend` (CloudFront + HTTP API rỗng) → `Auth` (callback = URL CloudFront) → `Agent` → `Workflow` → `Api` (Lambda, stage, route, JWT authorizer gắn vào HTTP API đã có) → `Ops`.
 
 ## Deploy (khi có tài khoản)
 
-Hướng dẫn đầy đủ từng bước (chuẩn bị, `cdk.json`, 2 lượt deploy, tạo người dùng, kết nối tài khoản khách, chi phí, lỗi hay gặp): [README gốc, mục Triển khai lên AWS](../../README.md#triển-khai-lên-aws). Tóm tắt:
+Hướng dẫn đầy đủ từng bước (chuẩn bị, `cdk.json`, deploy, tạo người dùng, kết nối tài khoản khách, chi phí, lỗi hay gặp): [README gốc, mục Triển khai lên AWS](../../README.md#triển-khai-lên-aws). Tóm tắt:
 
 ```bash
 cd infra/cdk
 python3 -m venv .venv && .venv/bin/pip install "aws-cdk-lib>=2.200,<3" "constructs>=10" pytest
 ./build_lambda.sh                                    # backend/app + deps (Python 3.12, x86_64) → build/lambda
-(cd ../../frontend && pnpm build)                    # tuỳ chọn: có frontend/dist thì deploy luôn giao diện
+(cd ../../frontend && VITE_USE_MOCK=false VITE_API_URL= pnpm build)   # có frontend/dist thì deploy luôn giao diện
 export AWS_PROFILE=autoaws-platform AWS_REGION=ap-southeast-1
 npx aws-cdk@2 bootstrap                              # một lần cho tài khoản/region
 npx aws-cdk@2 deploy --all -c notificationEmail=team@example.com -c alarmEmail=ops@example.com
-# sau lần đầu: lấy URL CloudFront (output Frontend.Url) rồi deploy lại để đăng nhập (callback Cognito) và link trong email đúng
-npx aws-cdk@2 deploy --all -c frontendUrl=https://dxxxx.cloudfront.net
+# xong: mở output AutoAws-dev-Frontend.Url
 ```
 
 Trước khi chạy thật:

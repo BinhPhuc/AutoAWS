@@ -168,7 +168,7 @@ Ghi luôn vào `cdk.json` thay vì truyền `-c` mỗi lần: một lần `deplo
 | `notificationEmail` | Email báo đề xuất chờ duyệt / kết quả sửa (SNS) |
 | `alarmEmail` | Alarm Lambda / Step Functions và cảnh báo Budget |
 | `budgetUsd` | Ngưỡng cảnh báo chi phí mỗi tháng |
-| `frontendUrl` | URL CloudFront: để trống lần đầu, điền ở bước 4 |
+| `frontendUrl` | **Để trống** (mặc định): mọi thứ dùng URL CloudFront tự sinh. Chỉ điền khi đã gắn tên miền riêng vào CloudFront (CDK chưa làm phần gắn: chứng chỉ ACM ở `us-east-1` + alias), ví dụ `https://app.example.com`, không có `/` cuối |
 | `selfSignUp` | `true`: ai cũng tự đăng ký trên trang đăng nhập. `false`: admin tạo người dùng |
 | `authDomainPrefix` | Tiền tố domain trang đăng nhập Cognito. Trống = `autodiag-<env>-<account>`; không được chứa `aws`, `amazon`, `cognito` |
 
@@ -185,7 +185,7 @@ cd ../infra/cdk
 ```
 `frontend/dist` phải có **trước** khi deploy, nếu không stack Frontend chỉ dựng CloudFront mà không có giao diện. `VITE_API_URL` để trống: giao diện gọi `/api` cùng domain CloudFront.
 
-### 3. Bootstrap và deploy lần đầu
+### 3. Bootstrap và deploy
 
 ```bash
 npx aws-cdk@2 bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/$AWS_REGION   # 1 lần / tài khoản / region
@@ -196,19 +196,14 @@ Lưu lại các output in ra cuối lệnh:
 | Output | Dùng để |
 |---|---|
 | `AutoAws-dev-Frontend.Url` | Địa chỉ web, dạng `https://dxxxx.cloudfront.net` |
-| `AutoAws-dev-Auth.HostedUiUrl`, `UserPoolId`, `WebClientId` | Trang đăng nhập Cognito; chạy backend local với Cognito thật (bước 7) |
-| `AutoAws-dev-Api.ApiUrl` | URL gốc của API Gateway (thường không cần: web gọi qua CloudFront) |
+| `AutoAws-dev-Auth.HostedUiUrl`, `UserPoolId`, `WebClientId` | Trang đăng nhập Cognito; chạy backend local với Cognito thật (bước 6) |
+| `AutoAws-dev-Frontend.ApiUrl` | URL gốc của API Gateway (thường không cần: web gọi qua CloudFront) |
 
 Mở hộp thư `notificationEmail` / `alarmEmail` và bấm **Confirm subscription** của SNS (nếu không sẽ không nhận được email).
 
-### 4. Deploy lần hai với URL CloudFront (bắt buộc)
+Chỉ **một** lần `deploy --all` là đủ: stack Frontend (CloudFront + HTTP API rỗng) được tạo trước, Cognito (stack Auth) lấy luôn URL CloudFront làm callback, rồi stack Api mới gắn route + JWT authorizer vào HTTP API đó (sơ đồ phụ thuộc: [`infra/cdk/README.md`](infra/cdk/README.md)).
 
-Trang đăng nhập Cognito chỉ chuyển về các URL đã khai báo, mà URL CloudFront chỉ có sau lần deploy đầu. Ghi output `Frontend.Url` vào `cdk.json` (`"frontendUrl": "https://dxxxx.cloudfront.net"`, không có `/` cuối) rồi:
-```bash
-npx aws-cdk@2 deploy --all            # cập nhật callback Cognito, CORS, link trong email
-```
-
-### 5. Kiểm tra
+### 4. Kiểm tra
 
 ```bash
 URL=https://dxxxx.cloudfront.net
@@ -224,14 +219,14 @@ aws cognito-idp admin-create-user --user-pool-id <UserPoolId> --username minh@ex
 ```
 Mỗi người dùng chỉ thấy kết nối, hội thoại và đề xuất của chính mình.
 
-### 6. Kết nối tài khoản AWS cần chẩn đoán
+### 5. Kết nối tài khoản AWS cần chẩn đoán
 
 1. Trên web: **Connections** → **Add connection** → tab **IAM Role**, Role ARN = `arn:aws:iam::<ID tài khoản khách>:role/AutoAWSReadOnly`, chọn region → Save.
 2. Màn tiếp theo hiện template CloudFormation đã điền sẵn ExternalId (do server sinh) và trust chỉ tới role `autoaws-agent-worker` / `autoaws-action-executor` của tài khoản nền tảng. Bấm **Copy template**, lưu thành file (ví dụ `autoaws-readonly.yaml`), đăng nhập **tài khoản khách** → CloudFormation → Create stack → Upload a template file. Muốn cho phép sửa lỗi có duyệt: đặt `EnableRemediation=true`.
 3. Stack xong → quay lại web bấm **Verify** → `Connected`. Nếu bật sửa lỗi: dán output `RemediationRoleArn` vào ô Remediation role của kết nối.
 4. **Diagnose** → mô tả sự cố. Muốn có sẵn sự cố để thử: [`infra/aws-scenarios/`](infra/aws-scenarios/README.md) dựng KB1–KB7 trong tài khoản test.
 
-### 7. Cập nhật, chạy thử local với Cognito thật, gỡ bỏ
+### 6. Cập nhật, chạy thử local với Cognito thật, gỡ bỏ
 
 ```bash
 # Sửa backend → build lại Lambda rồi deploy (chỉ các stack có Lambda cũng được)
@@ -257,7 +252,7 @@ Budget cảnh báo ở `budgetUsd` (mặc định 20 USD/tháng, gửi `alarmEma
 | `Lambda asset … not found: run infra/cdk/build_lambda.sh first` | Chưa build Lambda → chạy `./build_lambda.sh` |
 | `Set the target Region` | Thiếu `AWS_REGION` / profile không có region |
 | `Domain already exists` khi tạo `AutoAws-dev-Auth` | Tiền tố domain Cognito đã có người dùng → đặt `authDomainPrefix` khác |
-| Trang Cognito báo `redirect_mismatch` | Chưa làm bước 4 (deploy lại với `frontendUrl`), hoặc `frontendUrl` có `/` cuối / sai domain |
+| Trang Cognito báo `redirect_mismatch` | Mở web bằng địa chỉ khác `Frontend.Url` (ví dụ URL API Gateway), hoặc đã điền `frontendUrl` nhưng tên miền đó chưa trỏ vào CloudFront / có `/` cuối → để trống `frontendUrl` và deploy lại |
 | Web hiện dữ liệu giả, không gọi backend | Build với `VITE_USE_MOCK=true` (file `frontend/.env`) → build lại với `VITE_USE_MOCK=false` |
 | Chẩn đoán lỗi `LLM_UNAVAILABLE`, log agent-worker (CloudWatch Logs) có `AccessDenied` từ Bedrock | Tài khoản chưa được dùng model Claude ở region này → gửi biểu mẫu use case Anthropic trong console Bedrock, hoặc chọn region / model khác |
 | Verify kết nối báo `AWS_AUTH_FAILED` | Stack của khách chưa xong, sai Role ARN, hoặc template cũ (ExternalId khác) → copy lại template từ web và cập nhật stack |

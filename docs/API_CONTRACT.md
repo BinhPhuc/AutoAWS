@@ -460,7 +460,7 @@ Yêu cầu dừng: agent-worker kiểm tra cờ giữa các bước và kết th
 - `RUNTIME=lambda`: API Gateway HTTP API → Lambda `api-handler` (cùng app FastAPI, adapter Mangum) · Lambda `agent-worker` (chẩn đoán, kiểm tra kết nối, kiểm tra lại / kiểm chứng đề xuất) · Lambda `action-executor` (thực thi đề xuất đã duyệt, lưu task token) · Step Functions `remediation-flow` · SNS. Hạ tầng: `infra/cdk/`.
 - `POST /api/connections/{id}/verify` chạy trong agent-worker (gọi đồng bộ): api-handler không có quyền vào tài khoản người dùng.
 - Đăng nhập: stack `Auth` (Cognito User Pool, Hosted UI, app client public + PKCE). HTTP API gắn JWT authorizer cho mọi route trừ
-  `GET /api/health` và `GET /api/auth/config`. Callback / logout URL của app client = `frontendUrl` (CloudFront) + `http://localhost:5173`.
+  `GET /api/health` và `GET /api/auth/config`. Callback / logout URL của app client = URL CloudFront (hoặc `frontendUrl` khi gắn tên miền riêng) + `http://localhost:5173` (chỉ `envName=dev`); một lần `cdk deploy` là đủ.
 
 ---
 

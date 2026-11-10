@@ -237,7 +237,8 @@ def test_spa_fallback_never_rewrites_api_errors(stacks):
     assert "FunctionAssociations" not in dist["CacheBehaviors"][0]  # /api/*
 
 
-def test_callbacks_follow_the_frontend_url(stacks):
+def test_a_custom_domain_replaces_the_cloudfront_url(stacks):
+    """frontendUrl set (custom domain): callbacks, CORS and email links use it."""
     client = next(iter(stacks["auth"].find_resources("AWS::Cognito::UserPoolClient").values()))[
         "Properties"
     ]
@@ -249,3 +250,55 @@ def test_callbacks_follow_the_frontend_url(stacks):
         "https://d111.cloudfront.net/",
         "http://localhost:5173/",
     ]
+
+
+@pytest.fixture(scope="module")
+def default_stacks(tmp_path_factory):
+    """No frontendUrl (no custom domain): everything must point at CloudFront's own URL."""
+    mp = pytest.MonkeyPatch()
+    mp.setenv("CDK_DEFAULT_ACCOUNT", "111122223333")
+    mp.setenv("CDK_DEFAULT_REGION", "ap-southeast-1")
+    asset = tmp_path_factory.mktemp("lambda2")
+    (asset / "app").mkdir()
+    (asset / "app" / "__init__.py").write_text("")
+    app = cdk.App(
+        outdir=str(tmp_path_factory.mktemp("cdk.out2")), context={"lambdaAsset": str(asset)}
+    )
+    built = build(app)
+    out = {name: Template.from_stack(stack) for name, stack in built.items()}
+    out["_stacks"] = built
+    mp.undo()
+    return out
+
+
+def test_one_deploy_sets_up_sign_in(default_stacks):
+    """Cognito's callbacks reference the CloudFront distribution directly, so a single
+    `cdk deploy --all` is enough (no second deploy with frontendUrl)."""
+    client = next(
+        iter(default_stacks["auth"].find_resources("AWS::Cognito::UserPoolClient").values())
+    )["Properties"]
+    first = json.dumps(client["CallbackURLs"][0])
+    assert "Fn::ImportValue" in first and "Distribution" in first and "/auth/callback" in first
+    fn = next(
+        f
+        for f in default_stacks["api"].find_resources("AWS::Lambda::Function").values()
+        if f["Properties"]["Handler"] == "app.handlers.api.handler"
+    )
+    variables = fn["Properties"]["Environment"]["Variables"]
+    for key in ("FRONTEND_URL", "CORS_ORIGINS"):
+        assert "Distribution" in json.dumps(variables[key]), key
+
+
+def test_stacks_form_a_straight_line(default_stacks):
+    """Frontend (CloudFront + bare HTTP API) -> Auth -> Api: no cycle, deployable at once."""
+    stacks = default_stacks["_stacks"]
+
+    def deps(name: str) -> set[str]:
+        return {d.stack_name for d in stacks[name].dependencies}
+
+    assert deps("frontend") == set()
+    assert deps("auth") == {stacks["frontend"].stack_name}
+    assert {stacks["auth"].stack_name, stacks["frontend"].stack_name} <= deps("api")
+    # the API object lives in Frontend; its stage, routes and authorizer in Api
+    assert default_stacks["frontend"].find_resources("AWS::ApiGatewayV2::Route") == {}
+    assert len(default_stacks["api"].find_resources("AWS::ApiGatewayV2::Route")) == 3
