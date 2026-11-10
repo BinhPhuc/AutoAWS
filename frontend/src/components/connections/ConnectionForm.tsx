@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { RefreshCw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,7 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { Connection, ConnectionType, CreateConnectionInput } from '@/api/types'
 import { useCreateConnection, useVerifyConnection } from '@/hooks/useConnections'
-import { DEFAULT_REGION, generateExternalId } from '@/lib/format'
+import { DEFAULT_REGION } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { RegionSelect } from './RegionSelect'
 import { CloudFormationSnippet } from './CloudFormationSnippet'
@@ -31,7 +30,6 @@ export function ConnectionForm({ onCreated }: Props) {
   const [accessKeyId, setAccessKeyId] = useState('')
   const [secret, setSecret] = useState('')
   const [roleArn, setRoleArn] = useState('')
-  const [externalId, setExternalId] = useState(generateExternalId)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [created, setCreated] = useState<Connection | null>(null)
 
@@ -55,7 +53,7 @@ export function ConnectionForm({ onCreated }: Props) {
           access_key_id: accessKeyId.trim(),
           secret_access_key: secret,
         }
-      : { type, name: name.trim(), region, role_arn: roleArn.trim(), external_id: externalId }
+      : { type, name: name.trim(), region, role_arn: roleArn.trim() }
   }
 
   const submit = (ev: React.FormEvent) => {
@@ -140,25 +138,7 @@ export function ConnectionForm({ onCreated }: Props) {
               className="font-mono text-xs"
             />
           </Field>
-          <Field label={t.externalId} hint={t.externalIdHint} htmlFor="conn-extid">
-            <div className="flex gap-2">
-              <Input
-                id="conn-extid"
-                value={externalId}
-                onChange={(e) => setExternalId(e.target.value)}
-                className="font-mono text-xs"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                aria-label={t.regenerate}
-                onClick={() => setExternalId(generateExternalId())}
-              >
-                <RefreshCw />
-              </Button>
-            </div>
-          </Field>
+          <p className="text-xs text-muted-foreground">{t.roleNote}</p>
         </TabsContent>
 
         <TabsContent value="access_key" className="space-y-3 pt-1">

@@ -40,6 +40,11 @@ export const handlers = [
     await delay(100)
     return ok({ status: 'ok', version: '0.1.0-mock', llm_provider: 'mock' })
   }),
+  // The mock runs without sign-in (AUTH_MODE=none)
+  http.get('/api/auth/config', () =>
+    ok({ mode: 'none', domain: null, client_id: null, scopes: [] }),
+  ),
+  http.get('/api/me', () => ok({ user_id: 'local', username: 'local', auth_mode: 'none' })),
 
   // ---------- connections ----------
   http.get('/api/connections', async () => {
@@ -66,8 +71,7 @@ export const handlers = [
       status: 'pending',
       account_id: null,
       role_arn: body.type === 'role' ? body.role_arn : null,
-      external_id:
-        body.type === 'role' ? body.external_id || `autoaws-${nextId('x').slice(2)}` : null,
+      external_id: body.type === 'role' ? `autoaws-${nextId('x').slice(2)}` : null, // always server-chosen
       access_key_id_masked:
         body.type === 'access_key'
           ? `${body.access_key_id.slice(0, 4)}****${body.access_key_id.slice(-4)}`

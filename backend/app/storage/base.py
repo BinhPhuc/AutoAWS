@@ -14,8 +14,8 @@ class Store(Protocol):
     # ---- connections ---------------------------------------------------------
     def create_connection(self, conn: Connection) -> Connection: ...
 
-    def list_connections(self) -> list[Connection]:
-        """Newest first."""
+    def list_connections(self, user_id: str | None = None) -> list[Connection]:
+        """Newest first. ``user_id``: only that user's (None = everyone's, internal use)."""
         ...
 
     def get_connection(self, conn_id: str) -> Connection | None: ...
@@ -29,7 +29,9 @@ class Store(Protocol):
     # ---- conversations -------------------------------------------------------
     def create_conversation(self, conv: Conversation) -> Conversation: ...
 
-    def list_conversations(self, connection_id: str | None = None) -> list[Conversation]:
+    def list_conversations(
+        self, connection_id: str | None = None, user_id: str | None = None
+    ) -> list[Conversation]:
         """Most recently updated first."""
         ...
 
@@ -60,9 +62,12 @@ class Store(Protocol):
     def get_proposal(self, proposal_id: str) -> Proposal | None: ...
 
     def list_proposals(
-        self, conversation_id: str | None = None, status: str | None = None
+        self,
+        conversation_id: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> list[Proposal]:
-        """Newest first."""
+        """Newest first. Without ``user_id``: every user's (background recovery only)."""
         ...
 
     def update_proposal(self, proposal: Proposal, expected_status: str | None = None) -> bool:

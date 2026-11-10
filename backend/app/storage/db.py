@@ -18,7 +18,22 @@ def init_db() -> None:
 
     engine = get_engine()
     SQLModel.metadata.create_all(engine)
-    add_missing_columns(engine)
+    if any(c.endswith(".user_id") for c in add_missing_columns(engine)):
+        backfill_owner(engine)
+
+
+def backfill_owner(engine: Engine) -> None:
+    """Rows from before sign-in existed belong to the local user."""
+    from app.storage.models import LOCAL_USER_ID
+
+    existing = set(inspect(engine).get_table_names())
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if table.name in existing and "user_id" in table.columns:
+                conn.execute(
+                    text(f'UPDATE "{table.name}" SET user_id = :u WHERE user_id IS NULL'),
+                    {"u": LOCAL_USER_ID},
+                )
 
 
 def add_missing_columns(engine: Engine) -> list[str]:

@@ -24,9 +24,11 @@ class SqlStore:
         self._save(conn)
         return conn
 
-    def list_connections(self) -> list[Connection]:
-        stmt = select(Connection).order_by(Connection.created_at.desc())
-        return list(self.db.exec(stmt).all())
+    def list_connections(self, user_id: str | None = None) -> list[Connection]:
+        stmt = select(Connection)
+        if user_id is not None:
+            stmt = stmt.where(Connection.user_id == user_id)
+        return list(self.db.exec(stmt.order_by(Connection.created_at.desc())).all())
 
     def get_connection(self, conn_id: str) -> Connection | None:
         return self.db.get(Connection, conn_id)
@@ -46,10 +48,14 @@ class SqlStore:
         self._save(conv)
         return conv
 
-    def list_conversations(self, connection_id: str | None = None) -> list[Conversation]:
+    def list_conversations(
+        self, connection_id: str | None = None, user_id: str | None = None
+    ) -> list[Conversation]:
         stmt = select(Conversation)
         if connection_id:
             stmt = stmt.where(Conversation.connection_id == connection_id)
+        if user_id is not None:
+            stmt = stmt.where(Conversation.user_id == user_id)
         return list(self.db.exec(stmt.order_by(Conversation.updated_at.desc())).all())
 
     def get_conversation(self, conv_id: str) -> Conversation | None:
@@ -110,9 +116,14 @@ class SqlStore:
         return self.db.get(Proposal, proposal_id)
 
     def list_proposals(
-        self, conversation_id: str | None = None, status: str | None = None
+        self,
+        conversation_id: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> list[Proposal]:
         stmt = select(Proposal)
+        if user_id is not None:
+            stmt = stmt.where(Proposal.user_id == user_id)
         if conversation_id:
             stmt = stmt.where(Proposal.conversation_id == conversation_id)
         if status:

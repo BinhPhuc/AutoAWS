@@ -1,7 +1,7 @@
 """AutoAws-Frontend: private S3 bucket + CloudFront (OAC). /api/* is forwarded to the HTTP
 API, so the web app and the API share one origin (no CORS, relative /api URLs)."""
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, RemovalPolicy, Stack
 from aws_cdk import aws_apigatewayv2 as apigw
 from aws_cdk import aws_cloudfront as cf
 from aws_cdk import aws_cloudfront_origins as origins
@@ -14,7 +14,12 @@ from .config import ROOT, Config
 
 class FrontendStack(Stack):
     def __init__(
-        self, scope: Construct, cid: str, cfg: Config, http_api: apigw.IHttpApi, **kwargs
+        self,
+        scope: Construct,
+        cid: str,
+        cfg: Config,
+        http_api: apigw.IHttpApi,
+        **kwargs,
     ) -> None:
         super().__init__(scope, cid, **kwargs)
         bucket = s3.Bucket(
@@ -27,6 +32,22 @@ class FrontendStack(Stack):
             auto_delete_objects=True,
         )
         api_domain = f"{http_api.api_id}.execute-api.{self.region}.amazonaws.com"
+        # Single-page app: a path without a file extension is a client-side route. Only on
+        # the site behaviour: distribution-wide error responses would also turn the API's
+        # 403 / 404 envelopes into index.html with status 200.
+        spa_rewrite = cf.Function(
+            self,
+            "SpaRewrite",
+            runtime=cf.FunctionRuntime.JS_2_0,
+            code=cf.FunctionCode.from_inline(
+                "function handler(event) {\n"
+                "  var request = event.request;\n"
+                "  var last = request.uri.split('/').pop();\n"
+                "  if (last.indexOf('.') === -1) { request.uri = '/index.html'; }\n"
+                "  return request;\n"
+                "}\n"
+            ),
+        )
         self.distribution = cf.Distribution(
             self,
             "Distribution",
@@ -34,6 +55,12 @@ class FrontendStack(Stack):
             default_behavior=cf.BehaviorOptions(
                 origin=origins.S3BucketOrigin.with_origin_access_control(bucket),
                 viewer_protocol_policy=cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                function_associations=[
+                    cf.FunctionAssociation(
+                        function=spa_rewrite,
+                        event_type=cf.FunctionEventType.VIEWER_REQUEST,
+                    )
+                ],
             ),
             additional_behaviors={
                 "/api/*": cf.BehaviorOptions(
@@ -44,16 +71,6 @@ class FrontendStack(Stack):
                     origin_request_policy=cf.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
                 )
             },
-            # Single-page app: every unknown path is the app
-            error_responses=[
-                cf.ErrorResponse(
-                    http_status=code,
-                    response_http_status=200,
-                    response_page_path="/index.html",
-                    ttl=Duration.seconds(0),
-                )
-                for code in (403, 404)
-            ],
         )
         dist = ROOT / "frontend/dist"
         if (dist / "index.html").exists():  # `pnpm build` first; otherwise deploy the API only

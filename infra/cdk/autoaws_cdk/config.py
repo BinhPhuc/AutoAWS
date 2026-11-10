@@ -27,7 +27,9 @@ class Config:
     frontend_url: str  # links in emails; empty = the CloudFront URL after the first deploy
     agent_concurrency: int  # reserved concurrency of agent-worker (Bedrock quota, cost)
     lambda_asset: Path  # built by build_lambda.sh
-    destroy_data: bool  # dev: delete the table with the stack
+    destroy_data: bool  # dev: delete the table (and the user pool) with the stack
+    self_sign_up: bool  # anyone can create an account on the Hosted UI (else: admins add users)
+    auth_domain_prefix: str  # Hosted UI domain prefix; empty = autodiag-<env>-<account>
 
     @staticmethod
     def from_context(node: Node) -> "Config":
@@ -49,4 +51,6 @@ class Config:
             agent_concurrency=int(ctx("agentConcurrency", 5)),
             lambda_asset=Path(ctx("lambdaAsset", str(ROOT / "infra/cdk/build/lambda"))),
             destroy_data=str(ctx("destroyData", env_name == "dev")).lower() == "true",
+            self_sign_up=str(ctx("selfSignUp", True)).lower() == "true",
+            auth_domain_prefix=ctx("authDomainPrefix", ""),
         )

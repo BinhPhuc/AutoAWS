@@ -44,9 +44,3 @@ export const AWS_REGIONS = [
 ] as const
 
 export const DEFAULT_REGION = 'ap-southeast-1'
-
-export function generateExternalId(): string {
-  const bytes = new Uint8Array(8)
-  crypto.getRandomValues(bytes)
-  return `autoaws-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`
-}

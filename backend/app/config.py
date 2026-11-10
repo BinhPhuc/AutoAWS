@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     platform_agent_role_arn: str = ""
     platform_executor_role_arn: str = ""
 
+    # Sign-in (docs/API_CONTRACT.md §0.1): none = one local user (dev, tests);
+    # cognito = Bearer access token of the Cognito user pool (the CDK Auth stack)
+    auth_mode: Literal["none", "cognito"] = "none"
+    cognito_user_pool_id: str = ""  # e.g. ap-southeast-1_AbCdEf (the region is its prefix)
+    cognito_client_id: str = ""  # public app client (PKCE, no secret)
+    cognito_domain: str = ""  # Hosted UI base URL, e.g. https://x.auth.<region>.amazoncognito.com
+
     # Human-in-the-loop remediation (docs/API_CONTRACT.md §7)
     # Dev only: let access-key connections execute approved proposals (LocalStack, test
     # accounts). Role connections use their AutoAWSRemediation role instead.
@@ -80,6 +87,11 @@ class Settings(BaseSettings):
     # How long the post-change verification may wait (e.g. targets turning healthy)
     remediation_verify_timeout_seconds: int = 120
     remediation_verify_poll_seconds: float = 5.0
+
+    @property
+    def cognito_issuer(self) -> str:
+        region = self.cognito_user_pool_id.split("_", 1)[0]
+        return f"https://cognito-idp.{region}.amazonaws.com/{self.cognito_user_pool_id}"
 
     @property
     def dry_run_enabled(self) -> bool:

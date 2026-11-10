@@ -15,6 +15,7 @@ dependencies = [
     "jsonschema>=4.20",  # tool input validation
     "mangum>=0.19",  # api-handler on Lambda (RUNTIME=lambda)
     "mcp>=2.3,<3",  # MCP bridge (LLM_PROVIDER=mcp): an MCP client plays the LLM
+    "pyjwt[crypto]>=2.8",  # AUTH_MODE=cognito: verify Cognito access tokens (JWKS)
 ]
 
 [project.optional-dependencies]

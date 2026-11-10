@@ -4,8 +4,7 @@
     cd infra/cdk && ./build_lambda.sh            # backend code + deps for Lambda
     .venv/bin/python app.py                      # synth only (or: npx cdk synth / deploy)
 
-Stacks (prefix AutoAws-<envName>-): Data, Agent, Workflow, Api, Frontend, Ops.
-Auth (Cognito) is not part of this round.
+Stacks (prefix AutoAws-<envName>-): Data, Auth, Agent, Workflow, Api, Frontend, Ops.
 """
 
 import os
@@ -13,6 +12,7 @@ import os
 import aws_cdk as cdk
 from autoaws_cdk.agent import AgentStack
 from autoaws_cdk.api import ApiStack
+from autoaws_cdk.auth import AuthStack
 from autoaws_cdk.config import Config
 from autoaws_cdk.data import DataStack
 from autoaws_cdk.frontend import FrontendStack
@@ -33,11 +33,23 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     env = cdk.Environment(account=os.environ.get("CDK_DEFAULT_ACCOUNT"), region=region)
     p = f"AutoAws-{cfg.env_name}"
     data = DataStack(app, f"{p}-Data", cfg, env=env)
+    auth = AuthStack(app, f"{p}-Auth", cfg, env=env)
     agent = AgentStack(app, f"{p}-Agent", cfg, data.table, data.key, env=env)
     workflow = WorkflowStack(
         app, f"{p}-Workflow", cfg, agent.agent_worker, agent.action_executor, env=env
     )
-    api = ApiStack(app, f"{p}-Api", cfg, data.table, data.key, agent.agent_worker, env=env)
+    api = ApiStack(
+        app,
+        f"{p}-Api",
+        cfg,
+        data.table,
+        data.key,
+        agent.agent_worker,
+        auth.user_pool,
+        auth.client,
+        auth.domain_url,
+        env=env,
+    )
     frontend = FrontendStack(app, f"{p}-Frontend", cfg, api.http_api, env=env)
     ops = OpsStack(
         app,
@@ -47,11 +59,12 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
         workflow.state_machine,
         env=env,
     )
-    for stack in (data, agent, workflow, api, frontend, ops):
+    for stack in (data, auth, agent, workflow, api, frontend, ops):
         cdk.Tags.of(stack).add("Project", "autoaws")
         cdk.Tags.of(stack).add("Environment", cfg.env_name)
     return {
         "data": data,
+        "auth": auth,
         "agent": agent,
         "workflow": workflow,
         "api": api,
