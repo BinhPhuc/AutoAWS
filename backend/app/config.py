@@ -8,17 +8,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_env: str = "dev"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "*"
 
-    # Storage: sqlite (default, DB_PATH) | dynamodb (target storage, platform account)
-    storage_backend: Literal["sqlite", "dynamodb"] = "sqlite"
+    # DynamoDB is provisioned by CloudFormation; SQLite is an explicit local/test option.
+    storage_backend: Literal["sqlite", "dynamodb"] = "dynamodb"
     db_path: str = "./autoaws.db"
-    dynamodb_table: str = "autoaws"
+    dynamodb_table: str = ""
     dynamodb_region: str = ""
     # Dev only: LocalStack, e.g. http://localhost:4566 (independent of AWS_ENDPOINT_URL)
     dynamodb_endpoint_url: str = ""
-    # Create the table on startup if it does not exist (dev / LocalStack)
-    dynamodb_create_table: bool = True
+    # Opt in only for dev / LocalStack; deployed tables are managed by infrastructure.
+    dynamodb_create_table: bool = False
     # Customer managed KMS key for table encryption; empty = AWS managed key
     dynamodb_kms_key_id: str = ""
 

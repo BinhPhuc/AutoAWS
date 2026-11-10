@@ -26,7 +26,7 @@ Frontend (React/Vite) ──REST + job polling──► Backend FastAPI
                                               ├─ Agent loop ──► LLM provider (mock | bedrock | anthropic | mcp)
                                               ├─ Tool đọc AWS ──► Sanitizer
                                               ├─ Luồng duyệt khắc phục (chạy nền)
-                                              └─ SQLite | DynamoDB
+                                              └─ DynamoDB
                                                     │ boto3: AssumeRole + ExternalId (hoặc Access Key cho dev)
                                                     ▼
                                     Tài khoản AWS của người dùng (role chỉ đọc · role sửa tuỳ chọn)
@@ -48,7 +48,7 @@ Agent-worker (thành phần duy nhất nói chuyện với LLM) **không bao gi�
 
 - Chạy end-to-end trên máy với LLM giả lập (`LLM_PROVIDER=mock`), hoặc một MCP client đóng vai LLM (`LLM_PROVIDER=mcp`), dữ liệu AWS từ LocalStack.
 - `BedrockProvider` (Claude qua Bedrock Mantle) và hạ tầng CDK **đã viết, chưa chạy trên AWS thật** (chưa có tài khoản).
-- Kiểm thử: 190 test backend (moto), 7 test frontend, 7 test CDK. Chi tiết ở [`AGENTS.md`](AGENTS.md) mục "Trạng thái hiện tại".
+- Kiểm thử sau hợp nhất DynamoDB và auth: 235 test backend (moto), 16 test frontend, 11 test CDK. Chi tiết ở [`AGENTS.md`](AGENTS.md) mục "Trạng thái hiện tại".
 
 ## Kịch bản kiểm thử
 
@@ -110,6 +110,8 @@ Chi tiết: [`infra/localstack/README.md`](infra/localstack/README.md), [`infra/
 # 1. Backend
 cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]" && cp .env.example .env
+# Tạo bảng theo infra/cloudformation/README.md rồi điền DYNAMODB_TABLE, DYNAMODB_REGION
+# Hoặc chỉ khi dev local: STORAGE_BACKEND=sqlite và DB_PATH=./autoaws.db trong .env
 uvicorn app.main:app --reload          # http://localhost:8000/docs
 
 # 2. Frontend (terminal khác)
@@ -127,6 +129,17 @@ Triển khai lên AWS: xem mục [Triển khai lên AWS](#triển-khai-lên-aws)
 
 Dựng toàn bộ nền tảng serverless (CloudFront + S3, API Gateway, 3 Lambda, Step Functions, DynamoDB, Cognito, SNS, alarm, Budget) bằng CDK trong [`infra/cdk/`](infra/cdk/README.md). Chi tiết từng stack và quyền IAM: xem README đó.
 > **Trạng thái:** đã `cdk synth`, cfn-lint và test, **chưa deploy lần nào** (nhóm chưa có tài khoản). Lần chạy đầu nên làm ở `envName=dev` và ghi lại lỗi gặp phải vào đây.
+
+### Backend EC2 + DynamoDB, frontend S3/CloudFront
+
+Dùng `docker compose -f docker-compose.backend.yml up -d --build` cho backend.
+Template DynamoDB độc lập: [`infra/cloudformation/dynamodb.yaml`](infra/cloudformation/dynamodb.yaml);
+cách tạo bảng và cấu hình: [`infra/cloudformation/README.md`](infra/cloudformation/README.md).
+Xem [`backend/README.md`](backend/README.md#deploy-backend-trên-ec2) và
+[`frontend/README.md`](frontend/README.md#build-riêng-để-deploy-s3cloudfront) để build frontend riêng.
+Backend mặc định dùng DynamoDB và kiểm tra bảng đã tạo khi khởi động; SQLite chỉ bật tường minh cho local/test.
+Auth giữ nguyên từ `main`: khi deploy EC2, bật `AUTH_MODE=cognito` và điền
+`COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` từ stack Auth.
 
 ### 0. Cần chuẩn bị
 

@@ -205,7 +205,9 @@ class DynamoStore:
             msg = Message.model_validate(fields)
             self._tool_calls[msg.id] = self._tool_call_models(msg.id, calls)
             messages.append(msg)
-        return messages
+        # Coarse clocks can give a question and its immediate answer the same timestamp.
+        # Random message IDs must not put the answer before the question in that case.
+        return sorted(messages, key=lambda msg: (msg.created_at, msg.role != "user", msg.id))
 
     def list_tool_calls(self, message_id: str) -> list[ToolCallRecord]:
         if message_id not in self._tool_calls:

@@ -32,6 +32,8 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Serverless đúng báo cáo (2026-11-09, nhánh `feat/serverless`): bỏ SSE → job + hỏi lại (`/api/jobs/{id}`, huỷ, phát hiện worker mất); `RUNTIME=local|lambda` (`app/platform/dispatch.py`); handler `app/handlers/{api,agent_worker,action_executor}.py`; luồng duyệt tách 3 bước cho Step Functions (task token); trust policy template khách thu hẹp vào role `autoaws-agent-worker` / `autoaws-action-executor`; CDK `infra/cdk/` 6 stack (Data, Agent, Workflow, Api, Frontend, Ops) synth + cfn-lint sạch — **chưa deploy** (không có tài khoản AWS). 190 test BE, 7 test FE, 7 test CDK.
 - [x] Hoàn thiện khắc phục có phê duyệt (2026-11-10, nhánh `feat/remediation-complete`): DryRun trước khi ghi cho 4 hành động EC2 (chỉ trên AWS thật — moto/LocalStack bỏ qua DryRun và ghi thật; endpoint không trả `DryRunOperation` thì dừng), khôi phục đề xuất bị ngắt khi backend local khởi động lại, số đề xuất chờ duyệt trên thanh điều hướng. 200 test BE.
 - [x] Đăng nhập + phân vùng dữ liệu theo người dùng (2026-11-10, nhánh `feat/auth`): `AUTH_MODE=none|cognito` (`app/auth.py`), `user_id` trên connection / conversation / job / proposal, tài nguyên người khác → 404, lịch sử đề xuất ghi `by`; ExternalId luôn do server sinh; `GET /api/auth/config`, `GET /api/me`; CDK stack `Auth` (Cognito Lite, Hosted UI, client PKCE) + JWT authorizer cho mọi route trừ health / auth config; CloudFront bỏ error response toàn cục (đổi sang CloudFront Function cho SPA); FE: PKCE tự viết (`src/lib/auth.ts`), `AuthGate`, `/auth/callback`, nút Sign out. 223 test BE, 16 test FE, 11 test CDK — **chưa chạy với Cognito thật**.
+- [x] Cấu hình demo EC2 + CloudFront + DynamoDB (2026-11-10): `docker-compose.backend.yml` chỉ chạy backend, mặc định dùng DynamoDB và không tự tạo bảng; template `infra/cloudformation/dynamodb.yaml` tạo bảng/index/TTL/KMS, table/region/endpoint điền qua `.env`; sửa thứ tự user/assistant khi timestamp trùng, bổ sung `tzdata` cho Windows/image tối giản. 209 test BE, ruff + cfn-lint sạch. **Chưa deploy AWS thật.**
+- [x] Hợp nhất DynamoDB với auth của `main` (2026-11-10): giữ triển khai Cognito/phân vùng người dùng từ `feat/auth`; giữ template DynamoDB, Compose EC2, mặc định DynamoDB và kiểm tra bảng lúc startup từ `feat/cognito-auth-user-isolation`; thêm 3 test auth trên DynamoDB. 235 test BE, 16 test FE, 11 test CDK; lint/build đạt. **Chưa deploy AWS thật.**
 - [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; checklist runner
 
 ## Bố cục repo
@@ -48,8 +50,9 @@ AutoAWS/
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
 ├── frontend/                # Vite + React + TS — src/{api,hooks,pages,components,lib,mocks} (xem frontend/README.md)
-├── infra/                   # localstack/ (seed), aws-scenarios/ (KB1–KB7), demo-apps/, eval/, cdk/ (hạ tầng nền tảng)
+├── infra/                   # cloudformation/ (DynamoDB EC2), localstack/, aws-scenarios/, demo-apps/, eval/, cdk/
 ├── docker-compose.yml
+├── docker-compose.backend.yml  # backend EC2 + DynamoDB; frontend build riêng lên CloudFront
 └── .claude/ .agents/ .gemini/   # skills của AI tool — gitignore, mỗi người tự cài
 ```
 
@@ -58,7 +61,7 @@ AutoAWS/
 ```bash
 # Backend (port 8000)
 cd backend && python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]" && cp .env.example .env     # LLM_PROVIDER=mock mặc định
+pip install -e ".[dev]" && cp .env.example .env     # điền DYNAMODB_TABLE/REGION hoặc STORAGE_BACKEND=sqlite cho local
 uvicorn app.main:app --reload                       # docs: http://localhost:8000/docs
 
 # Frontend (port 5173, proxy /api → 8000)
@@ -79,7 +82,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 | # | Quyết định | Lý do |
 |---|---|---|
-| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) mặc định; DynamoDB chọn bằng `STORAGE_BACKEND` | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE; DynamoDB là lưu trữ đích |
+| 1 | Backend **Python + FastAPI**, boto3, **DynamoDB mặc định** (bảng tạo bằng IaC); SQLite chỉ bật tường minh cho local/test | Khớp lưu trữ đích; EC2 không cần database volume |
 | 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
 | 4 | **Auth: `AUTH_MODE=none`** (dev, 1 người dùng `local`) **hoặc `cognito`** (bản triển khai: Cognito + JWT authorizer, dữ liệu tách theo `user_id`) | Dev/test không cần Cognito; bản AWS luôn bật đăng nhập |
