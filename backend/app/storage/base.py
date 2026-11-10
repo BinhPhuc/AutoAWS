@@ -1,6 +1,6 @@
 """Storage interface used by the routers and the agent loop.
 
-Two implementations: ``SqlStore`` (SQLite via SQLModel, default) and ``DynamoStore``
+Two implementations: ``SqlStore`` (SQLite via SQLModel, explicit local option) and ``DynamoStore``
 (DynamoDB, the target storage of docs/SYSTEM_OVERVIEW.md §7). Pick one with
 STORAGE_BACKEND; ``app.storage.store.get_store`` builds the right one per request.
 """
@@ -11,6 +11,8 @@ from app.storage.models import Connection, Conversation, Job, Message, Proposal,
 
 
 class Store(Protocol):
+    user_id: str
+
     # ---- connections ---------------------------------------------------------
     def create_connection(self, conn: Connection) -> Connection: ...
 

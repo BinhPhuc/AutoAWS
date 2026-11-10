@@ -6,6 +6,9 @@ from fastapi.testclient import TestClient
 from moto import mock_aws
 
 # Must be set before `app` is imported: Settings and the engine are cached singletons.
+# API tests use isolated local storage; DynamoDB coverage uses moto explicitly.
+os.environ["STORAGE_BACKEND"] = "sqlite"
+os.environ["AUTH_MODE"] = "none"
 os.environ.setdefault("LLM_PROVIDER", "mock")
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-southeast-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")

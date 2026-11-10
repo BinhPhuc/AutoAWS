@@ -77,7 +77,7 @@ def update_connection(conn_id: str, body: ConnectionPatch, store: Store = Depend
 @router.delete("/{conn_id}")
 def delete_connection(conn_id: str, store: Store = Depends(get_store)):
     conn = _get(store, conn_id)
-    forget_session(conn.id)
+    forget_session(conn.id, conn.user_id)
     store.delete_connection(conn)
     return ok(None, "Connection deleted")
 
@@ -86,7 +86,7 @@ def delete_connection(conn_id: str, store: Store = Depends(get_store)):
 def verify_connection(conn_id: str, store: Store = Depends(get_store)):
     _get(store, conn_id)
     try:
-        result = VerifyOut.model_validate(dispatch.verify_connection(conn_id))
+        result = VerifyOut.model_validate(dispatch.verify_connection(conn_id, store.user_id))
     except dispatch.DispatchError as e:
         raise AppError("INTERNAL", 500, "Could not verify the connection") from e
     message = (

@@ -8,9 +8,50 @@ FastAPI + boto3. Thiết kế chi tiết: `../docs/BACKEND_PLAN.md`; hợp đồ
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env          # LLM_PROVIDER=mock chạy được ngay, không cần key
+cp .env.example .env          # Điền DYNAMODB_TABLE, DYNAMODB_REGION và credentials nền tảng
 uvicorn app.main:app --reload # http://localhost:8000/docs
 ```
+
+## Deploy backend trên EC2
+
+Frontend build riêng và phục vụ từ S3 qua CloudFront. Trên EC2 đã cài Docker Engine
+và Compose plugin, tạo bảng bằng [`infra/cloudformation/dynamodb.yaml`](../infra/cloudformation/dynamodb.yaml)
+và điền cấu hình theo [hướng dẫn DynamoDB](../infra/cloudformation/README.md), rồi chạy từ thư mục gốc repo:
+
+```bash
+# Chỉ copy nếu chưa có backend/.env; sau đó chỉnh provider, region và cấu hình AWS.
+cp -n backend/.env.example backend/.env
+nano backend/.env
+
+docker compose -f docker-compose.backend.yml up -d --build
+docker compose -f docker-compose.backend.yml ps
+docker compose -f docker-compose.backend.yml logs -f backend
+curl http://localhost:8000/api/health
+```
+
+`docker-compose.backend.yml` chỉ chạy backend, không build hay chạy frontend. File này
+truyền `backend/.env` vào container, đặt `RUNTIME=local`, `CORS_ORIGINS=*`,
+`STORAGE_BACKEND=dynamodb`, `DYNAMODB_CREATE_TABLE=false` (ghi đè các biến tương ứng
+trong `.env`). Backend tự khởi
+động lại khi tiến trình thoát hoặc Docker khởi động lại, có healthcheck và giới hạn
+log Docker. Healthcheck chỉ kiểm tra API còn phản hồi, không kiểm tra AWS/LLM và
+không tự restart container chỉ vì trạng thái `unhealthy`.
+
+Dữ liệu nằm trong DynamoDB của tài khoản nền tảng; không cần volume database trên EC2.
+`.env` nằm ngoài image và không được commit.
+
+File Compose này không mount `~/.aws` từ máy host. Nếu dùng named profile, cần tự
+mount thư mục credentials chỉ đọc; nếu dùng IAM role của EC2, để trống
+`PLATFORM_AWS_PROFILE` và bảo đảm container truy cập được instance metadata.
+
+Cổng `8000` phục vụ HTTP. Để frontend CloudFront gọi API trực tiếp, cần đặt HTTPS
+trước backend, ví dụ reverse proxy trên EC2 hoặc ALB, rồi build frontend với
+`VITE_API_URL=https://api.example.com` (xem `../frontend/README.md`). Không dùng
+`http://<EC2-IP>:8000` làm API URL cho trang HTTPS: trình duyệt chặn mixed content
+dù CORS là `*` ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content)).
+File Compose không cấu hình TLS, DNS hay Security Group.
+
+`docker-compose.yml` ở thư mục gốc vẫn dùng cho phát triển local cả backend và frontend.
 
 ## Test / lint
 
@@ -60,9 +101,16 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 - Chưa có xác thực: đừng mở API ra mạng ngoài.
 - Dữ liệu AWS đi qua `app/sanitizer.py` trước khi tới LLM và trước khi lưu `output_summary`.
 
-## Lưu trữ: SQLite hoặc DynamoDB
+## Lưu trữ: DynamoDB
 
-`STORAGE_BACKEND=sqlite` (mặc định, file `DB_PATH`) hoặc `dynamodb` (bảng `DYNAMODB_TABLE` trong tài khoản nền tảng, mã hoá KMS). Router và agent loop chỉ dùng interface `app/storage/base.py::Store`; hai bản cài đặt `sql.py` và `dynamo.py` qua cùng bộ test `tests/test_store.py`.
+`STORAGE_BACKEND=dynamodb` là mặc định. Bảng `DYNAMODB_TABLE` trong tài khoản nền tảng
+được tạo trước bằng [CloudFormation](../infra/cloudformation/README.md).
+Điền `DYNAMODB_REGION`, để trống `DYNAMODB_ENDPOINT_URL` khi dùng endpoint AWS chuẩn
+hoặc điền URL tuỳ chọn; giữ `DYNAMODB_CREATE_TABLE=false` khi dùng bảng đã tạo.
+Backend kiểm tra bảng bằng `DescribeTable` khi khởi động, không tự fallback sang SQLite.
+Router và agent loop dùng interface `app/storage/base.py::Store`.
+SQLite còn là tuỳ chọn tường minh cho test/local (`STORAGE_BACKEND=sqlite`, `DB_PATH`),
+không được dùng trong hai file Compose. Không có bước tự chuyển dữ liệu SQLite cũ.
 
 Thiết kế bảng DynamoDB (một bảng):
 
@@ -77,7 +125,8 @@ Thiết kế bảng DynamoDB (một bảng):
 Index `ById` (theo `id`) để lấy tool call của một tin nhắn. Chạy thử với LocalStack:
 
 ```bash
-STORAGE_BACKEND=dynamodb DYNAMODB_ENDPOINT_URL=http://localhost:4566 uvicorn app.main:app
+DYNAMODB_TABLE=autoaws DYNAMODB_REGION=ap-southeast-1 \
+DYNAMODB_CREATE_TABLE=true DYNAMODB_ENDPOINT_URL=http://localhost:4566 uvicorn app.main:app
 ```
 
 Lưu ý: GSI nhất quán sau (eventually consistent) — danh sách ngay sau khi ghi có thể trễ vài ms; secret của kết nối access key vẫn nằm trong item (bảng đã mã hoá KMS, nhưng ai đọc được bảng là đọc được secret — cần mã hoá cấp trường trước khi có nhiều người dùng).
@@ -89,3 +138,7 @@ Lưu ý: GSI nhất quán sau (eventually consistent) — danh sách ngay sau kh
 3. Thêm dòng vào bảng cuối `docs/API_CONTRACT.md`.
 
 Template CloudFormation (`GET /api/connections/{id}/cloudformation`) tự sinh IAM policy từ `aws_actions` của mọi tool.
+
+## Đăng nhập Cognito
+
+Xem [cấu hình Cognito, cách ly `user_id` và migration dữ liệu cũ](../docs/AUTH.md). Mặc định `AUTH_MODE=cognito`; EC2 cần `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN`. Dev offline đặt `AUTH_MODE=none` cùng `APP_ENV=dev`, `RUNTIME=local`. Frontend lấy cấu hình công khai từ API, không cần biến Vite riêng cho Cognito.

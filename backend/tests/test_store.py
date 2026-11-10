@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.storage.dynamo import DynamoStore, ensure_table
 from app.storage.models import Connection, Conversation, Message, ToolCallRecord
-from app.storage.store import get_store
 from tests.conftest import FAKE_KEY, FAKE_SECRET, REGION
 
 # In the past (touch_conversation uses "now") and on a whole second (no microseconds).
@@ -114,6 +113,30 @@ def test_messages_and_tool_calls(store):
         assert s.list_tool_calls(q.id) == []
 
 
+def test_message_timestamp_tie_keeps_question_before_answer(store):
+    conv = store.create_conversation(Conversation(connection_id="conn_tied_time"))
+    question = store.add_message(
+        Message(
+            id=f"msg_z_{conv.id}",
+            conversation_id=conv.id,
+            role="user",
+            content="question",
+            created_at=T0,
+        )
+    )
+    reply = store.add_message(
+        Message(
+            id=f"msg_a_{conv.id}",
+            conversation_id=conv.id,
+            role="assistant",
+            content="answer",
+            created_at=T0,
+        )
+    )
+    fresh = DynamoStore(store.client, store.table) if isinstance(store, DynamoStore) else store
+    assert [msg.id for msg in fresh.list_messages(conv.id)] == [question.id, reply.id]
+
+
 def test_tool_call_output_and_cache_fields_round_trip(store):
     conv = store.create_conversation(Conversation(connection_id="conn_cache"))
     read_at = T0 + timedelta(seconds=5)
@@ -193,20 +216,24 @@ def test_dynamodb_table_is_encrypted_and_indexed(aws):
 
 @pytest.fixture
 def dynamo_api(app, aws, monkeypatch):
+    from app.config import get_settings
     from app.storage import store as store_module
 
     client = aws.client("dynamodb")
     ensure_table(client, "autoaws-api")
 
-    def dynamo():
-        yield DynamoStore(client, "autoaws-api")
-
-    app.dependency_overrides[get_store] = lambda: DynamoStore(client, "autoaws-api")
-    # background work (worker, remediation) opens its own store
-    monkeypatch.setattr(store_module, "get_store", dynamo)
+    settings = get_settings().model_copy(
+        update={
+            "storage_backend": "dynamodb",
+            "dynamodb_table": "autoaws-api",
+            "dynamodb_create_table": False,
+        }
+    )
+    # Exercise the real selection path for both API requests and background jobs.
+    monkeypatch.setattr(store_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(store_module, "dynamodb_client", lambda: client)
     with TestClient(app) as c:
         yield c, client
-    app.dependency_overrides.clear()
 
 
 def test_api_flow_on_dynamodb(dynamo_api, aws):

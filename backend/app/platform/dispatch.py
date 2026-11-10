@@ -40,35 +40,39 @@ def _client(service: str):
 # ---- diagnosis jobs -------------------------------------------------------------------
 
 
-def start_job(job_id: str, background: BackgroundTasks) -> None:
+def start_job(job_id: str, background: BackgroundTasks, user_id: str) -> None:
     if not is_lambda():
         from app.worker import run_job  # noqa: PLC0415 — avoids an import cycle
 
-        background.add_task(run_job, job_id)
+        background.add_task(run_job, job_id, user_id)
         return
     try:
         _client("lambda").invoke(
             FunctionName=get_settings().agent_worker_function,
             InvocationType="Event",  # async; the function is configured with 0 retries
-            Payload=json.dumps({"mode": "diagnosis", "job_id": job_id}).encode(),
+            Payload=json.dumps(
+                {"mode": "diagnosis", "job_id": job_id, "user_id": user_id}
+            ).encode(),
         )
     except (ClientError, BotoCoreError) as e:
         raise DispatchError(f"Could not start agent-worker: {e}") from e
 
 
-def verify_connection(conn_id: str) -> dict:
+def verify_connection(conn_id: str, user_id: str) -> dict:
     """Run the connection check where the read-only AssumeRole is allowed (agent-worker)."""
     if not is_lambda():
         from app.storage.store import open_store  # noqa: PLC0415
         from app.worker import verify_connection as verify  # noqa: PLC0415
 
-        with open_store() as store:
+        with open_store(user_id) as store:
             return verify(store, conn_id)
     try:
         resp = _client("lambda").invoke(
             FunctionName=get_settings().agent_worker_function,
             InvocationType="RequestResponse",
-            Payload=json.dumps({"mode": "verify", "connection_id": conn_id}).encode(),
+            Payload=json.dumps(
+                {"mode": "verify", "connection_id": conn_id, "user_id": user_id}
+            ).encode(),
         )
     except (ClientError, BotoCoreError) as e:
         raise DispatchError(f"Could not reach agent-worker: {e}") from e
@@ -94,6 +98,7 @@ def start_remediation_flow(p: Proposal) -> None:
             input=json.dumps(
                 {
                     "proposal_id": p.id,
+                    "user_id": p.user_id,
                     "kind": p.kind,
                     "summary": preview.get("summary", p.action),
                     "link": f"{settings.frontend_url.rstrip('/')}/proposals",

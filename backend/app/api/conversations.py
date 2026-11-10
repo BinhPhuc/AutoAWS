@@ -72,7 +72,7 @@ def send_message(
             )
     job = store.create_job(new_job(conv, body.content))
     try:
-        dispatch.start_job(job.id, background)
+        dispatch.start_job(job.id, background, store.user_id)
     except dispatch.DispatchError as e:
         store.update_job(job.id, status="failed", error_json='{"error": "INTERNAL"}')
         raise AppError("INTERNAL", 500, "Could not start the diagnosis") from e

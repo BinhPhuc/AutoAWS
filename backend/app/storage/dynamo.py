@@ -1,5 +1,8 @@
 """DynamoDB implementation of the Store (single-table design).
 
+All PK and GSI1PK values below have prefix USER#<user_id>#.
+Every item (and embedded tool call) carries user_id. Unprefixed legacy items are hidden.
+
 Items (PK / SK):
   connection    CONN#<id>              / META                      GSI1: CONNECTIONS
   conversation  CONV#<id>              / META                      GSI1: CONVS#<connection_id>
@@ -108,7 +111,8 @@ def ensure_table(client, table: str, kms_key_id: str = "") -> bool:
 
 
 class DynamoStore:
-    def __init__(self, client, table: str) -> None:
+    def __init__(self, client, table: str, user_id: str = "local-dev") -> None:
+        self.user_id = user_id
         self.client = client
         self.table = table
         # Tool calls of the messages this store has seen. A store lives for one request,
@@ -118,6 +122,7 @@ class DynamoStore:
     # ---- connections ---------------------------------------------------------
 
     def create_connection(self, conn: Connection) -> Connection:
+        conn.user_id = self.user_id
         self._put(self._connection_item(conn), new=True)
         return conn
 
@@ -132,6 +137,7 @@ class DynamoStore:
         self._put(self._connection_item(conn))
 
     def delete_connection(self, conn: Connection) -> None:
+        self._owned(conn.user_id)
         for conv in self.list_conversations(conn.id):
             self.delete_conversation(conv)
         self._delete_keys([(f"CONN#{conn.id}", "META")])
@@ -139,6 +145,7 @@ class DynamoStore:
     # ---- conversations -------------------------------------------------------
 
     def create_conversation(self, conv: Conversation) -> Conversation:
+        conv.user_id = self.user_id
         self._put(self._conversation_item(conv), new=True)
         return conv
 
@@ -156,6 +163,7 @@ class DynamoStore:
         return Conversation.model_validate(self._fields(item)) if item else None
 
     def delete_conversation(self, conv: Conversation) -> None:
+        self._owned(conv.user_id)
         # The conversation item and all its messages share the partition CONV#<id>.
         keys = [(i["PK"]["S"], i["SK"]["S"]) for i in self._query(f"CONV#{conv.id}")]
         keys += [(f"PROP#{p.id}", "META") for p in self.list_proposals(conversation_id=conv.id)]
@@ -163,6 +171,7 @@ class DynamoStore:
         self._delete_keys(keys)
 
     def touch_conversation(self, conv: Conversation, title: str | None = None) -> None:
+        self._owned(conv.user_id)
         conv.updated_at = utcnow()
         if title and not conv.title:
             conv.title = title
@@ -171,8 +180,10 @@ class DynamoStore:
     # ---- messages ------------------------------------------------------------
 
     def add_message(self, msg: Message, tool_calls: list[ToolCallRecord] | None = None) -> Message:
+        msg.user_id = self.user_id
         calls = list(tool_calls or [])
         for i, tc in enumerate(calls):
+            tc.user_id = self.user_id
             tc.message_id = msg.id
             tc.seq = i
         item = self._message_item(msg)
@@ -189,7 +200,9 @@ class DynamoStore:
             msg = Message.model_validate(fields)
             self._tool_calls[msg.id] = self._tool_call_models(msg.id, calls)
             messages.append(msg)
-        return messages
+        # Coarse clocks can give a question and its immediate answer the same timestamp.
+        # Random message IDs must not put the answer before the question in that case.
+        return sorted(messages, key=lambda msg: (msg.created_at, msg.role != "user", msg.id))
 
     def list_tool_calls(self, message_id: str) -> list[ToolCallRecord]:
         if message_id not in self._tool_calls:
@@ -198,6 +211,7 @@ class DynamoStore:
                     self._fields(i)
                     for i in self._query_index(BY_ID, "id", message_id)
                     if i.get("entity", {}).get("S") == "message"
+                    and i.get("user_id", {}).get("S") == self.user_id
                 ),
                 {},
             )
@@ -209,6 +223,7 @@ class DynamoStore:
     # ---- remediation proposals -----------------------------------------------
 
     def create_proposal(self, proposal: Proposal) -> Proposal:
+        proposal.user_id = self.user_id
         self._put(self._proposal_item(proposal), new=True)
         return proposal
 
@@ -230,6 +245,7 @@ class DynamoStore:
         return out
 
     def update_proposal(self, proposal: Proposal, expected_status: str | None = None) -> bool:
+        self._owned(proposal.user_id)
         proposal.updated_at = utcnow()
         fields = proposal.model_dump(mode="json", exclude={"id", "task_token"})
         names = {f"#f{i}": key for i, key in enumerate(fields)}
@@ -242,7 +258,7 @@ class DynamoStore:
         try:
             self.client.update_item(
                 TableName=self.table,
-                Key={"PK": {"S": f"PROP#{proposal.id}"}, "SK": {"S": "META"}},
+                Key={"PK": {"S": self._key(f"PROP#{proposal.id}")}, "SK": {"S": "META"}},
                 UpdateExpression="SET " + ", ".join(f"#f{i} = :v{i}" for i in range(len(fields))),
                 ConditionExpression=condition,
                 ExpressionAttributeNames=names,
@@ -257,7 +273,7 @@ class DynamoStore:
     def set_proposal_token(self, proposal_id: str, task_token: str | None) -> None:
         self.client.update_item(
             TableName=self.table,
-            Key={"PK": {"S": f"PROP#{proposal_id}"}, "SK": {"S": "META"}},
+            Key={"PK": {"S": self._key(f"PROP#{proposal_id}")}, "SK": {"S": "META"}},
             UpdateExpression="SET task_token = :t",
             ConditionExpression="attribute_exists(PK)",
             ExpressionAttributeValues={":t": _serializer.serialize(task_token)},
@@ -266,6 +282,7 @@ class DynamoStore:
     # ---- jobs ----------------------------------------------------------------
 
     def create_job(self, job: Job) -> Job:
+        job.user_id = self.user_id
         self._put(self._job_item(job), new=True)
         return job
 
@@ -279,6 +296,8 @@ class DynamoStore:
         ]
 
     def update_job(self, job_id: str, **fields) -> None:
+        if "user_id" in fields or "id" in fields or "conversation_id" in fields:
+            raise ValueError("Cannot change job ownership")
         fields["updated_at"] = utcnow()
         values = Job.model_validate({"conversation_id": "", **fields}).model_dump(mode="json")
         names, exprs, attrs = {}, [], {}
@@ -288,7 +307,7 @@ class DynamoStore:
             exprs.append(f"#f{i} = :v{i}")
         self.client.update_item(
             TableName=self.table,
-            Key={"PK": {"S": f"JOB#{job_id}"}, "SK": {"S": "META"}},
+            Key={"PK": {"S": self._key(f"JOB#{job_id}")}, "SK": {"S": "META"}},
             UpdateExpression="SET " + ", ".join(exprs),
             ConditionExpression="attribute_exists(PK)",
             ExpressionAttributeNames=names,
@@ -367,7 +386,24 @@ class DynamoStore:
 
     # ---- low-level calls -------------------------------------------------------
 
+    def _owned(self, user_id: str) -> None:
+        if user_id != self.user_id:
+            raise ValueError("Owner mismatch")
+
+    def _key(self, key: str) -> str:
+        prefix = f"USER#{self.user_id}#"
+        if key.startswith("USER#"):
+            if not key.startswith(prefix):
+                raise ValueError("Owner mismatch")
+            return key
+        return prefix + key
+
     def _put(self, attrs: dict, new: bool = False) -> None:
+        self._owned(attrs["user_id"])
+        attrs = dict(attrs)
+        for key in ("PK", "GSI1PK"):
+            if key in attrs:
+                attrs[key] = self._key(attrs[key])
         kwargs = {"ConditionExpression": "attribute_not_exists(PK)"} if new else {}
         self.client.put_item(
             TableName=self.table,
@@ -377,13 +413,15 @@ class DynamoStore:
 
     def _get(self, pk: str, sk: str) -> dict | None:
         resp = self.client.get_item(
-            TableName=self.table, Key={"PK": {"S": pk}, "SK": {"S": sk}}, ConsistentRead=True
+            TableName=self.table,
+            Key={"PK": {"S": self._key(pk)}, "SK": {"S": sk}},
+            ConsistentRead=True,
         )
         return resp.get("Item")
 
     def _query(self, pk: str, sk_prefix: str | None = None) -> Iterator[dict]:
         condition = "PK = :pk"
-        values = {":pk": {"S": pk}}
+        values = {":pk": {"S": self._key(pk)}}
         if sk_prefix:
             condition += " AND begins_with(SK, :sk)"
             values[":sk"] = {"S": sk_prefix}
@@ -397,7 +435,7 @@ class DynamoStore:
         yield from self._paginate(
             IndexName=GSI1,
             KeyConditionExpression="GSI1PK = :pk",
-            ExpressionAttributeValues={":pk": {"S": pk}},
+            ExpressionAttributeValues={":pk": {"S": self._key(pk)}},
             ScanIndexForward=False,
         )
 
@@ -416,7 +454,7 @@ class DynamoStore:
     def _delete_keys(self, keys: list[tuple[str, str]]) -> None:
         for start in range(0, len(keys), 25):  # BatchWriteItem limit
             requests = [
-                {"DeleteRequest": {"Key": {"PK": {"S": pk}, "SK": {"S": sk}}}}
+                {"DeleteRequest": {"Key": {"PK": {"S": self._key(pk)}, "SK": {"S": sk}}}}
                 for pk, sk in keys[start : start + 25]
             ]
             pending = {self.table: requests}

@@ -37,6 +37,9 @@ def add_missing_columns(engine: Engine) -> list[str]:
                 ddl = column.type.compile(dialect=engine.dialect)
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl}'))
                 added.append(f"{table.name}.{column.name}")
+            for index in table.indexes:
+                if [c.name for c in index.columns] == ["user_id"]:
+                    index.create(conn, checkfirst=True)
     return added
 
 

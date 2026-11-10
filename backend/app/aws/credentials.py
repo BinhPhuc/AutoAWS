@@ -30,7 +30,7 @@ VERIFY_AWS_ACTIONS = ["sts:GetCallerIdentity", "ec2:DescribeRegions"]
 # per account and Region (docs/SYSTEM_OVERVIEW.md / report §2.3.2).
 RETRY_CONFIG = Config(retries={"mode": "adaptive", "max_attempts": 6})
 
-_role_cache: dict[str, tuple[boto3.Session, datetime]] = {}
+_role_cache: dict[tuple[str, str], tuple[boto3.Session, datetime]] = {}
 _REFRESH_MARGIN = timedelta(seconds=60)
 
 
@@ -96,7 +96,7 @@ def resolve_session(conn: Connection) -> boto3.Session:
         )
 
     if conn.type == "role":
-        cached = _role_cache.get(conn.id)
+        cached = _role_cache.get((conn.user_id, conn.id))
         now = datetime.now(UTC)
         if cached and cached[1] - _REFRESH_MARGIN > now:
             return cached[0]
@@ -128,14 +128,14 @@ def resolve_session(conn: Connection) -> boto3.Session:
         expiration = creds["Expiration"]
         if expiration.tzinfo is None:
             expiration = expiration.replace(tzinfo=UTC)
-        _role_cache[conn.id] = (session, expiration)
+        _role_cache[(conn.user_id, conn.id)] = (session, expiration)
         return session
 
     raise CredentialError(f"Unknown connection type: {conn.type}")
 
 
-def forget_session(conn_id: str) -> None:
-    _role_cache.pop(conn_id, None)
+def forget_session(conn_id: str, user_id: str = "local-dev") -> None:
+    _role_cache.pop((user_id, conn_id), None)
 
 
 def verify_session(session: boto3.Session) -> dict:

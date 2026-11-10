@@ -11,7 +11,9 @@ from app.storage.store import open_store
 
 def handler(event: dict, context=None) -> dict:
     mode = event.get("mode")
-    with open_store() as store:
+    if mode not in ("store_token", "execute"):
+        raise ValueError(f"Unknown action-executor mode {mode!r}")
+    with open_store(event["user_id"]) as store:
         if mode == "store_token":
             return service.store_task_token(store, event["proposal_id"], event["task_token"])
         if mode == "execute":

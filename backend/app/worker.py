@@ -101,9 +101,9 @@ class _JobLog:
         self.store.update_job(self.job_id, status="failed", error_json=json.dumps(error))
 
 
-async def run_job(job_id: str) -> None:
+async def run_job(job_id: str, user_id: str) -> None:
     """Run one queued diagnosis job to the end. Never raises."""
-    with open_store() as store:
+    with open_store(user_id) as store:
         job = store.get_job(job_id)
         if job is None or job.status != "queued":
             return  # unknown, or already picked up (a duplicate invocation)
@@ -168,7 +168,7 @@ def verify_connection(store: Store, conn_id: str) -> dict:
         return VerifyOut(
             status="failed", account_id=None, arn=None, checked_at=checked_at, error="not found"
         ).model_dump(mode="json")
-    forget_session(conn.id)
+    forget_session(conn.id, conn.user_id)
     try:
         identity = verify_session(resolve_session(conn))
     except CredentialError as e:

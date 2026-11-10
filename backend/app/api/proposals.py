@@ -31,8 +31,8 @@ def _get(store: Store, proposal_id: str):
     return expire_due(store, p)
 
 
-def _run(proposal_id: str) -> None:
-    with open_store() as store:
+def _run(proposal_id: str, user_id: str) -> None:
+    with open_store(user_id) as store:
         execute_proposal(store, proposal_id)
 
 
@@ -62,7 +62,9 @@ def decide_proposal(
         raise AppError("VALIDATION_ERROR", 422, "Invalid request: feedback is required")
     proposal, followup = decide(store, _get(store, proposal_id), body.decision, body.feedback)
     if body.decision == "approve" and not dispatch.is_lambda():
-        background.add_task(_run, proposal.id)  # on AWS remediation-flow runs the steps
+        background.add_task(
+            _run, proposal.id, store.user_id
+        )  # on AWS remediation-flow runs the steps
     out = DecisionOut(proposal=ProposalOut.from_model(proposal), followup_question=followup)
     return ok(out, _MESSAGES[body.decision])
 
