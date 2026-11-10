@@ -211,6 +211,7 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 - [x] **EC2 + DynamoDB (2026-11-10)**: mặc định DynamoDB, template độc lập `infra/cloudformation/dynamodb.yaml`, Compose backend không dùng volume SQLite; bảng/region/endpoint do người deploy điền, kiểm tra bảng lúc startup và không tự tạo bảng trên EC2. Kiểm chứng: 209 test BE, ruff và cfn-lint sạch; chưa deploy AWS thật.
 - Giới hạn chi phí: cache kết quả tool theo (connection, tool, input) trong phiên; đếm token.
 - [x] **Hợp nhất auth + DynamoDB (2026-11-10)**: giữ auth và schema phân vùng từ `main`, ghép cấu hình DynamoDB/CloudFormation/Compose EC2; xác nhận đăng nhập, chặn truy cập chéo người dùng và lưu người quyết định trên DynamoDB. 235 test BE, 16 test FE, 11 test CDK; chưa deploy AWS thật.
+- [x] **Cognito độc lập cho EC2 (2026-11-10)**: template `infra/cloudformation/cognito.yaml` tạo User Pool Lite, Hosted UI classic và public app client tương thích PKCE/callback hiện có; Outputs cho `AUTH_MODE=cognito`, hướng dẫn Console và CloudFront trong `infra/cloudformation/COGNITO.md`. cfn-lint sạch; chưa deploy AWS thật.
 
 ## 7. Quy tắc bắt buộc (cho mọi người/agent sửa backend)
 1. Không thêm bất kỳ AWS action nào ngoài `Describe*/List*/Get*/LookupEvents/StartQuery/GetQueryResults/GetMetricData`. PR có action ghi → từ chối.

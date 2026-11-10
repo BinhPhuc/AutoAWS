@@ -140,6 +140,9 @@ Xem [`backend/README.md`](backend/README.md#deploy-backend-trên-ec2) và
 Backend mặc định dùng DynamoDB và kiểm tra bảng đã tạo khi khởi động; SQLite chỉ bật tường minh cho local/test.
 Auth giữ nguyên từ `main`: khi deploy EC2, bật `AUTH_MODE=cognito` và điền
 `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` từ stack Auth.
+Nếu triển khai EC2 độc lập với CDK, tạo Cognito bằng
+[`infra/cloudformation/cognito.yaml`](infra/cloudformation/cognito.yaml) theo
+[`hướng dẫn cấu hình`](infra/cloudformation/COGNITO.md).
 
 ### 0. Cần chuẩn bị
 
