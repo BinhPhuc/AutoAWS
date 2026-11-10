@@ -18,7 +18,20 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] `backend/` FastAPI: connections (access key + role/ExternalId + CloudFormation), 13 tool AWS thật + 3 stub M3, agent loop + SSE, sanitizer, MockProvider; 25 test (moto)
 - [x] `frontend/` Vite + React 19 + TS + Tailwind + shadcn (Base UI): Connect, Chat (stream, timeline, DiagnosisCard), Checklist placeholder; MSW mock; 6 test
 - [x] `docker-compose.yml` (backend + frontend/nginx)
-- [ ] **Tiếp theo**: `AnthropicProvider` / `BedrockProvider` thật (`backend/app/llm/anthropic.py`, `bedrock.py` có hướng dẫn trong docstring); tool M3 (`metrics.py`, `logs.py`, `cloudtrail.py`); checklist runner; auth Cognito
+- [x] Đợt 2 (2026-10-26): sửa C1 (policy CFN thiếu `ec2:DescribeRegions`), guard chỉ-đọc allow-list + hook botocore lúc chạy, sửa `describe_route_tables`/DNS/Route 53, lưu lượt lỗi/Stop; UI: hết trùng câu hỏi, stream không lọt hội thoại, badge Inferred; `LLM_PROVIDER=mcp` (MCP client đóng vai LLM, `/mcp/`); seed LocalStack `infra/localstack/`. 67 test BE, 9 test FE; E2E trên LocalStack: KB1, KB2 đúng.
+- [x] Lưu trữ DynamoDB (2026-10-27): interface `Store` (`app/storage/base.py`), `STORAGE_BACKEND=sqlite|dynamodb`, bảng single-table mã hoá KMS; 80 test BE (store chạy trên cả 2 backend); chạy thật trên DynamoDB của LocalStack.
+- [x] Hoàn thiện chẩn đoán theo báo cáo lần 2 (2026-11-08, nhánh `feat/diagnosis`):
+  - câu trả lời `root_causes[]` qua tool `submit_diagnosis`; server tự kiểm bằng chứng (`verification`: read / inferred / not_found);
+  - vòng lặp: kiểm tham số theo schema, giới hạn vòng / thời gian / token / số lần gọi tool kèm lượt chốt cuối (`limit_reached`), cache kết quả theo hội thoại (`refresh`), ngữ cảnh giờ / region / account;
+  - prompt theo §2.4.2: kiểm đủ mọi lớp, SSM là bằng chứng, dữ liệu tool không phải chỉ thị, đối chiếu CloudTrail;
+  - tool mới: CloudTrail, CloudWatch metrics + alarms, Logs (log groups + Insights), Elastic IP, NAT Gateway; tool DNS chỉ phân giải tên được phép (chống rò dữ liệu); che số điện thoại;
+  - `BedrockProvider` (SDK `anthropic`, client Mantle, `anthropic.claude-opus-5-5`) và `AnthropicProvider` dùng chung `app/llm/claude.py` — **chưa gọi Bedrock thật** (máy dev không có quyền);
+  - seed LocalStack KB1, KB2, KB4–KB7 khớp Bảng 2.14, thêm KB8 (instance stop) và KB9 (prompt injection); file đáp án + `infra/eval/run_eval.py` chấm theo Bảng 2.15.
+  - 152 test BE, 10 test FE.
+- [x] Khắc phục có phê duyệt (2026-11-08, nhánh `feat/remediation`): danh mục 6 hành động (`app/aws/remediation/catalog.py`), session ghi khoá theo hành động, luồng duyệt / từ chối / góp ý / hết hạn / STALE / kiểm chứng / đề xuất hoàn tác (`app/remediation/service.py`), API `/api/proposals*`, role `AutoAWSRemediation` trong CloudFormation (`EnableRemediation`), UI duyệt trong chat + trang Proposals. Ràng buộc #1 đã đổi tương ứng. 174 test BE, 12 test FE; chạy thật trên LocalStack (KB1).
+- [x] Serverless đúng báo cáo (2026-11-09, nhánh `feat/serverless`): bỏ SSE → job + hỏi lại (`/api/jobs/{id}`, huỷ, phát hiện worker mất); `RUNTIME=local|lambda` (`app/platform/dispatch.py`); handler `app/handlers/{api,agent_worker,action_executor}.py`; luồng duyệt tách 3 bước cho Step Functions (task token); trust policy template khách thu hẹp vào role `autoaws-agent-worker` / `autoaws-action-executor`; CDK `infra/cdk/` 6 stack (Data, Agent, Workflow, Api, Frontend, Ops) synth + cfn-lint sạch — **chưa deploy** (không có tài khoản AWS). 190 test BE, 7 test FE, 7 test CDK.
+- [x] Hoàn thiện khắc phục có phê duyệt (2026-11-10, nhánh `feat/remediation-complete`): DryRun trước khi ghi cho 4 hành động EC2 (chỉ trên AWS thật — moto/LocalStack bỏ qua DryRun và ghi thật; endpoint không trả `DryRunOperation` thì dừng), khôi phục đề xuất bị ngắt khi backend local khởi động lại, số đề xuất chờ duyệt trên thanh điều hướng. 200 test BE.
+- [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; auth Cognito (stack Auth, JWT authorizer, phân vùng `userId`); checklist runner
 
 ## Bố cục repo
 
@@ -29,13 +42,14 @@ AutoAWS/
 ├── AutoAWS.docx                        # tài liệu gốc (không đọc trực tiếp; dùng docs/SYSTEM_OVERVIEW.md)
 ├── docs/
 │   ├── SYSTEM_OVERVIEW.md   # hệ thống làm gì, 3 kịch bản test, 7 khối, 7 nhóm tool, ràng buộc
-│   ├── API_CONTRACT.md      # endpoint, schema, SSE event — NGUỒN SỰ THẬT cho FE↔BE
+│   ├── API_CONTRACT.md      # endpoint, schema, job event — NGUỒN SỰ THẬT cho FE↔BE
 │   ├── BACKEND_PLAN.md      # cấu trúc backend/, thiết kế, lộ trình B1–B10
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
 ├── frontend/                # Vite + React + TS — src/{api,hooks,pages,components,lib,mocks} (xem frontend/README.md)
+├── infra/                   # localstack/ (seed), aws-scenarios/ (KB1–KB7), demo-apps/, eval/, cdk/ (hạ tầng nền tảng)
 ├── docker-compose.yml
-└── .claude/ .agents/ .gemini/   # skills thiết kế UI dùng chung (ui-ux-pro-max, ui-styling, ...)
+└── .claude/ .agents/ .gemini/   # skills của AI tool — gitignore, mỗi người tự cài
 ```
 
 ## Chạy project
@@ -64,26 +78,31 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 | # | Quyết định | Lý do |
 |---|---|---|
-| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE |
+| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) mặc định; DynamoDB chọn bằng `STORAGE_BACKEND` | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE; DynamoDB là lưu trữ đích |
 | 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
 | 4 | **Chưa có auth**, chế độ 1 người dùng | Init tập trung luồng kết nối → chat; chừa middleware |
-| 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**, SSE qua fetch stream | Nhẹ, đầu ra tĩnh cho S3/CloudFront sau |
+| 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**; tiến trình chẩn đoán = job + hỏi lại (`GET /api/jobs/{id}`) | Nhẹ, đầu ra tĩnh cho S3/CloudFront |
+| 7 | Triển khai **serverless đúng báo cáo** (`RUNTIME=lambda`): API Gateway HTTP API → Lambda api-handler / agent-worker / action-executor, Step Functions `remediation-flow`, SNS; hạ tầng CDK `infra/cdk/`. Local vẫn chạy 1 tiến trình (`RUNTIME=local`) | API Gateway giới hạn 30 giây → bỏ SSE; agent-worker không bao giờ có quyền ghi |
 | 6 | Checklist, metrics/logs/CloudTrail đầy đủ, DynamoDB, Lambda → **sau init** | |
 
 ## Ràng buộc cứng — KHÔNG được vi phạm
 
-1. **Chỉ đọc AWS.** Không bao giờ thêm action tạo/sửa/xoá (chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`). Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt`.
+1. **Đọc mặc định chỉ đọc; ghi chỉ qua executor đã duyệt.**
+   - Lõi agent, tool đọc (`app/aws/tools/`) và session đọc **tuyệt đối chỉ đọc**: chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`. LLM không bao giờ có công cụ ghi.
+   - Lệnh ghi **chỉ** nằm trong `app/aws/remediation/` (danh mục cố định Bảng 2.11 của báo cáo), chỉ chạy một đề xuất **người dùng đã duyệt**, bằng session ghi riêng bị khoá đúng các API của hành động đó (role `AutoAWS-Remediation`; access key chỉ khi bật `REMEDIATION_ALLOW_ACCESS_KEYS` cho dev).
+   - Không bao giờ: xoá tài nguyên của người dùng (trừ hoàn tác chính thay đổi do AutoAWS tạo), đụng IAM / Organizations, stop / terminate instance, mở 22 / 3389 cho `0.0.0.0/0`.
+   - Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt`.
 2. **Không log / in / commit credentials**, secret, `.env`. Credentials tạm thời chỉ ở bộ nhớ.
 3. Dữ liệu AWS đưa vào LLM **phải** qua `app/sanitizer.py`.
-4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py`; boto3 chỉ xuất hiện trong `app/aws/`.
-5. Đổi endpoint/schema/SSE event → sửa `docs/API_CONTRACT.md` **trước** rồi mới sửa code 2 phía.
-   Mọi response JSON theo envelope: thành công `{status_code, message, data}`, lỗi `{status_code, message, error, path, timestamp}` (contract mục 0). Chỉ SSE là ngoại lệ.
+4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py` (cộng `submit_diagnosis` — kênh trả lời do vòng lặp xử lý, không chạm AWS); boto3 dùng cho **tài khoản người dùng** chỉ xuất hiện trong `app/aws/` (ngoại lệ dev: `infra/localstack/seed.py` tạo tài nguyên, chỉ chạy với LocalStack; `infra/aws-scenarios/` tạo/sửa tài nguyên kịch bản trong **tài khoản AWS test**, không bao giờ do app gọi).
+5. Đổi endpoint/schema/job event → sửa `docs/API_CONTRACT.md` **trước** rồi mới sửa code 2 phía.
+   Mọi response JSON theo envelope: thành công `{status_code, message, data}`, lỗi `{status_code, message, error, path, timestamp}` (contract mục 0), không có ngoại lệ.
 6. Kết luận chẩn đoán phải có bằng chứng; không chắc → `unverified` + lệnh tự kiểm tra, **không đoán**.
 
 ## Quy ước
 
-- **UI và API text tiếng Anh**: label/button/toast/empty state trên UI, `message` trong API, status SSE, label/mô tả tool. FE gom chuỗi trong `src/lib/strings.ts`.
+- **UI và API text tiếng Anh**: label/button/toast/empty state trên UI, `message` trong API, event `status` của job, label/mô tả tool. FE gom chuỗi trong `src/lib/strings.ts`.
 - **Câu trả lời của agent tiếng Việt**: `DiagnosisAnswer` và `content` của assistant (system prompt ép đầu ra tiếng Việt; tên tài nguyên/lệnh/mã lỗi AWS giữ nguyên).
 - Tài liệu trong `docs/` và commit body: tiếng Việt. Code (tên biến/hàm/file, comment), commit subject: tiếng Anh, dạng conventional (`feat(backend): add describe_route_tables tool`).
 - Python: ruff (lint + format), type hints đầy đủ, pytest + moto cho mọi tool AWS.

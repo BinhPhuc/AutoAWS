@@ -66,3 +66,16 @@ export function useDeleteConnection() {
     onError: (e) => toastApiError(e),
   })
 }
+
+export function useSetRemediationRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, arn }: { id: string; arn: string | null }) =>
+      connectionsApi.setRemediationRole(id, arn),
+    onSuccess: ({ message }) => {
+      toast.success(message)
+      void qc.invalidateQueries({ queryKey: connectionKeys.all })
+    },
+    onError: (e) => toastApiError(e),
+  })
+}

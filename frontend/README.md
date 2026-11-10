@@ -30,12 +30,12 @@ pnpm build    # tsc + vite build → dist/
 
 ```
 src/
-├── api/          client.ts (envelope + ApiError), sse.ts (POST + ReadableStream), types.ts (mirror contract), *.ts (endpoint modules)
-├── hooks/        useConnections, useConversations, useSendMessage (SSE live state), useTools, useActiveConnection
-├── pages/        ConnectPage, ChatPage, ChecklistPage (placeholder), HomeRedirect
-├── components/   layout/ (AppShell, Sidebar, …), connections/, chat/ (DiagnosisCard, ToolCallTimeline, …), ui/ (shadcn)
+├── api/          client.ts (envelope + ApiError), jobs.ts (poll / cancel), proposals.ts, types.ts (mirror contract), *.ts (endpoint modules)
+├── hooks/        useConnections, useConversations, useSendMessage (job + polling live state), useTools, useActiveConnection
+├── pages/        ChatPage (Diagnose), ProposalsPage, ConnectPage, ToolsPage, ChecklistPage (placeholder), HomeRedirect
+├── components/   layout/ (AppShell, Sidebar, HeaderBar, PageHeader, Panel), connections/ (ConnectionsTable, …), chat/ (DiagnosisCard, ToolCallTimeline, ConversationList, …), remediation/ (ProposalCard), ui/ (shadcn + status-tag, table)
 ├── lib/          strings.ts (mọi text UI – tiếng Anh), toolIcons.ts (group → icon), format.ts, utils.ts
-└── mocks/        MSW handlers + SSE fixtures (bật bằng VITE_USE_MOCK=true)
+└── mocks/        MSW handlers + scripted job scenarios (bật bằng VITE_USE_MOCK=true)
 ```
 
 Quy ước: text UI tiếng Anh, gom trong `src/lib/strings.ts`; nội dung câu trả lời của agent (tiếng Việt) đến từ backend và hiển thị nguyên văn. Kiểu API chỉ khai báo ở `src/api/types.ts`.

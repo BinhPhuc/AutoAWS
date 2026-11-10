@@ -1,0 +1,14 @@
+{
+  "app": ".venv/bin/python app.py",
+  "context": {
+    "envName": "dev",
+    "bedrockModelId": "anthropic.claude-opus-5-5",
+    "bedrockFallbackModel": "anthropic.claude-opus-4-8",
+    "llmEffort": "high",
+    "agentConcurrency": 5,
+    "budgetUsd": 20,
+    "notificationEmail": "",
+    "alarmEmail": "",
+    "frontendUrl": ""
+  }
+}

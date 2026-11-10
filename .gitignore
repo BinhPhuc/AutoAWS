@@ -26,10 +26,10 @@ build/
 pnpm-debug.log*
 npm-debug.log*
 
-# AI tool local state (giữ AGENTS.md / CLAUDE.md / GEMINI.md và skills)
-.claude/settings.local.json
-.claude/*.local.*
-.gemini/*.local.*
+# AI tool folders (skills, local state) — mỗi người tự cài; giữ AGENTS.md / CLAUDE.md / GEMINI.md
+.agents/
+.claude/
+.gemini/
 .cursor/
 
 # OS / editor
@@ -41,3 +41,9 @@ Thumbs.db
 
 # Playwright MCP artifacts
 .playwright-mcp/
+infra/localstack/answers.local.json
+infra/eval/results/
+infra/aws-scenarios/answers.aws.json
+infra/cdk/.venv/
+infra/cdk/build/
+infra/cdk/cdk.out/

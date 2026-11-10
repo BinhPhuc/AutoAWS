@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  AutoAWS test scenario KB3 (dev only). An ALB in front of 2 instances (2 AZs) running app v1,
+  target group health check /health, alarm on UnHealthyHostCount, app logs in CloudWatch Logs.
+  Fault (scenario.py fault kb3): "deploy" v2 through SSM Run Command; v2 only serves
+  /api/health, so both targets turn unhealthy while the site keeps answering (ALB fail-open).
+
+Parameters:
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.30.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: autoaws-kb3-vpc }]
+  Igw:
+    Type: AWS::EC2::InternetGateway
+  IgwAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref Igw }
+  PublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttach
+    Properties: { RouteTableId: !Ref PublicRt, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref Igw }
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.30.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.30.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+  SubnetARt:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubnetA, RouteTableId: !Ref PublicRt }
+  SubnetBRt:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubnetB, RouteTableId: !Ref PublicRt }
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "web-alb: HTTP from anywhere"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+  WebSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "web: HTTP from the ALB only"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, SourceSecurityGroupId: !Ref AlbSg }
+  AppLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /demo/kb3-web, RetentionInDays: 3 }
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref InstanceRole] }
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: { Arn: !GetAtt InstanceProfile.Arn }
+        SecurityGroupIds: [!Ref WebSg]
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -eux
+            dnf install -y amazon-cloudwatch-agent
+            mkdir -p /opt/app
+            cat > /opt/app/server.py <<'PY'
+            #@include ../../demo-apps/web_health.py
+            PY
+            echo 1.4.2 > /opt/app/VERSION
+            cat > /etc/systemd/system/app.service <<'UNIT'
+            [Unit]
+            Description=demo web app
+            After=network-online.target
+            [Service]
+            ExecStart=/usr/bin/python3 /opt/app/server.py
+            Restart=always
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            systemctl daemon-reload
+            systemctl enable --now app
+            cat > /opt/aws/amazon-cloudwatch-agent/etc/agent.json <<'CW'
+            {"logs": {"logs_collected": {"files": {"collect_list": [
+              {"file_path": "/var/log/app.log", "log_group_name": "${AppLogs}",
+               "log_stream_name": "{instance_id}"}]}}}}
+            CW
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config \
+              -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/agent.json
+  WebA:
+    Type: AWS::EC2::Instance
+    DependsOn: [DefaultRoute, SubnetARt]
+    Properties:
+      LaunchTemplate: { LaunchTemplateId: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber }
+      SubnetId: !Ref SubnetA
+      Tags: [{ Key: Name, Value: web-1 }]
+  WebB:
+    Type: AWS::EC2::Instance
+    DependsOn: [DefaultRoute, SubnetBRt]
+    Properties:
+      LaunchTemplate: { LaunchTemplateId: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber }
+      SubnetId: !Ref SubnetB
+      Tags: [{ Key: Name, Value: web-2 }]
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: IgwAttach
+    Properties:
+      Name: autoaws-kb3-alb
+      Scheme: internet-facing
+      Subnets: [!Ref SubnetA, !Ref SubnetB]
+      SecurityGroups: [!Ref AlbSg]
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: autoaws-kb3-tg
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: 80
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher: { HttpCode: "200" }
+      Targets: [{ Id: !Ref WebA }, { Id: !Ref WebB }]
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions: [{ Type: forward, TargetGroupArn: !Ref TargetGroup }]
+  UnhealthyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: autoaws-kb3-unhealthy-hosts
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - { Name: TargetGroup, Value: !GetAtt TargetGroup.TargetGroupFullName }
+        - { Name: LoadBalancer, Value: !GetAtt Alb.LoadBalancerFullName }
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  InstanceIds: { Value: !Join [",", [!Ref WebA, !Ref WebB]] }
+  LoadBalancerName: { Value: autoaws-kb3-alb }
+  LoadBalancerDns: { Value: !GetAtt Alb.DNSName }
+  TargetGroupName: { Value: autoaws-kb3-tg }
+  LogGroup: { Value: !Ref AppLogs }

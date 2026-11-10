@@ -1,34 +1,47 @@
-"""BedrockProvider — PLACEHOLDER, not implemented yet.
+"""BedrockProvider — Claude on Amazon Bedrock (the target LLM, docs/SYSTEM_OVERVIEW.md §7).
 
-How to implement (Bedrock Converse API with toolConfig):
-  - client = boto3.client("bedrock-runtime", region_name=settings.bedrock_region)
-    (use the platform session; run the blocking call in asyncio.to_thread)
-  - messages[0] (role=system) -> `system=[{"text": ...}]`
-  - user      -> {"role": "user", "content": [{"text": ...}]}
-  - assistant -> {"role": "assistant", "content": [{"text": ...}, {"toolUse": {"toolUseId",
-                 "name", "input"}}]}
-  - tool      -> {"role": "user", "content": [{"toolResult": {"toolUseId": tool_call_id,
-                 "content": [{"json": <dict>}]}}]}  (merge consecutive tool messages)
-  - ToolSpec  -> {"toolSpec": {"name", "description", "inputSchema": {"json": input_schema}}}
-  - response["output"]["message"]["content"]: text / toolUse blocks
-  - response["stopReason"]: "tool_use" | "end_turn" | "max_tokens"
-Optionally attach a Guardrail (guardrailConfig) for extra PII masking.
+Uses the official SDK's Bedrock Mantle client (``anthropic[bedrock]``): the Messages API
+served by Bedrock, so tool use, adaptive thinking, effort and prompt caching work as on
+the Claude API. Model ids carry the ``anthropic.`` prefix (``anthropic.claude-opus-5-5``).
+
+Credentials are the PLATFORM account's (boto3 default chain / PLATFORM_AWS_PROFILE) — the
+user's account is never used to call the model. The IAM role needs Bedrock invoke access
+to the chosen model in BEDROCK_REGION.
+
+Refusals: server-side ``fallbacks`` do not exist on Bedrock, so the SDK's client-side
+``BetaRefusalFallbackMiddleware`` retries a declined request on BEDROCK_FALLBACK_MODEL
+(empty = off). A request declined by every model becomes an LLMError.
 """
 
-from app.aws.registry import ToolSpec
+from anthropic import AsyncAnthropicBedrockMantle, BetaRefusalFallbackMiddleware
+
 from app.config import get_settings
-from app.llm.base import LLMError, LLMMessage, LLMResponse
+from app.llm.base import LLMError
+from app.llm.claude import ClaudeMessagesProvider
 
 
-class BedrockProvider:
-    name = "bedrock"
-
+class BedrockProvider(ClaudeMessagesProvider):
     def __init__(self) -> None:
         settings = get_settings()
+        region = settings.bedrock_region or settings.dynamodb_region
         if not settings.bedrock_model_id:
             raise LLMError("BEDROCK_MODEL_ID is not set")
-        self.model_id = settings.bedrock_model_id
-        self.region = settings.bedrock_region or None
-
-    async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
-        raise NotImplementedError("TODO: implement BedrockProvider.chat (see module docstring)")
+        if not region:
+            raise LLMError("BEDROCK_REGION is not set")
+        middleware = (
+            [BetaRefusalFallbackMiddleware([{"model": settings.bedrock_fallback_model}])]
+            if settings.bedrock_fallback_model
+            else None
+        )
+        client = AsyncAnthropicBedrockMantle(
+            aws_region=region,
+            aws_profile=settings.platform_aws_profile or None,
+            middleware=middleware,
+        )
+        super().__init__(
+            name="bedrock",
+            client=client,
+            model=settings.bedrock_model_id,
+            effort=settings.llm_effort,
+            max_tokens=settings.llm_max_tokens,
+        )

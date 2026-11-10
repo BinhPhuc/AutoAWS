@@ -25,6 +25,17 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
         "[PRIVATE_KEY]",
     ),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[EMAIL]"),
+    # Phone numbers: Vietnamese (0912345678, 0912 345 678, 024 3826 1234, +84 912 345 678)
+    # and international (+<cc> grouped digits). Digits glued to other digits, dots or
+    # dashes (IPs, 12-digit account ids, i-0abc...) never match.
+    (
+        re.compile(
+            r"(?<![\w.+-])(?:0\d{9}|0\d{3}[ -]\d{3}[ -]\d{3}|0\d{2}[ -]\d{3}[ -]\d{4}"
+            r"|0\d{2}[ -]\d{4}[ -]\d{4}|\+84[ -]?\d{2,3}[ -]?\d{3}[ -]?\d{3,4})(?![\w.-])"
+        ),
+        "[PHONE]",
+    ),
+    (re.compile(r"(?<![\w.+-])\+\d{1,3}(?:[ -]?\d{2,4}){2,5}(?![\w.-])"), "[PHONE]"),
 ]
 
 _SECRET_KEYS = {

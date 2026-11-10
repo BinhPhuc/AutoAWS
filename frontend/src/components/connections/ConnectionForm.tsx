@@ -81,7 +81,14 @@ export function ConnectionForm({ onCreated }: Props) {
         <CloudFormationSnippet connectionId={created.id} />
         <div className="flex justify-end gap-2">
           <Button
-            onClick={() => verify.mutate(created.id, { onSuccess: () => onCreated(created) })}
+            onClick={() =>
+              // Stay on this step when verify fails (e.g. the stack is not created yet).
+              verify.mutate(created.id, {
+                onSuccess: ({ data }) => {
+                  if (data.status === 'connected') onCreated(created)
+                },
+              })
+            }
             disabled={verify.isPending}
           >
             {verify.isPending ? S.connections.verifying : S.connections.verify}
@@ -155,7 +162,9 @@ export function ConnectionForm({ onCreated }: Props) {
         </TabsContent>
 
         <TabsContent value="access_key" className="space-y-3 pt-1">
-          <p className="text-xs text-amber-700 dark:text-amber-300">{t.accessKeyNote}</p>
+          <p className="rounded-sm border border-warning-border bg-warning-bg px-2 py-1 text-xs text-warning">
+            {t.accessKeyNote}
+          </p>
           <Field label={t.accessKeyId} error={errors.accessKeyId} htmlFor="conn-akid">
             <Input
               id="conn-akid"

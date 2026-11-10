@@ -1,15 +1,16 @@
 """MockProvider — lets the whole pipeline run end-to-end without any LLM key.
 
 Turn 1: pick tools from keywords in the user's question.
-Turn 2: once tool results are in the conversation, build a DiagnosisAnswer that simply
-lists what was read. It does not reason; its job is to exercise the UI, the tool layer
-and the streaming path. Replace via LLM_PROVIDER=anthropic|bedrock once implemented.
+Turn 2: once tool results are in the conversation, call submit_diagnosis with an answer
+that simply lists what was read. It does not reason; its job is to exercise the UI, the
+tool layer, evidence checks and the streaming path. Use LLM_PROVIDER=bedrock for real
+diagnoses.
 """
 
 import json
 import re
 
-from app.agent.schemas import DiagnosisAnswer, Evidence, Unverified
+from app.agent.schemas import SUBMIT_TOOL_NAME, DiagnosisAnswer, Evidence, RootCause, Unverified
 from app.aws.registry import ToolSpec
 from app.llm.base import LLMMessage, LLMResponse, ToolCallRequest
 
@@ -41,7 +42,13 @@ _RULES: list[tuple[str, list[tuple[str, dict]]]] = [
             ("route53_list_records", {}),
             ("describe_instances", {}),
             ("describe_security_groups", {}),
+            ("describe_addresses", {}),
         ],
+    ),
+    (r"\blogs?\b|exception|stack ?trace|lỗi 500", [("logs_describe_log_groups", {})]),
+    (
+        r"từ (sáng|chiều|tối|hôm)|tự nhiên|đột nhiên|sau khi|suddenly|\bsince\b",
+        [("cloudtrail_lookup_events", {})],
     ),
 ]
 
@@ -55,11 +62,14 @@ _DOMAIN_RE = re.compile(r"\b((?:[a-z0-9-]+\.)+[a-z]{2,})\b", re.I)
 
 class MockProvider:
     name = "mock"
+    enforce_time_limit = True
 
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
         tool_results = [m for m in messages if m.role == "tool"]
         if tool_results:
-            return LLMResponse(text=self._answer(tool_results, tools), stop_reason="end_turn")
+            answer = self._answer(tool_results, tools)
+            call = ToolCallRequest(id="mock_submit", name=SUBMIT_TOOL_NAME, input=answer)
+            return LLMResponse(tool_calls=[call], stop_reason="tool_use")
 
         question = next((m.content for m in reversed(messages) if m.role == "user"), "")
         calls = self._plan(question, tools)
@@ -96,7 +106,7 @@ class MockProvider:
 
     # -- turn 2 ---------------------------------------------------------------
 
-    def _answer(self, tool_results: list[LLMMessage], tools: list[ToolSpec]) -> str:
+    def _answer(self, tool_results: list[LLMMessage], tools: list[ToolSpec]) -> dict:
         labels = {t.name: t.label for t in tools}
         evidence: list[Evidence] = []
         unverified: list[Unverified] = []
@@ -116,16 +126,24 @@ class MockProvider:
                 continue
             evidence.append(
                 Evidence(
-                    text=f"{labels.get(name, name)}: {_describe(data)}", source=name, verified=True
+                    text=f"{labels.get(name, name)}: {_describe(data)}",
+                    source=name,
+                    resource_id=_first_resource_id(data),
+                    verified=True,
                 )
             )
 
         answer = DiagnosisAnswer(
             summary="Đây là kết quả từ MockProvider: hệ thống đã đọc dữ liệu AWS thật nhưng "
             "chưa có mô hình ngôn ngữ để suy luận.",
-            cause="MockProvider — chưa cấu hình LLM, chỉ liệt kê bằng chứng chưa suy luận. "
-            "Đặt LLM_PROVIDER=anthropic hoặc bedrock trong backend/.env để nhận chẩn đoán thật.",
-            evidence=evidence,
+            root_causes=[
+                RootCause(
+                    statement="MockProvider — chưa cấu hình LLM, chỉ liệt kê bằng chứng chưa suy "
+                    "luận. Đặt LLM_PROVIDER=bedrock trong backend/.env để nhận chẩn đoán thật.",
+                    confidence="low",
+                    evidence=evidence,
+                )
+            ],
             fix_steps=[
                 "Cấu hình LLM provider thật trong backend/.env (xem docs/BACKEND_PLAN.md §4.3).",
                 "Xem lại các bằng chứng bên trên để tự đối chiếu theo đường đi kết nối: "
@@ -134,7 +152,7 @@ class MockProvider:
             unverified=unverified,
             confidence="low",
         )
-        return answer.model_dump_json()
+        return answer.model_dump(exclude={"limit_reached"}, exclude_none=True)
 
 
 def _describe(data: dict) -> str:
@@ -153,6 +171,15 @@ def _describe(data: dict) -> str:
         elif isinstance(value, str | int | float | bool):
             parts.append(f"{key}={value}")
     return "; ".join(parts)[:300] or "không có dữ liệu"
+
+
+def _first_resource_id(data: dict) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    for value in data.values():
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            return _first_id(value[0])
+    return None
 
 
 def _first_id(item: dict) -> str | None:

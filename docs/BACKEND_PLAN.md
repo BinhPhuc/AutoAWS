@@ -203,7 +203,7 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 - Tool M3: `cloudwatch_get_metric_data`, `logs_insights_query` (giới hạn khung thời gian, lọc mức lỗi, tóm tắt), `cloudtrail_lookup_events`.
 - Checklist runner (parser → chạy từng mục → lưu từng mục).
 - Auth (Cognito JWT) — middleware FastAPI `Depends(current_user)`; mọi bảng thêm `user_id`.
-- Lưu trữ DynamoDB + KMS; đóng gói `api-handler` / `agent-worker` lên Lambda (Mangum); Step Functions cho checklist.
+- ~~Lưu trữ DynamoDB + KMS~~ — **đã làm (2026-10-27)**: `STORAGE_BACKEND=dynamodb`, xem `backend/README.md` mục Lưu trữ. Còn lại: mã hoá cấp trường cho secret, đóng gói `api-handler` / `agent-worker` lên Lambda (Mangum); Step Functions cho checklist.
 - Giới hạn chi phí: cache kết quả tool theo (connection, tool, input) trong phiên; đếm token.
 
 ## 7. Quy tắc bắt buộc (cho mọi người/agent sửa backend)

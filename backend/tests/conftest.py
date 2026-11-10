@@ -10,6 +10,8 @@ os.environ.setdefault("LLM_PROVIDER", "mock")
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-southeast-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
+# moto ignores DryRun on some EC2 writes (it would apply the change): tested separately
+os.environ.setdefault("REMEDIATION_DRY_RUN", "false")
 
 REGION = "ap-southeast-1"
 FAKE_KEY = "AKIAIOSFODNN7EXAMPLE"
@@ -68,3 +70,34 @@ def connection(client, aws):
     v = client.post(f"/api/connections/{conn['id']}/verify").json()
     assert v["data"]["status"] == "connected", v
     return conn
+
+
+@pytest.fixture(params=["sqlite", "dynamodb"])
+def store(request, app, aws):
+    """A Store of each backend: SQLite (test DB) and DynamoDB (moto, fresh table per test)."""
+    if request.param == "sqlite":
+        from sqlmodel import Session
+
+        from app.storage.db import get_engine, init_db
+        from app.storage.sql import SqlStore
+
+        init_db()
+        with Session(get_engine()) as session:
+            yield SqlStore(session)
+    else:
+        from app.storage.dynamo import DynamoStore, ensure_table
+
+        client = aws.client("dynamodb")
+        ensure_table(client, "autoaws-test")
+        yield DynamoStore(client, "autoaws-test")
+
+
+def ask(client, conv_id: str, content: str) -> tuple[dict, list[tuple[str, dict]]]:
+    """Start a diagnosis job and return (job, [(event type, data), ...]).
+
+    RUNTIME=local runs the job as a BackgroundTask; TestClient returns the POST response
+    only after background tasks finished, so the job is already done here."""
+    r = client.post(f"/api/conversations/{conv_id}/messages", json={"content": content})
+    assert r.status_code == 202, r.text
+    job = client.get(f"/api/jobs/{r.json()['data']['id']}").json()["data"]
+    return job, [(e["type"], e["data"]) for e in job["events"]]

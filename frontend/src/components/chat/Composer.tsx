@@ -40,47 +40,49 @@ export function Composer({
 
   return (
     <form
-      className="flex items-end gap-2 border-t bg-background p-3"
+      className="shrink-0 border-t bg-card px-4 py-3"
       onSubmit={(e) => {
         e.preventDefault()
         submit()
       }}
     >
-      <Textarea
-        ref={ref}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            submit()
-          }
-        }}
-        placeholder={S.chat.composerPlaceholder}
-        rows={2}
-        disabled={disabled || streaming}
-        className="max-h-40 min-h-10 resize-none"
-      />
-      {streaming ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          aria-label={S.chat.stop}
-          onClick={onStop}
-        >
-          <Square />
-        </Button>
-      ) : (
-        <Button
-          type="submit"
-          size="icon"
-          aria-label={S.chat.send}
-          disabled={disabled || !value.trim()}
-        >
-          <SendHorizontal />
-        </Button>
-      )}
+      <div className="mx-auto flex w-full max-w-5xl items-end gap-2">
+        <Textarea
+          ref={ref}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              submit()
+            }
+          }}
+          placeholder={S.chat.composerPlaceholder}
+          rows={2}
+          disabled={disabled || streaming}
+          className="max-h-40 min-h-10 resize-none bg-background"
+        />
+        {streaming ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label={S.chat.stop}
+            onClick={onStop}
+          >
+            <Square />
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            aria-label={S.chat.send}
+            disabled={disabled || !value.trim()}
+          >
+            <SendHorizontal />
+          </Button>
+        )}
+      </div>
     </form>
   )
 }

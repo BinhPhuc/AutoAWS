@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  AutoAWS test scenario KB7 (dev only). orders-api v2.4.3 runs fine and ships its log to
+  CloudWatch Logs. Fault (scenario.py fault kb7): "deploy" v2.5.0 through SSM Run Command;
+  v2.5.0 connects to a database host that does not answer, so every API request returns 500
+  and the log shows the stack trace.
+
+Parameters:
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.70.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: autoaws-kb7-vpc }]
+  Igw:
+    Type: AWS::EC2::InternetGateway
+  IgwAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref Igw }
+  PublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttach
+    Properties: { RouteTableId: !Ref PublicRt, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref Igw }
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.70.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+  SubnetRt:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref Subnet, RouteTableId: !Ref PublicRt }
+  Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "orders-api: HTTP from anywhere"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+      Tags: [{ Key: Name, Value: autoaws-kb7-orders-sg }]
+  AppLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /demo/kb7-orders-api, RetentionInDays: 3 }
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref InstanceRole] }
+  Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: [DefaultRoute, SubnetRt]
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref Sg]
+      IamInstanceProfile: !Ref InstanceProfile
+      Tags: [{ Key: Name, Value: orders-api }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -eux
+          dnf install -y amazon-cloudwatch-agent
+          mkdir -p /opt/app
+          cat > /opt/app/server.py <<'PY'
+          #@include ../../demo-apps/orders_api.py
+          PY
+          echo 2.4.3 > /opt/app/VERSION
+          cat > /etc/systemd/system/app.service <<'UNIT'
+          [Unit]
+          Description=orders-api
+          After=network-online.target
+          [Service]
+          ExecStart=/usr/bin/python3 /opt/app/server.py
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now app
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/agent.json <<'CW'
+          {"logs": {"logs_collected": {"files": {"collect_list": [
+            {"file_path": "/var/log/app.log", "log_group_name": "${AppLogs}",
+             "log_stream_name": "{instance_id}"}]}}}}
+          CW
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config \
+            -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/agent.json
+
+Outputs:
+  InstanceId: { Value: !Ref Instance }
+  LogGroup: { Value: !Ref AppLogs }

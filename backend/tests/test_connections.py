@@ -32,7 +32,15 @@ def test_create_and_verify_access_key(client, aws):
     assert got["last_verified_at"] is not None
 
 
-def test_verify_failure_marks_failed(client):
+def test_verify_failure_marks_failed(client, monkeypatch):
+    from app import worker
+    from app.aws.credentials import CredentialError
+
+    def rejected(_session):
+        raise CredentialError("InvalidClientTokenId: The security token included is invalid")
+
+    # No network: simulate AWS rejecting the credentials.
+    monkeypatch.setattr(worker, "verify_session", rejected)
     r = client.post(
         "/api/connections",
         json={
@@ -44,7 +52,6 @@ def test_verify_failure_marks_failed(client):
         },
     )
     conn_id = r.json()["data"]["id"]
-    # No moto here -> real botocore call fails on bad credentials / no network.
     v = client.post(f"/api/connections/{conn_id}/verify").json()
     assert v["status_code"] == 200
     assert v["data"]["status"] == "failed"
@@ -72,9 +79,24 @@ def test_role_connection_cloudformation(client, aws):
     assert "sts:ExternalId" in yaml
     assert "ec2:DescribeRouteTables" in yaml
     assert "Effect: Deny" in yaml and "s3:GetObject*" in yaml
-    # never grant a write action
-    for verb in ("Create", "Delete", "Modify", "Put", "Terminate"):
-        assert f":{verb}" not in yaml
+    # The read-only role never gets a write action ...
+    read_part, remediation_part = yaml.split("  AutoAWSRemediationRole:", 1)
+    for verb in ("Create", "Delete", "Modify", "Put", "Terminate", "Associate", "Authorize"):
+        assert f":{verb}" not in read_part
+    # ... writes live only in the optional remediation role (off by default), exactly the
+    # catalogue's actions, plus an explicit Deny of IAM / stop / terminate.
+    from app.aws.remediation.catalog import all_write_actions
+
+    assert "Default: 'false'" in yaml and "Condition: RemediationEnabled" in remediation_part
+    import re
+
+    granted = set(
+        re.findall(
+            r"^\s+- ([a-z0-9-]+:[A-Za-z]+)$", remediation_part.split("DenyDangerous")[0], re.M
+        )
+    )
+    assert granted == set(all_write_actions())
+    assert "iam:*" in remediation_part and "ec2:TerminateInstances" in remediation_part
 
 
 def test_cloudformation_rejected_for_access_key(client, connection):
