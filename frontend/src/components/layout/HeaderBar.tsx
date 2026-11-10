@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, Menu, Moon, Sun } from 'lucide-react'
 import { healthApi } from '@/api/tools'
+import { UserMenu } from '@/components/auth/UserMenu'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -17,7 +18,6 @@ import { useConversation } from '@/hooks/useConversations'
 import { useTheme } from '@/lib/theme'
 import { S } from '@/lib/strings'
 import { navItems } from '@/lib/nav'
-import { SignOutButton } from '@/lib/auth'
 
 /** Top bar: menu (mobile) · breadcrumb · backend/LLM status · active connection · theme. */
 export function HeaderBar({ onMenu }: { onMenu: () => void }) {
@@ -37,7 +37,6 @@ export function HeaderBar({ onMenu }: { onMenu: () => void }) {
       <div className="ml-auto flex items-center gap-2">
         <SystemStatus />
         <ConnectionSwitcher />
-        <SignOutButton />
         <Button
           variant="ghost"
           size="icon-sm"
@@ -47,6 +46,7 @@ export function HeaderBar({ onMenu }: { onMenu: () => void }) {
           <Sun className="dark:hidden" />
           <Moon className="hidden dark:block" />
         </Button>
+        <UserMenu />
       </div>
     </header>
   )

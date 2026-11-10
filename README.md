@@ -14,7 +14,7 @@ Người dùng kết nối tài khoản AWS của mình bằng **quyền chỉ �
 | **Chẩn đoán qua hỏi đáp** | ✅ 19 công cụ đọc (EC2, SSM, VPC, Route 53, DNS công khai, ELB, CloudWatch metrics/alarms, Logs Insights, CloudTrail); câu trả lời nhiều nguyên nhân gốc, server tự kiểm từng bằng chứng; giới hạn vòng / thời gian / token; chống prompt injection qua dữ liệu |
 | **Khắc phục có phê duyệt** (human-in-the-loop) | ✅ 6 hành động cố định (Bảng 2.11), xem trước → Duyệt / Từ chối / Góp ý → kiểm tra lại → thực thi bằng role riêng → kiểm chứng → đề xuất hoàn tác |
 | Kiểm tra theo checklist | ⏳ chưa làm |
-| Đăng nhập (Cognito) | ✅ Hosted UI + PKCE, JWT, cách ly dữ liệu theo `user_id`; xem [cấu hình](docs/AUTH.md) |
+| Đăng nhập (Cognito) | ✅ Hosted UI + PKCE, JWT authorizer trên API Gateway, dữ liệu tách theo từng người dùng (`AUTH_MODE=cognito`); local mặc định `AUTH_MODE=none` (1 người dùng) — chưa chạy với Cognito thật |
 
 ## Kiến trúc
 
@@ -48,7 +48,7 @@ Agent-worker (thành phần duy nhất nói chuyện với LLM) **không bao gi�
 
 - Chạy end-to-end trên máy với LLM giả lập (`LLM_PROVIDER=mock`), hoặc một MCP client đóng vai LLM (`LLM_PROVIDER=mcp`), dữ liệu AWS từ LocalStack.
 - `BedrockProvider` (Claude qua Bedrock Mantle) và hạ tầng CDK **đã viết, chưa chạy trên AWS thật** (chưa có tài khoản).
-- Kiểm thử: 209 test backend (moto), 7 test frontend, 7 test CDK. Chi tiết ở [`AGENTS.md`](AGENTS.md) mục "Trạng thái hiện tại".
+- Kiểm thử sau hợp nhất DynamoDB và auth: 235 test backend (moto), 16 test frontend, 11 test CDK. Chi tiết ở [`AGENTS.md`](AGENTS.md) mục "Trạng thái hiện tại".
 
 ## Kịch bản kiểm thử
 
@@ -110,7 +110,8 @@ Chi tiết: [`infra/localstack/README.md`](infra/localstack/README.md), [`infra/
 # 1. Backend
 cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]" && cp .env.example .env
-# Tạo bảng theo infra/cloudformation/README.md rồi điền DYNAMODB_TABLE, DYNAMODB_REGION trong .env
+# Tạo bảng theo infra/cloudformation/README.md rồi điền DYNAMODB_TABLE, DYNAMODB_REGION
+# Hoặc chỉ khi dev local: STORAGE_BACKEND=sqlite và DB_PATH=./autoaws.db trong .env
 uvicorn app.main:app --reload          # http://localhost:8000/docs
 
 # 2. Frontend (terminal khác)
@@ -122,13 +123,158 @@ cd frontend && pnpm install && cp .env.example .env && pnpm dev   # http://local
 Mở http://localhost:5173 → **Connections** → Add connection (Access Key cho dev, hoặc IAM Role + template CloudFormation) → Verify → **Diagnose** → mô tả sự cố. Đề xuất sửa (nếu có) hiện ngay trong câu trả lời và ở trang **Proposals**; với Access Key cần bật `REMEDIATION_ALLOW_ACCESS_KEYS=true` (chỉ dev).
 Không có backend? `VITE_USE_MOCK=true pnpm dev` chạy với dữ liệu giả lập.
 Không có AWS / Bedrock? Xem `infra/localstack/README.md`: dựng kịch bản trong LocalStack và để một MCP client (ví dụ Claude Code) đóng vai LLM qua `LLM_PROVIDER=mcp`.
-Triển khai backend trên EC2 + frontend trên S3/CloudFront: dùng
-`docker compose -f docker-compose.backend.yml up -d --build` cho backend; xem
-[`backend/README.md`](backend/README.md#deploy-backend-trên-ec2) và
-[`frontend/README.md`](frontend/README.md#build-riêng-để-deploy-s3cloudfront).
-Template DynamoDB độc lập: [`infra/cloudformation/dynamodb.yaml`](infra/cloudformation/dynamodb.yaml),
-cách tạo bảng và cấu hình backend: [`infra/cloudformation/README.md`](infra/cloudformation/README.md).
-Triển khai serverless lên AWS: [`infra/cdk/README.md`](infra/cdk/README.md) (`./build_lambda.sh` rồi `cdk deploy --all`).
+Triển khai lên AWS: xem mục [Triển khai lên AWS](#triển-khai-lên-aws) ngay dưới.
+
+## Triển khai lên AWS
+
+Dựng toàn bộ nền tảng serverless (CloudFront + S3, API Gateway, 3 Lambda, Step Functions, DynamoDB, Cognito, SNS, alarm, Budget) bằng CDK trong [`infra/cdk/`](infra/cdk/README.md). Chi tiết từng stack và quyền IAM: xem README đó.
+> **Trạng thái:** đã `cdk synth`, cfn-lint và test, **chưa deploy lần nào** (nhóm chưa có tài khoản). Lần chạy đầu nên làm ở `envName=dev` và ghi lại lỗi gặp phải vào đây.
+
+### Backend EC2 + DynamoDB, frontend S3/CloudFront
+
+Dùng `docker compose -f docker-compose.backend.yml up -d --build` cho backend.
+Template DynamoDB độc lập: [`infra/cloudformation/dynamodb.yaml`](infra/cloudformation/dynamodb.yaml);
+cách tạo bảng và cấu hình: [`infra/cloudformation/README.md`](infra/cloudformation/README.md).
+Xem [`backend/README.md`](backend/README.md#deploy-backend-trên-ec2) và
+[`frontend/README.md`](frontend/README.md#build-riêng-để-deploy-s3cloudfront) để build frontend riêng.
+Backend mặc định dùng DynamoDB và kiểm tra bảng đã tạo khi khởi động; SQLite chỉ bật tường minh cho local/test.
+Auth giữ nguyên từ `main`: khi deploy EC2, bật `AUTH_MODE=cognito` và điền
+`COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` từ stack Auth.
+
+### 0. Cần chuẩn bị
+
+| Cần | Ghi chú |
+|---|---|
+| Tài khoản AWS **nền tảng** | Nơi chạy AutoAWS. Tài khoản cần chẩn đoán (của "khách") là tài khoản khác, hoặc chính nó khi demo |
+| AWS CLI v2 + quyền admin trên tài khoản nền tảng | `aws configure sso` hoặc `aws configure --profile autoaws-platform`; kiểm tra: `aws sts get-caller-identity --profile autoaws-platform` |
+| Node 20+ (để chạy `npx aws-cdk@2`), pnpm (`corepack enable`) | Không cần Docker |
+| Python ≥ 3.12 với `backend/.venv` đã cài | `build_lambda.sh` dùng nó để tải thư viện cho Lambda (Python 3.12, x86_64) |
+| Quyền dùng model Claude trên **Amazon Bedrock** ở region đã chọn | Lần đầu dùng model Anthropic phải gửi biểu mẫu use case trong console Bedrock. Model mặc định `anthropic.claude-opus-5-5` (dự phòng `anthropic.claude-opus-4-8`; đổi bằng `bedrockModelId` / `bedrockFallbackModel` trong `cdk.json`) |
+
+Chọn region có Claude trên Bedrock (ví dụ `ap-southeast-1`). Mọi lệnh dưới dùng:
+```bash
+export AWS_PROFILE=autoaws-platform AWS_REGION=ap-southeast-1
+```
+
+### 1. Ghi cấu hình vào `infra/cdk/cdk.json`
+
+Ghi luôn vào `cdk.json` thay vì truyền `-c` mỗi lần: một lần `deploy` quên `-c notificationEmail=…` sẽ **gỡ** đăng ký email. File là JSON thuần (không viết comment vào):
+```json
+{
+  "app": ".venv/bin/python app.py",
+  "context": {
+    "envName": "dev",
+    "notificationEmail": "nhom16@example.com",
+    "alarmEmail": "nhom16@example.com",
+    "budgetUsd": 20,
+    "frontendUrl": "",
+    "selfSignUp": true,
+    "authDomainPrefix": ""
+  }
+}
+```
+(giữ nguyên các khoá khác đang có trong file: `bedrockModelId`, `llmEffort`, `agentConcurrency`…)
+
+| Khoá | Ý nghĩa |
+|---|---|
+| `envName` | Tiền tố stack `AutoAws-<envName>-…`. `dev`: `destroy` xoá luôn bảng DynamoDB và user pool, cho phép đăng nhập từ `http://localhost:5173`. `demo`: giữ dữ liệu |
+| `notificationEmail` | Email báo đề xuất chờ duyệt / kết quả sửa (SNS) |
+| `alarmEmail` | Alarm Lambda / Step Functions và cảnh báo Budget |
+| `budgetUsd` | Ngưỡng cảnh báo chi phí mỗi tháng |
+| `frontendUrl` | URL CloudFront: để trống lần đầu, điền ở bước 4 |
+| `selfSignUp` | `true`: ai cũng tự đăng ký trên trang đăng nhập. `false`: admin tạo người dùng |
+| `authDomainPrefix` | Tiền tố domain trang đăng nhập Cognito. Trống = `autodiag-<env>-<account>`; không được chứa `aws`, `amazon`, `cognito` |
+
+### 2. Build mã nguồn
+
+```bash
+cd infra/cdk
+python3 -m venv .venv && .venv/bin/pip install "aws-cdk-lib>=2.200,<3" "constructs>=10" pytest
+./build_lambda.sh                                  # backend/app + thư viện → build/lambda (cần mạng)
+
+cd ../../frontend && pnpm install
+VITE_USE_MOCK=false VITE_API_URL= pnpm build       # → frontend/dist; KHÔNG để mock lọt vào bản build
+cd ../infra/cdk
+```
+`frontend/dist` phải có **trước** khi deploy, nếu không stack Frontend chỉ dựng CloudFront mà không có giao diện. `VITE_API_URL` để trống: giao diện gọi `/api` cùng domain CloudFront.
+
+### 3. Bootstrap và deploy lần đầu
+
+```bash
+npx aws-cdk@2 bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/$AWS_REGION   # 1 lần / tài khoản / region
+npx aws-cdk@2 deploy --all            # khoảng 10–15 phút (CloudFront lâu nhất); xác nhận thay đổi IAM khi được hỏi
+```
+Lưu lại các output in ra cuối lệnh:
+
+| Output | Dùng để |
+|---|---|
+| `AutoAws-dev-Frontend.Url` | Địa chỉ web, dạng `https://dxxxx.cloudfront.net` |
+| `AutoAws-dev-Auth.HostedUiUrl`, `UserPoolId`, `WebClientId` | Trang đăng nhập Cognito; chạy backend local với Cognito thật (bước 7) |
+| `AutoAws-dev-Api.ApiUrl` | URL gốc của API Gateway (thường không cần: web gọi qua CloudFront) |
+
+Mở hộp thư `notificationEmail` / `alarmEmail` và bấm **Confirm subscription** của SNS (nếu không sẽ không nhận được email).
+
+### 4. Deploy lần hai với URL CloudFront (bắt buộc)
+
+Trang đăng nhập Cognito chỉ chuyển về các URL đã khai báo, mà URL CloudFront chỉ có sau lần deploy đầu. Ghi output `Frontend.Url` vào `cdk.json` (`"frontendUrl": "https://dxxxx.cloudfront.net"`, không có `/` cuối) rồi:
+```bash
+npx aws-cdk@2 deploy --all            # cập nhật callback Cognito, CORS, link trong email
+```
+
+### 5. Kiểm tra
+
+```bash
+URL=https://dxxxx.cloudfront.net
+curl -s $URL/api/health          # 200 {"status":"ok", ...} (llm_provider hiện "mock": api-handler không gọi model, agent-worker mới gọi Bedrock)
+curl -s $URL/api/auth/config     # 200 {"mode":"cognito", "domain": "...", "client_id": "..."}
+curl -s $URL/api/connections     # 401 UNAUTHORIZED — đúng: chưa đăng nhập
+```
+Mở `$URL` → **Sign in** → trang Cognito → **Sign up** (email + mật khẩu ≥ 12 ký tự, có chữ hoa, chữ thường, số) → nhập mã xác nhận gửi về email → quay lại AutoAWS.
+Tắt tự đăng ký (`"selfSignUp": false`) thì admin tạo người dùng:
+```bash
+aws cognito-idp admin-create-user --user-pool-id <UserPoolId> --username minh@example.com \
+  --user-attributes Name=email,Value=minh@example.com Name=email_verified,Value=true
+```
+Mỗi người dùng chỉ thấy kết nối, hội thoại và đề xuất của chính mình.
+
+### 6. Kết nối tài khoản AWS cần chẩn đoán
+
+1. Trên web: **Connections** → **Add connection** → tab **IAM Role**, Role ARN = `arn:aws:iam::<ID tài khoản khách>:role/AutoAWSReadOnly`, chọn region → Save.
+2. Màn tiếp theo hiện template CloudFormation đã điền sẵn ExternalId (do server sinh) và trust chỉ tới role `autoaws-agent-worker` / `autoaws-action-executor` của tài khoản nền tảng. Bấm **Copy template**, lưu thành file (ví dụ `autoaws-readonly.yaml`), đăng nhập **tài khoản khách** → CloudFormation → Create stack → Upload a template file. Muốn cho phép sửa lỗi có duyệt: đặt `EnableRemediation=true`.
+3. Stack xong → quay lại web bấm **Verify** → `Connected`. Nếu bật sửa lỗi: dán output `RemediationRoleArn` vào ô Remediation role của kết nối.
+4. **Diagnose** → mô tả sự cố. Muốn có sẵn sự cố để thử: [`infra/aws-scenarios/`](infra/aws-scenarios/README.md) dựng KB1–KB7 trong tài khoản test.
+
+### 7. Cập nhật, chạy thử local với Cognito thật, gỡ bỏ
+
+```bash
+# Sửa backend → build lại Lambda rồi deploy (chỉ các stack có Lambda cũng được)
+./build_lambda.sh && npx aws-cdk@2 deploy AutoAws-dev-Agent AutoAws-dev-Api
+# Sửa giao diện → build lại rồi deploy stack Frontend (tự xoá cache CloudFront)
+(cd ../../frontend && VITE_USE_MOCK=false VITE_API_URL= pnpm build) && npx aws-cdk@2 deploy AutoAws-dev-Frontend
+
+# Backend chạy trên máy nhưng đăng nhập bằng Cognito đã deploy (envName=dev cho phép callback localhost:5173)
+#   backend/.env: AUTH_MODE=cognito  COGNITO_USER_POOL_ID=<UserPoolId>  COGNITO_CLIENT_ID=<WebClientId>  COGNITO_DOMAIN=<HostedUiUrl>
+
+# Gỡ toàn bộ (dev: xoá luôn bảng DynamoDB và user pool; demo giữ lại, phải xoá tay)
+npx aws-cdk@2 destroy --all
+```
+
+### Chi phí
+
+Budget cảnh báo ở `budgetUsd` (mặc định 20 USD/tháng, gửi `alarmEmail`). Ở quy mô đồ án, gần như mọi thứ nằm trong free tier: Lambda, API Gateway, DynamoDB on-demand, Step Functions, SNS email, Cognito Lite. Phần trả phí đáng kể duy nhất là **token Bedrock** (Claude Opus): mỗi lượt chẩn đoán vài chục nghìn token. Giảm bằng `llmEffort` (`medium`) hoặc giới hạn `agentConcurrency`. Không có NAT Gateway, Route 53 hay EC2 trong tài khoản nền tảng. Các kịch bản trong `infra/aws-scenarios/` tạo EC2/ALB/NAT ở **tài khoản test**: nhớ xoá sau khi thử.
+
+### Lỗi hay gặp
+
+| Triệu chứng | Nguyên nhân → cách sửa |
+|---|---|
+| `Lambda asset … not found: run infra/cdk/build_lambda.sh first` | Chưa build Lambda → chạy `./build_lambda.sh` |
+| `Set the target Region` | Thiếu `AWS_REGION` / profile không có region |
+| `Domain already exists` khi tạo `AutoAws-dev-Auth` | Tiền tố domain Cognito đã có người dùng → đặt `authDomainPrefix` khác |
+| Trang Cognito báo `redirect_mismatch` | Chưa làm bước 4 (deploy lại với `frontendUrl`), hoặc `frontendUrl` có `/` cuối / sai domain |
+| Web hiện dữ liệu giả, không gọi backend | Build với `VITE_USE_MOCK=true` (file `frontend/.env`) → build lại với `VITE_USE_MOCK=false` |
+| Chẩn đoán lỗi `LLM_UNAVAILABLE`, log agent-worker (CloudWatch Logs) có `AccessDenied` từ Bedrock | Tài khoản chưa được dùng model Claude ở region này → gửi biểu mẫu use case Anthropic trong console Bedrock, hoặc chọn region / model khác |
+| Verify kết nối báo `AWS_AUTH_FAILED` | Stack của khách chưa xong, sai Role ARN, hoặc template cũ (ExternalId khác) → copy lại template từ web và cập nhật stack |
+| Không nhận email đề xuất / alarm | Chưa bấm Confirm subscription, hoặc lần deploy sau không còn `notificationEmail` / `alarmEmail` → ghi vào `cdk.json` |
 
 ## Nhóm
 

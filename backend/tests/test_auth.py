@@ -1,7 +1,7 @@
-"""Real RSA JWT verification and tenant isolation on both storage backends."""
+"""Sign-in and per-user data (docs/API_CONTRACT.md §0.1)."""
 
 import time
-from types import SimpleNamespace
+import uuid
 
 import jwt
 import pytest
@@ -9,308 +9,265 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app import auth
-from app.config import Settings, get_settings
-from app.storage import store as storage
-from app.storage.dynamo import DynamoStore, ensure_table
-from app.storage.models import Connection, Conversation, Job, Message, Proposal, ToolCallRecord
-from app.storage.sql import SqlStore
-from tests.conftest import FAKE_KEY, FAKE_SECRET, REGION, ask
+from app.storage.models import Connection, Conversation, Job, Proposal
 
-ISSUER = "https://cognito-idp.ap-southeast-1.amazonaws.com/ap-southeast-1_Test"
+POOL = "ap-southeast-1_TestPool"
+ISSUER = f"https://cognito-idp.ap-southeast-1.amazonaws.com/{POOL}"
+CLIENT = "webclient123"
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-@pytest.fixture(scope="module")
-def signing_key():
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def token(sub: str = "user-a", key=KEY, **claims) -> str:
+    now = int(time.time())
+    body = {
+        "sub": sub,
+        "iss": ISSUER,
+        "client_id": CLIENT,
+        "token_use": "access",
+        "username": sub,
+        "iat": now,
+        "exp": now + 3600,
+        **claims,
+    }
+    return jwt.encode(body, key, algorithm="RS256")
+
+
+def bearer(sub: str = "user-a", **claims) -> dict:
+    return {"Authorization": f"Bearer {token(sub, **claims)}"}
 
 
 @pytest.fixture
-def tokens(monkeypatch, signing_key):
+def cognito(monkeypatch):
+    from app.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "auth_mode", "cognito")
+    monkeypatch.setattr(s, "cognito_user_pool_id", POOL)
+    monkeypatch.setattr(s, "cognito_client_id", CLIENT)
     monkeypatch.setattr(
-        auth,
-        "jwks_client",
-        lambda issuer: SimpleNamespace(
-            get_signing_key_from_jwt=lambda token: SimpleNamespace(key=signing_key.public_key())
-        ),
+        s, "cognito_domain", "https://autodiag-test.auth.ap-southeast-1.amazoncognito.com/"
     )
-
-    def issue(user_id="alice", **overrides):
-        claims = {
-            "sub": user_id,
-            "username": user_id,
-            "iss": ISSUER,
-            "iat": int(time.time()),
-            "exp": int(time.time()) + 600,
-            "client_id": "web-client",
-            "token_use": "access",
-            "scope": "openid email",
-            **overrides,
-        }
-        return jwt.encode(claims, signing_key, algorithm="RS256", headers={"kid": "test"})
-
-    return issue
+    monkeypatch.setattr(auth, "signing_key", lambda _t, _s: KEY.public_key())  # no JWKS fetch
+    return s
 
 
-@pytest.fixture(params=["sqlite", "dynamodb"])
-def authenticated_api(request, app, aws, monkeypatch, tokens):
-    settings = get_settings()
-    monkeypatch.setattr(settings, "auth_mode", "cognito")
-    monkeypatch.setattr(settings, "cognito_issuer", ISSUER)
-    monkeypatch.setattr(settings, "cognito_client_id", "web-client")
-    monkeypatch.setattr(
-        settings, "cognito_domain", "https://example.auth.ap-southeast-1.amazoncognito.com"
-    )
-    if request.param == "dynamodb":
-        ddb = aws.client("dynamodb")
-        ensure_table(ddb, "auth-test")
-        monkeypatch.setattr(settings, "storage_backend", "dynamodb")
-        monkeypatch.setattr(settings, "dynamodb_table", "auth-test")
-        monkeypatch.setattr(storage, "dynamodb_client", lambda: ddb)
-    with TestClient(app) as api:
-        yield api
+# ---- AUTH_MODE=none ----------------------------------------------------------------------
 
 
-def headers(tokens, user_id="alice", **claims):
-    return {"Authorization": f"Bearer {tokens(user_id, **claims)}"}
+def test_without_sign_in_everyone_is_the_local_user(client):
+    assert client.get("/api/auth/config").json()["data"]["mode"] == "none"
+    me = client.get("/api/me").json()["data"]
+    assert me == {"user_id": "local", "username": "local", "auth_mode": "none"}
 
 
-def test_public_config_and_protected_routes(authenticated_api, tokens):
-    api = authenticated_api
-    assert api.get("/api/health").status_code == 200
-    config = api.get("/api/auth/config").json()["data"]
-    assert config == {
+# ---- AUTH_MODE=cognito -------------------------------------------------------------------
+
+
+def test_public_routes_and_sign_in_settings(client, cognito):
+    assert client.get("/api/health").status_code == 200
+    cfg = client.get("/api/auth/config").json()["data"]
+    assert cfg == {
         "mode": "cognito",
-        "issuer": ISSUER,
-        "client_id": "web-client",
-        "domain": "https://example.auth.ap-southeast-1.amazoncognito.com",
+        "domain": "https://autodiag-test.auth.ap-southeast-1.amazoncognito.com",
+        "client_id": CLIENT,
+        "scopes": ["openid", "email", "profile"],
     }
-    for path in (
-        "/api/auth/me",
-        "/api/connections",
-        "/api/conversations",
-        "/api/proposals",
-        "/api/tools",
-        "/api/remediation/actions",
-        "/api/checklists",
-    ):
-        result = api.get(path, headers={"X-User-Id": "alice"})
-        assert result.status_code == 401
-        assert result.headers["WWW-Authenticate"] == "Bearer"
-        assert set(result.json()) == {"status_code", "message", "error", "path", "timestamp"}
-    assert api.get("/api/auth/me", headers=headers(tokens)).json()["data"]["user_id"] == "alice"
+
+
+@pytest.mark.parametrize("path", ["/api/me", "/api/connections", "/api/tools", "/api/proposals"])
+def test_every_other_route_needs_a_token(client, cognito, path):
+    r = client.get(path)
+    assert r.status_code == 401
+    body = r.json()
+    assert body["error"] == "UNAUTHORIZED" and body["message"] == "Sign in required"
+    assert "data" not in body
+
+
+def test_a_valid_access_token_identifies_the_user(client, cognito):
+    me = client.get("/api/me", headers=bearer("user-a")).json()["data"]
+    assert me == {"user_id": "user-a", "username": "user-a", "auth_mode": "cognito"}
 
 
 @pytest.mark.parametrize(
-    "claims",
+    "headers",
     [
-        {"exp": 1},
-        {"iss": "https://attacker.example"},
-        {"client_id": "another-app"},
-        {"token_use": "id"},
-        {"scope": "email"},
-        {"sub": "alice#CONN#"},
-        {"iat": 9999999999},
-        {"sub": ""},
+        {"Authorization": "Bearer not-a-jwt"},
+        {"Authorization": "Basic dXNlcjpwYXNz"},
+        {"Authorization": f"Bearer {token(key=OTHER_KEY)}"},  # not signed by the pool
+        bearer(exp=int(time.time()) - 600),  # expired
+        bearer(iss="https://cognito-idp.ap-southeast-1.amazonaws.com/other_pool"),
+        bearer(client_id="someone-elses-client"),
+        bearer(token_use="id"),  # ID tokens are not accepted by the API
     ],
+    ids=["garbage", "basic", "foreign-key", "expired", "issuer", "client", "id-token"],
 )
-def test_invalid_claims_are_rejected(client, monkeypatch, tokens, claims):
-    settings = get_settings()
-    monkeypatch.setattr(settings, "auth_mode", "cognito")
-    monkeypatch.setattr(settings, "cognito_issuer", ISSUER)
-    monkeypatch.setattr(settings, "cognito_client_id", "web-client")
-    assert client.get("/api/auth/me", headers=headers(tokens, **claims)).status_code == 401
+def test_bad_tokens_are_rejected(client, cognito, headers):
+    r = client.get("/api/me", headers=headers)
+    assert r.status_code == 401 and r.json()["error"] == "UNAUTHORIZED"
 
 
-def test_invalid_signature_and_jwks_outage(client, monkeypatch, tokens):
-    settings = get_settings()
-    monkeypatch.setattr(settings, "auth_mode", "cognito")
-    monkeypatch.setattr(settings, "cognito_issuer", ISSUER)
-    monkeypatch.setattr(settings, "cognito_client_id", "web-client")
-    valid = tokens()
-    forged = valid.rsplit(".", 1)[0] + "." + "A" * 342
-    assert (
-        client.get("/api/auth/me", headers={"Authorization": f"Bearer {forged}"}).status_code == 401
-    )
-    assert (
-        client.get("/api/auth/me", headers={"Authorization": "Bearer garbage"}).status_code == 401
-    )
+def test_behind_api_gateway_the_authorizer_claims_are_used(app, cognito):
+    """RUNTIME=lambda: Mangum passes the event; its claims were checked by the authorizer.
+    The same claim checks still run (a wrong client is refused)."""
 
-    def unavailable(token):
-        raise auth.PyJWKClientConnectionError("offline")
+    def with_claims(claims: dict):
+        async def asgi(scope, receive, send):
+            if scope["type"] == "http":
+                scope["aws.event"] = {"requestContext": {"authorizer": {"jwt": {"claims": claims}}}}
+            await app(scope, receive, send)
 
-    monkeypatch.setattr(
-        auth, "jwks_client", lambda issuer: SimpleNamespace(get_signing_key_from_jwt=unavailable)
-    )
-    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {valid}"})
-    assert response.status_code == 503 and response.json()["error"] == "AUTH_UNAVAILABLE"
+        return TestClient(asgi)
+
+    good = {"sub": "user-gw", "iss": ISSUER, "client_id": CLIENT, "token_use": "access"}
+    assert with_claims(good).get("/api/me").json()["data"]["user_id"] == "user-gw"
+    bad = {**good, "client_id": "other"}
+    assert with_claims(bad).get("/api/me").status_code == 401
 
 
-def test_tenants_cannot_read_or_mutate_each_other(authenticated_api, tokens):
-    api = authenticated_api
-    alice, bob = headers(tokens), headers(tokens, "bob")
-    conn = api.post(
+# ---- per-user data -----------------------------------------------------------------------
+
+
+@pytest.fixture
+def owned_by_a(client, cognito, aws):
+    """User A's connection, conversation, job and proposal (made through the API where
+    the API can make them)."""
+    from app.storage.store import open_store
+
+    a = f"user-a-{uuid.uuid4().hex[:8]}"  # the SQLite test DB is shared between tests
+
+    conn = client.post(
         "/api/connections",
-        headers=alice,
+        headers=bearer(a),
         json={
-            "name": "Private",
-            "type": "access_key",
-            "region": REGION,
-            "access_key_id": FAKE_KEY,
-            "secret_access_key": FAKE_SECRET,
-            "user_id": "bob",
+            "type": "role",
+            "name": "prod",
+            "region": "ap-southeast-1",
+            "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly",
+            "external_id": "autoaws-chosen-by-the-client",
         },
     ).json()["data"]
-    cid = conn["id"]
+    with open_store() as store:
+        c = store.get_connection(conn["id"])
+        c.status = "connected"
+        store.save_connection(c)
+    conv = client.post(
+        "/api/conversations", headers=bearer(a), json={"connection_id": conn["id"]}
+    ).json()["data"]
+    with open_store() as store:
+        job = store.create_job(Job(user_id=a, conversation_id=conv["id"])).id
+        prop = store.create_proposal(
+            Proposal(
+                user_id=a,
+                conversation_id=conv["id"],
+                connection_id=conn["id"],
+                action="authorize_sg_ingress",
+            )
+        ).id
+    return {"user": a, "conn": conn, "conv": conv, "job": job, "prop": prop}
+
+
+def test_the_server_picks_the_external_id(owned_by_a):
+    ext = owned_by_a["conn"]["external_id"]
+    assert ext != "autoaws-chosen-by-the-client"
+    assert ext.startswith("autoaws-") and len(ext) == len("autoaws-") + 24
+
+
+def test_the_owner_sees_their_data(client, owned_by_a):
+    h = bearer(owned_by_a["user"])
+    assert [c["id"] for c in client.get("/api/connections", headers=h).json()["data"]] == [
+        owned_by_a["conn"]["id"]
+    ]
+    convs = client.get("/api/conversations", headers=h).json()["data"]
+    assert [c["id"] for c in convs] == [owned_by_a["conv"]["id"]]
+    assert client.get(f"/api/jobs/{owned_by_a['job']}", headers=h).status_code == 200
+    props = client.get("/api/proposals", headers=h).json()["data"]
+    assert [p["id"] for p in props] == [owned_by_a["prop"]]
+
+
+def test_other_users_see_nothing_and_cannot_touch_it(client, owned_by_a):
+    h = bearer("user-b")
+    conn, conv = owned_by_a["conn"]["id"], owned_by_a["conv"]["id"]
+    job, prop = owned_by_a["job"], owned_by_a["prop"]
+    for path in ("/api/connections", "/api/conversations", "/api/proposals"):
+        assert client.get(path, headers=h).json()["data"] == [], path
+    assert client.get(f"/api/conversations?connection_id={conn}", headers=h).json()["data"] == []
+    assert client.get(f"/api/proposals?conversation_id={conv}", headers=h).json()["data"] == []
+    not_found = [
+        ("GET", f"/api/connections/{conn}", "CONNECTION_NOT_FOUND"),
+        ("GET", f"/api/connections/{conn}/cloudformation", "CONNECTION_NOT_FOUND"),
+        ("POST", f"/api/connections/{conn}/verify", "CONNECTION_NOT_FOUND"),
+        ("DELETE", f"/api/connections/{conn}", "CONNECTION_NOT_FOUND"),
+        ("GET", f"/api/conversations/{conv}", "CONVERSATION_NOT_FOUND"),
+        ("DELETE", f"/api/conversations/{conv}", "CONVERSATION_NOT_FOUND"),
+        ("GET", f"/api/jobs/{job}", "JOB_NOT_FOUND"),
+        ("POST", f"/api/jobs/{job}/cancel", "JOB_NOT_FOUND"),
+        ("GET", f"/api/proposals/{prop}", "PROPOSAL_NOT_FOUND"),
+    ]
+    for method, path, code in not_found:
+        r = client.request(method, path, headers=h)
+        assert (r.status_code, r.json()["error"]) == (404, code), (method, path)
+    # writes into someone else's data look the same
+    r = client.post("/api/conversations", headers=h, json={"connection_id": conn})
+    assert r.json()["error"] == "CONNECTION_NOT_FOUND"
+    r = client.post(f"/api/conversations/{conv}/messages", headers=h, json={"content": "hi"})
+    assert r.json()["error"] == "CONVERSATION_NOT_FOUND"
+    r = client.post(f"/api/proposals/{prop}/decision", headers=h, json={"decision": "approve"})
+    assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
+    # and nothing of A's changed
     assert (
-        api.post(f"/api/connections/{cid}/verify", headers=alice).json()["data"]["status"]
-        == "connected"
+        client.get(f"/api/connections/{conn}", headers=bearer(owned_by_a["user"])).status_code
+        == 200
     )
-    conv = api.post("/api/conversations", headers=alice, json={"connection_id": cid}).json()["data"]
-    vid = conv["id"]
-    api.headers.update(alice)
-    job, _ = ask(api, vid, "Kiểm tra instance")
-    api.headers.clear()
-    with storage.open_store("alice") as store:
-        proposal = store.create_proposal(
-            Proposal(conversation_id=vid, connection_id=cid, action="associate_route_table")
+
+
+def test_decisions_record_who_made_them(client, owned_by_a):
+    r = client.post(
+        f"/api/proposals/{owned_by_a['prop']}/decision",
+        headers=bearer(owned_by_a["user"]),
+        json={"decision": "reject"},
+    )
+    assert r.status_code == 200, r.text
+    last = r.json()["data"]["proposal"]["history"][-1]
+    assert last["status"] == "REJECTED" and last["by"] == owned_by_a["user"]
+
+
+def test_jobs_belong_to_the_conversation_owner():
+    from app.worker import new_job
+
+    conv = Conversation(user_id="user-a", connection_id="conn_x")
+    assert new_job(conv, "q").user_id == "user-a"
+
+
+def test_store_listings_are_per_user(store):
+    users = [f"user-{uuid.uuid4().hex[:8]}" for _ in range(2)]  # the SQLite test DB is shared
+    for uid in users:
+        conn = store.create_connection(
+            Connection(user_id=uid, name=uid, type="access_key", region="ap-southeast-1")
         )
-        assert store.get_job(job["id"]).user_id == "alice"
-        for msg in store.list_messages(vid):
-            assert msg.user_id == "alice"
-            assert all(tc.user_id == "alice" for tc in store.list_tool_calls(msg.id))
-    assert api.get(f"/api/conversations/{vid}", headers=alice).json()["data"]["messages"]
-    for path in (
-        "/api/connections",
-        "/api/conversations",
-        "/api/proposals",
-        f"/api/conversations?connection_id={cid}",
-        f"/api/proposals?conversation_id={vid}",
-        "/api/connections?user_id=alice",
-    ):
-        assert api.get(path, headers=bob).json()["data"] == []
-    for method, path, body in (
-        ("get", f"/api/connections/{cid}", None),
-        ("delete", f"/api/connections/{cid}", None),
-        ("post", f"/api/connections/{cid}/verify", None),
-        ("get", f"/api/connections/{cid}/cloudformation", None),
-        ("patch", f"/api/connections/{cid}", {"remediation_role_arn": None}),
-        ("get", f"/api/conversations/{vid}", None),
-        ("delete", f"/api/conversations/{vid}", None),
-        ("post", "/api/conversations", {"connection_id": cid}),
-        ("post", f"/api/conversations/{vid}/messages", {"content": "steal"}),
-        ("get", f"/api/jobs/{job['id']}", None),
-        ("post", f"/api/jobs/{job['id']}/cancel", None),
-        ("get", f"/api/proposals/{proposal.id}", None),
-        ("post", f"/api/proposals/{proposal.id}/decision", {"decision": "approve"}),
-    ):
-        response = api.request(method, path, headers=bob, json=body)
-        assert response.status_code == 404, (path, response.text)
-    assert api.get(f"/api/connections/{cid}", headers=alice).status_code == 200
-    assert (
-        api.get(f"/api/proposals/{proposal.id}", headers=alice).json()["data"]["status"]
-        == "PENDING_APPROVAL"
-    )
+        conv = store.create_conversation(Conversation(user_id=uid, connection_id=conn.id))
+        store.create_proposal(
+            Proposal(user_id=uid, conversation_id=conv.id, connection_id=conn.id, action="x")
+        )
+    for uid in users:
+        assert [c.user_id for c in store.list_connections(uid)] == [uid]
+        assert [c.user_id for c in store.list_conversations(user_id=uid)] == [uid]
+        assert [p.user_id for p in store.list_proposals(user_id=uid)] == [uid]
+    # background work (no user) still sees everyone's
+    assert {c.user_id for c in store.list_connections()} >= set(users)
+    assert {p.user_id for p in store.list_proposals()} >= set(users)
 
 
-def test_stores_isolate_every_entity_and_conditional_writes(store):
-    other = (
-        DynamoStore(store.client, store.table, "bob")
-        if isinstance(store, DynamoStore)
-        else SqlStore(store.db, "bob")
-    )
-    conn = store.create_connection(Connection(name="tenant-test", type="role", region=REGION))
-    conv = store.create_conversation(Conversation(connection_id=conn.id))
-    msg = store.add_message(
-        Message(conversation_id=conv.id, role="assistant"), [ToolCallRecord(tool="x")]
-    )
-    prop = store.create_proposal(Proposal(conversation_id=conv.id, action="associate_route_table"))
-    job = store.create_job(Job(conversation_id=conv.id))
-    assert other.get_connection(conn.id) is None
-    assert other.get_conversation(conv.id) is None
-    assert other.get_proposal(prop.id) is None
-    assert other.get_job(job.id) is None
-    assert other.list_connections() == other.list_conversations() == other.list_proposals() == []
-    assert (
-        other.list_messages(conv.id)
-        == other.list_tool_calls(msg.id)
-        == other.list_jobs(conv.id)
-        == []
-    )
-    with pytest.raises(ValueError, match="Owner mismatch"):
-        other.save_connection(conn)
-    with pytest.raises(ValueError, match="Owner mismatch"):
-        other.update_proposal(prop, expected_status="PENDING_APPROVAL")
-    with pytest.raises(ValueError, match="Owner mismatch"):
-        other.delete_conversation(conv)
-    with pytest.raises(ValueError, match="ownership"):
-        store.update_job(job.id, user_id="bob")
-    if isinstance(store, DynamoStore):
-        items = store.client.scan(TableName=store.table)["Items"]
-        assert all(i["PK"]["S"].startswith(f"USER#{store.user_id}#") for i in items)
+def test_rows_from_before_sign_in_belong_to_the_local_user(tmp_path):
+    from sqlalchemy import create_engine, text
 
+    from app.storage.db import add_missing_columns, backfill_owner
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"app_env": "prod", "auth_mode": "none"},
-        {"runtime": "lambda", "auth_mode": "none"},
-        {"auth_mode": "cognito"},
-        {"auth_mode": "cognito", "cognito_issuer": "http://attacker"},
-    ],
-)
-def test_unsafe_config_fails_closed(changes):
-    with pytest.raises(ValueError):
-        auth.validate_auth_settings(Settings(_env_file=None, **changes))
-
-
-def test_internal_handlers_require_owner():
-    from app.handlers import action_executor, agent_worker
-
-    with pytest.raises(KeyError):
-        agent_worker.handler({"mode": "diagnosis", "job_id": "j"})
-    with pytest.raises(KeyError):
-        action_executor.handler({"mode": "execute", "proposal_id": "p"})
-
-
-def test_aws_session_cache_is_scoped_to_owner(monkeypatch):
-    from datetime import timedelta
-
-    from app.aws import credentials
-    from app.storage.models import utcnow
-
-    calls = []
-
-    def assume(**kwargs):
-        calls.append(kwargs["RoleArn"])
-        return {
-            "Credentials": {
-                "AccessKeyId": FAKE_KEY,
-                "SecretAccessKey": FAKE_SECRET,
-                "SessionToken": "test-token",
-                "Expiration": utcnow() + timedelta(hours=1),
-            }
-        }
-
-    monkeypatch.setattr(credentials, "_role_cache", {})
-    monkeypatch.setattr(
-        credentials,
-        "platform_session",
-        lambda: SimpleNamespace(client=lambda service: SimpleNamespace(assume_role=assume)),
-    )
-    alice = Connection(
-        id="same-id",
-        user_id="alice",
-        name="A",
-        type="role",
-        region=REGION,
-        role_arn="arn:aws:iam::111111111111:role/AutoAWSReadOnly",
-        external_id="a",
-    )
-    bob = alice.model_copy(update={"user_id": "bob", "external_id": "b"})
-    a = credentials.resolve_session(alice)
-    b = credentials.resolve_session(bob)
-    assert a is not b and len(calls) == 2
-    assert credentials.resolve_session(alice) is a
-    assert credentials.resolve_session(bob) is b
-    credentials.forget_session(alice.id, alice.user_id)
-    assert credentials.resolve_session(bob) is b
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as c:
+        c.execute(text('CREATE TABLE "connection" (id VARCHAR PRIMARY KEY, name VARCHAR)'))
+        c.execute(text("INSERT INTO \"connection\" VALUES ('conn_old', 'old')"))
+    assert "connection.user_id" in add_missing_columns(engine)
+    backfill_owner(engine)
+    with engine.begin() as c:
+        assert c.execute(text('SELECT user_id FROM "connection"')).scalar() == "local"

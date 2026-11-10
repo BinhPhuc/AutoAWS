@@ -62,7 +62,3 @@ src/
 Quy ước: text UI tiếng Anh, gom trong `src/lib/strings.ts`; nội dung câu trả lời của agent (tiếng Việt) đến từ backend và hiển thị nguyên văn. Kiểu API chỉ khai báo ở `src/api/types.ts`.
 
 Mock: tên kết nối chứa chữ "fail" sẽ giả lập verify thất bại.
-
-## Đăng nhập Cognito
-
-Xem [cấu hình Cognito, cách ly `user_id` và migration dữ liệu cũ](../docs/AUTH.md). Mặc định `AUTH_MODE=cognito`; EC2 cần `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN`. Dev offline đặt `AUTH_MODE=none` cùng `APP_ENV=dev`, `RUNTIME=local`. Frontend lấy cấu hình công khai từ API, không cần biến Vite riêng cho Cognito.

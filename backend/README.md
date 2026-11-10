@@ -50,6 +50,9 @@ trước backend, ví dụ reverse proxy trên EC2 hoặc ALB, rồi build front
 `http://<EC2-IP>:8000` làm API URL cho trang HTTPS: trình duyệt chặn mixed content
 dù CORS là `*` ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content)).
 File Compose không cấu hình TLS, DNS hay Security Group.
+Trước khi mở API cho người dùng, đặt `AUTH_MODE=cognito`, `COGNITO_USER_POOL_ID`,
+`COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` theo stack Auth hiện có (xem README gốc, mục
+chạy local với Cognito thật). Cơ chế auth và phân vùng người dùng giữ nguyên từ `main`.
 
 `docker-compose.yml` ở thư mục gốc vẫn dùng cho phát triển local cả backend và frontend.
 
@@ -98,7 +101,7 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 
 - Access key của kết nối `access_key` lưu **plaintext trong SQLite** (`DB_PATH`) hoặc trong item DynamoDB — chỉ dùng dev/học tập. Kiểu `role` (AssumeRole + ExternalId) là đường chuẩn; credentials tạm thời chỉ nằm trong bộ nhớ.
 - Mọi tool chỉ gọi API đọc; `app/aws/registry.py` từ chối đăng ký action ghi. Lệnh ghi chỉ có trong `app/aws/remediation/`, chạy sau khi người dùng duyệt, bằng role `AutoAWSRemediation` (access key chỉ khi `REMEDIATION_ALLOW_ACCESS_KEYS=true`).
-- Chưa có xác thực: đừng mở API ra mạng ngoài.
+- Xác thực (`docs/API_CONTRACT.md` §0.1): `AUTH_MODE=none` (mặc định) = một người dùng `local`, **đừng mở API ra mạng ngoài**; `AUTH_MODE=cognito` = mọi route trừ `/api/health`, `/api/auth/config` cần access token Cognito (`app/auth.py`: trên Lambda đọc claims JWT authorizer đã kiểm, ngoài Lambda tự kiểm chữ ký qua JWKS; luôn kiểm issuer / `token_use=access` / `client_id`). Connection, conversation, job, proposal có `user_id`; tài nguyên của người khác trả 404. ExternalId do server sinh.
 - Dữ liệu AWS đi qua `app/sanitizer.py` trước khi tới LLM và trước khi lưu `output_summary`.
 
 ## Lưu trữ: DynamoDB
@@ -116,10 +119,10 @@ Thiết kế bảng DynamoDB (một bảng):
 
 | Item | PK / SK | GSI1 |
 |---|---|---|
-| Kết nối | `CONN#<id>` / `META` | `CONNECTIONS` / `<created_at>#<id>` |
+| Kết nối | `CONN#<id>` / `META` | `CONNECTIONS#<user_id>` / `<created_at>#<id>` |
 | Hội thoại | `CONV#<id>` / `META` | `CONVS#<connection_id>` / `<updated_at>#<id>` |
 | Tin nhắn | `CONV#<conversation_id>` / `MSG#<created_at>#<id>` (tool call nhúng trong item) | — |
-| Đề xuất khắc phục | `PROP#<id>` / `META` | `PROPOSALS` / `<created_at>#<id>` |
+| Đề xuất khắc phục | `PROP#<id>` / `META` | `PROPOSALS#<user_id>` / `<created_at>#<id>` |
 | Job chẩn đoán | `JOB#<id>` / `META` (thuộc tính `ttl`) | `JOBS#<conversation_id>` / `<created_at>#<id>` |
 
 Index `ById` (theo `id`) để lấy tool call của một tin nhắn. Chạy thử với LocalStack:
@@ -138,7 +141,3 @@ Lưu ý: GSI nhất quán sau (eventually consistent) — danh sách ngay sau kh
 3. Thêm dòng vào bảng cuối `docs/API_CONTRACT.md`.
 
 Template CloudFormation (`GET /api/connections/{id}/cloudformation`) tự sinh IAM policy từ `aws_actions` của mọi tool.
-
-## Đăng nhập Cognito
-
-Xem [cấu hình Cognito, cách ly `user_id` và migration dữ liệu cũ](../docs/AUTH.md). Mặc định `AUTH_MODE=cognito`; EC2 cần `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN`. Dev offline đặt `AUTH_MODE=none` cùng `APP_ENV=dev`, `RUNTIME=local`. Frontend lấy cấu hình công khai từ API, không cần biến Vite riêng cho Cognito.

@@ -9,6 +9,7 @@ from app.api.schemas import (
     ConnectionPatch,
     VerifyOut,
 )
+from app.auth import User, current_user
 from app.aws import cloudformation
 from app.aws.credentials import forget_session
 from app.config import get_settings
@@ -22,17 +23,20 @@ from app.storage.store import get_store
 router = APIRouter(prefix="/connections", tags=["connections"])
 
 
-def _get(store: Store, conn_id: str) -> Connection:
+def _get(store: Store, conn_id: str, user: User) -> Connection:
     conn = store.get_connection(conn_id)
-    if conn is None:
+    if conn is None or conn.user_id != user.id:  # someone else's: as if it did not exist
         raise NotFound("CONNECTION_NOT_FOUND", "Connection not found")
     return conn
 
 
 @router.post("")
-def create_connection(body: ConnectionIn, store: Store = Depends(get_store)):
+def create_connection(
+    body: ConnectionIn, store: Store = Depends(get_store), user: User = Depends(current_user)
+):
     if body.type == "access_key":
         conn = Connection(
+            user_id=user.id,
             name=body.name,
             type="access_key",
             region=body.region,
@@ -41,11 +45,14 @@ def create_connection(body: ConnectionIn, store: Store = Depends(get_store)):
         )
     else:
         conn = Connection(
+            user_id=user.id,
             name=body.name,
             type="role",
             region=body.region,
             role_arn=body.role_arn,
-            external_id=body.external_id or f"autoaws-{secrets.token_hex(12)}",
+            # Always chosen by AutoAWS, never by the client (confused deputy: a caller must
+            # not be able to reuse another customer's ExternalId)
+            external_id=f"autoaws-{secrets.token_hex(12)}",
             remediation_role_arn=body.remediation_role_arn,
         )
     store.create_connection(conn)
@@ -53,18 +60,25 @@ def create_connection(body: ConnectionIn, store: Store = Depends(get_store)):
 
 
 @router.get("")
-def list_connections(store: Store = Depends(get_store)):
-    return ok([ConnectionOut.from_model(c) for c in store.list_connections()])
+def list_connections(store: Store = Depends(get_store), user: User = Depends(current_user)):
+    return ok([ConnectionOut.from_model(c) for c in store.list_connections(user.id)])
 
 
 @router.get("/{conn_id}")
-def get_connection(conn_id: str, store: Store = Depends(get_store)):
-    return ok(ConnectionOut.from_model(_get(store, conn_id)))
+def get_connection(
+    conn_id: str, store: Store = Depends(get_store), user: User = Depends(current_user)
+):
+    return ok(ConnectionOut.from_model(_get(store, conn_id, user)))
 
 
 @router.patch("/{conn_id}")
-def update_connection(conn_id: str, body: ConnectionPatch, store: Store = Depends(get_store)):
-    conn = _get(store, conn_id)
+def update_connection(
+    conn_id: str,
+    body: ConnectionPatch,
+    store: Store = Depends(get_store),
+    user: User = Depends(current_user),
+):
+    conn = _get(store, conn_id, user)
     if conn.type != "role":
         raise AppError(
             "VALIDATION_ERROR", 400, "A remediation role can only be set on role connections"
@@ -75,18 +89,22 @@ def update_connection(conn_id: str, body: ConnectionPatch, store: Store = Depend
 
 
 @router.delete("/{conn_id}")
-def delete_connection(conn_id: str, store: Store = Depends(get_store)):
-    conn = _get(store, conn_id)
-    forget_session(conn.id, conn.user_id)
+def delete_connection(
+    conn_id: str, store: Store = Depends(get_store), user: User = Depends(current_user)
+):
+    conn = _get(store, conn_id, user)
+    forget_session(conn.id)
     store.delete_connection(conn)
     return ok(None, "Connection deleted")
 
 
 @router.post("/{conn_id}/verify")
-def verify_connection(conn_id: str, store: Store = Depends(get_store)):
-    _get(store, conn_id)
+def verify_connection(
+    conn_id: str, store: Store = Depends(get_store), user: User = Depends(current_user)
+):
+    _get(store, conn_id, user)
     try:
-        result = VerifyOut.model_validate(dispatch.verify_connection(conn_id, store.user_id))
+        result = VerifyOut.model_validate(dispatch.verify_connection(conn_id))
     except dispatch.DispatchError as e:
         raise AppError("INTERNAL", 500, "Could not verify the connection") from e
     message = (
@@ -98,8 +116,10 @@ def verify_connection(conn_id: str, store: Store = Depends(get_store)):
 
 
 @router.get("/{conn_id}/cloudformation")
-def get_cloudformation(conn_id: str, store: Store = Depends(get_store)):
-    conn = _get(store, conn_id)
+def get_cloudformation(
+    conn_id: str, store: Store = Depends(get_store), user: User = Depends(current_user)
+):
+    conn = _get(store, conn_id, user)
     if conn.type != "role":
         raise AppError(
             "VALIDATION_ERROR",

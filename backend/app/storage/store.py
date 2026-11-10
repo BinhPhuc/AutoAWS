@@ -10,37 +10,13 @@ from functools import lru_cache
 
 import boto3
 from botocore.client import BaseClient
-from fastapi import Depends
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from app.auth import LOCAL_USER, User, current_user
 from app.config import get_settings
 from app.storage.base import Store
 from app.storage.db import get_engine, init_db
 from app.storage.dynamo import DynamoStore, ensure_table
-from app.storage.models import Proposal
 from app.storage.sql import SqlStore
-
-
-def remediation_owners() -> list[str]:
-    """Startup maintenance only: enumerate owners, then recover within each scoped store."""
-    settings = get_settings()
-    if settings.storage_backend == "sqlite":
-        with Session(get_engine()) as session:
-            return [uid for uid in session.exec(select(Proposal.user_id).distinct()) if uid]
-    owners: set[str] = set()
-    for page in (
-        dynamodb_client()
-        .get_paginator("scan")
-        .paginate(
-            TableName=settings.dynamodb_table,
-            ProjectionExpression="user_id",
-            FilterExpression="entity = :entity",
-            ExpressionAttributeValues={":entity": {"S": "proposal"}},
-        )
-    ):
-        owners.update(i["user_id"]["S"] for i in page.get("Items", []) if "user_id" in i)
-    return sorted(owners)
 
 
 @lru_cache
@@ -68,20 +44,17 @@ def init_storage() -> None:
         init_db()
 
 
-def get_store(user: User = Depends(current_user)) -> Iterator[Store]:
+def get_store() -> Iterator[Store]:
     """FastAPI dependency: the Store for this request."""
-    with open_store(user.user_id) as store:
-        yield store
+    settings = get_settings()
+    if settings.storage_backend == "dynamodb":
+        yield DynamoStore(dynamodb_client(), settings.dynamodb_table)
+        return
+    with Session(get_engine()) as session:
+        yield SqlStore(session)
 
 
 @contextmanager
-def open_store(user_id: str = LOCAL_USER) -> Iterator[Store]:
-    """A tenant-scoped Store for requests and trusted background work."""
-    if not user_id or "#" in user_id:
-        raise ValueError("A valid user_id is required")
-    settings = get_settings()
-    if settings.storage_backend == "dynamodb":
-        yield DynamoStore(dynamodb_client(), settings.dynamodb_table, user_id)
-        return
-    with Session(get_engine()) as session:
-        yield SqlStore(session, user_id)
+def open_store() -> Iterator[Store]:
+    """A Store outside a request (background execution of an approved proposal)."""
+    yield from get_store()

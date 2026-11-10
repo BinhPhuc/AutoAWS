@@ -5,7 +5,6 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ApiError } from '@/api/client'
 import { router } from './routes'
-import { AuthProvider } from '@/lib/auth'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,9 +24,7 @@ export default function App() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <AuthProvider>
-            <RouterProvider router={router} />
-          </AuthProvider>
+          <RouterProvider router={router} />
           <Toaster position="top-right" richColors closeButton />
         </TooltipProvider>
       </QueryClientProvider>

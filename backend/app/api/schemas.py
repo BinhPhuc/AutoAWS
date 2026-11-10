@@ -287,3 +287,16 @@ class JobOut(BaseModel):
             created_at=j.created_at,
             updated_at=j.updated_at,
         )
+
+
+class AuthConfigOut(BaseModel):
+    mode: Literal["none", "cognito"]
+    domain: str | None = None
+    client_id: str | None = None
+    scopes: list[str] = []
+
+
+class MeOut(BaseModel):
+    user_id: str
+    username: str
+    auth_mode: Literal["none", "cognito"]

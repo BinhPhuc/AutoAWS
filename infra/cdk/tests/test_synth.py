@@ -21,6 +21,7 @@ def stacks(tmp_path_factory):
         context={
             "lambdaAsset": str(asset),
             "notificationEmail": "team@example.com",
+            "frontendUrl": "https://d111.cloudfront.net",
             "alarmEmail": "ops@example.com",
         },
     )
@@ -119,11 +120,21 @@ def test_remediation_flow_waits_for_a_person(stacks):
     flow = stacks["workflow"]
     flow.has_resource_properties(
         "AWS::StepFunctions::StateMachine",
-        {"StateMachineName": "autoaws-remediation-flow", "StateMachineType": "STANDARD"},
+        {
+            "StateMachineName": "autoaws-remediation-flow",
+            "StateMachineType": "STANDARD",
+        },
     )
     text = json.dumps(flow.find_resources("AWS::StepFunctions::StateMachine"))
     assert "waitForTaskToken" in text and '\\"TimeoutSeconds\\":86400' in text
-    for state in ("Recheck", "Execute", "Verify", "Expire", "NotifyPending", "NotifyResult"):
+    for state in (
+        "Recheck",
+        "Execute",
+        "Verify",
+        "Expire",
+        "NotifyPending",
+        "NotifyResult",
+    ):
         assert state in text
     flow.has_resource_properties(
         "AWS::SNS::Subscription", {"Protocol": "email", "Endpoint": "team@example.com"}
@@ -135,7 +146,10 @@ def test_api_is_throttled_and_served_under_the_site(stacks):
         "AWS::ApiGatewayV2::Stage",
         {
             "StageName": "$default",
-            "DefaultRouteSettings": {"ThrottlingRateLimit": 20, "ThrottlingBurstLimit": 40},
+            "DefaultRouteSettings": {
+                "ThrottlingRateLimit": 20,
+                "ThrottlingBurstLimit": 40,
+            },
         },
     )
     stacks["frontend"].has_resource_properties(
@@ -171,43 +185,67 @@ def test_alarms_and_budget(stacks):
     )
 
 
-def test_cognito_and_jwt_protect_the_api(stacks):
-    stacks["auth"].has_resource_properties(
+def test_sign_in_is_a_public_pkce_client_on_a_lite_pool(stacks):
+    auth = stacks["auth"]
+    auth.has_resource_properties("AWS::Cognito::UserPool", {"UserPoolTier": "LITE"})
+    auth.has_resource_properties(
         "AWS::Cognito::UserPoolClient",
         {
             "GenerateSecret": False,
             "AllowedOAuthFlows": ["code"],
-            "AllowedOAuthScopes": ["openid", "email", "profile"],
-            "CallbackURLs": ["http://localhost:5173/auth/callback"],
-            "LogoutURLs": ["http://localhost:5173"],
-            "EnableTokenRevocation": True,
+            "AllowedOAuthScopes": Match.array_with(["openid"]),
+            "SupportedIdentityProviders": ["COGNITO"],
+            "PreventUserExistenceErrors": "ENABLED",
         },
     )
-    stacks["api"].has_resource_properties(
-        "AWS::ApiGatewayV2::Authorizer",
-        {
-            "AuthorizerType": "JWT",
-            "IdentitySource": ["$request.header.Authorization"],
-        },
-    )
-    stacks["api"].has_resource_properties(
-        "AWS::ApiGatewayV2::Route",
-        {
-            "RouteKey": "$default",
-            "AuthorizationType": "JWT",
-            "AuthorizationScopes": ["openid"],
-        },
-    )
-    routes = stacks["api"].find_resources("AWS::ApiGatewayV2::Route")
-    public = {
-        r["Properties"]["RouteKey"]
-        for r in routes.values()
-        if r["Properties"].get("AuthorizationType") == "NONE"
+    domains = auth.find_resources("AWS::Cognito::UserPoolDomain")
+    for d in domains.values():  # Cognito refuses prefixes containing aws / amazon / cognito
+        prefix = json.dumps(d["Properties"]["Domain"]).lower()
+        assert not any(word in prefix for word in ("aws", "amazon", "cognito")), prefix
+
+
+def test_every_api_route_needs_a_token_except_two(stacks):
+    api = stacks["api"]
+    api.has_resource_properties("AWS::ApiGatewayV2::Authorizer", {"AuthorizerType": "JWT"})
+    routes = {
+        r["Properties"]["RouteKey"]: r["Properties"].get("AuthorizationType")
+        for r in api.find_resources("AWS::ApiGatewayV2::Route").values()
     }
-    assert public == {"GET /api/health", "GET /api/auth/config"}
-    api_functions = stacks["api"].find_resources("AWS::Lambda::Function")
-    variables = next(iter(api_functions.values()))["Properties"]["Environment"]["Variables"]
+    assert routes == {
+        "$default": "JWT",
+        "GET /api/health": "NONE",
+        "GET /api/auth/config": "NONE",
+    }
+    fn = next(
+        f
+        for f in api.find_resources("AWS::Lambda::Function").values()
+        if f["Properties"]["Handler"] == "app.handlers.api.handler"
+    )
+    variables = fn["Properties"]["Environment"]["Variables"]
     assert variables["AUTH_MODE"] == "cognito"
-    assert {"COGNITO_ISSUER", "COGNITO_CLIENT_ID", "COGNITO_DOMAIN"} <= variables.keys()
-    workflow = json.dumps(stacks["workflow"].find_resources("AWS::StepFunctions::StateMachine"))
-    assert "$.user_id" in workflow
+    assert {"COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_DOMAIN"} <= set(variables)
+
+
+def test_spa_fallback_never_rewrites_api_errors(stacks):
+    dist = next(iter(stacks["frontend"].find_resources("AWS::CloudFront::Distribution").values()))[
+        "Properties"
+    ]["DistributionConfig"]
+    assert "CustomErrorResponses" not in dist  # would turn API 403/404 into index.html 200
+    assert dist["DefaultCacheBehavior"]["FunctionAssociations"][0]["EventType"] == (
+        "viewer-request"
+    )
+    assert "FunctionAssociations" not in dist["CacheBehaviors"][0]  # /api/*
+
+
+def test_callbacks_follow_the_frontend_url(stacks):
+    client = next(iter(stacks["auth"].find_resources("AWS::Cognito::UserPoolClient").values()))[
+        "Properties"
+    ]
+    assert client["CallbackURLs"] == [
+        "https://d111.cloudfront.net/auth/callback",
+        "http://localhost:5173/auth/callback",  # envName dev only
+    ]
+    assert client["LogoutURLs"] == [
+        "https://d111.cloudfront.net/",
+        "http://localhost:5173/",
+    ]

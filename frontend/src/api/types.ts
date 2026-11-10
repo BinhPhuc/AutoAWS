@@ -16,6 +16,7 @@ export interface ApiErrorBody {
 }
 
 export type ApiErrorCode =
+  | 'UNAUTHORIZED'
   | 'VALIDATION_ERROR'
   | 'CONNECTION_NOT_FOUND'
   | 'CONVERSATION_NOT_FOUND'
@@ -40,6 +41,21 @@ export interface Health {
   status: 'ok'
   version: string
   llm_provider: 'mock' | 'anthropic' | 'bedrock' | 'mcp'
+}
+
+// ---------- Sign-in (contract §0.1) ----------
+export interface AuthConfig {
+  mode: 'none' | 'cognito'
+  /** Hosted UI base URL, e.g. https://x.auth.ap-southeast-1.amazoncognito.com */
+  domain: string | null
+  client_id: string | null
+  scopes: string[]
+}
+
+export interface Me {
+  user_id: string
+  username: string
+  auth_mode: 'none' | 'cognito'
 }
 
 // ---------- Connections ----------
@@ -77,7 +93,6 @@ export interface CreateRoleConnection {
   name: string
   region: string
   role_arn: string
-  external_id?: string
   remediation_role_arn?: string
 }
 
@@ -185,7 +200,8 @@ export interface Proposal {
   result: Record<string, unknown> | null
   verification: { ok: boolean; details: string } | null
   error: string | null
-  history: { status: ProposalStatus; at: string; note: string }[]
+  /** `by`: user id of whoever decided (approve / reject / feedback) */
+  history: { status: ProposalStatus; at: string; note: string; by?: string | null }[]
   created_at: string
   updated_at: string
   expires_at: string | null
@@ -306,15 +322,4 @@ export interface ToolSpec {
   description: string
   input_schema: Record<string, unknown>
   aws_actions: string[]
-}
-export interface AuthConfig {
-  mode: 'cognito' | 'none'
-  issuer: string | null
-  client_id: string | null
-  domain: string | null
-}
-
-export interface AuthUser {
-  user_id: string
-  username: string | null
 }

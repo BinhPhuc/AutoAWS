@@ -155,7 +155,7 @@ async def test_cancel_stops_the_turn(store, aws):
     import contextlib
 
     @contextlib.contextmanager
-    def same_store(user_id="local-dev"):
+    def same_store():
         yield store
 
     import app.worker as worker_module
@@ -165,7 +165,7 @@ async def test_cancel_stops_the_turn(store, aws):
     original_provider = worker_module.get_provider
     worker_module.get_provider = lambda: ToolsForever()
     try:
-        await worker.run_job(job.id, store.user_id)
+        await worker.run_job(job.id)
     finally:
         worker_module.open_store = original
         worker_module.get_provider = original_provider
@@ -203,11 +203,7 @@ def test_lambda_runtime_hands_jobs_and_verify_to_agent_worker(client, connection
     job_id = r.json()["data"]["id"]
     [(op, kwargs)] = [c for c in lambda_runtime.calls if c[0] == "lambda.invoke"]
     assert kwargs["FunctionName"] == "autoaws-agent-worker" and kwargs["InvocationType"] == "Event"
-    assert json.loads(kwargs["Payload"]) == {
-        "mode": "diagnosis",
-        "job_id": job_id,
-        "user_id": "local-dev",
-    }
+    assert json.loads(kwargs["Payload"]) == {"mode": "diagnosis", "job_id": job_id}
     # nothing ran in the API process: the job waits for the worker
     assert client.get(f"/api/jobs/{job_id}").json()["data"]["status"] == "queued"
 
@@ -221,11 +217,7 @@ def test_lambda_runtime_hands_jobs_and_verify_to_agent_worker(client, connection
     v = client.post(f"/api/connections/{connection['id']}/verify").json()
     assert v["data"]["status"] == "connected"
     sync = [k for op, k in lambda_runtime.calls if k.get("InvocationType") == "RequestResponse"]
-    assert json.loads(sync[0]["Payload"]) == {
-        "mode": "verify",
-        "connection_id": connection["id"],
-        "user_id": "local-dev",
-    }
+    assert json.loads(sync[0]["Payload"]) == {"mode": "verify", "connection_id": connection["id"]}
 
 
 def test_agent_worker_runs_the_job(client, connection):
@@ -236,13 +228,9 @@ def test_agent_worker_runs_the_job(client, connection):
     with open_store() as store:
         conv = store.get_conversation(conv_id)
         job = store.create_job(Job(conversation_id=conv.id, question="Không SSH được"))
-    assert agent_worker.handler(
-        {"mode": "diagnosis", "job_id": job.id, "user_id": "local-dev"}
-    ) == {"ok": True}
+    assert agent_worker.handler({"mode": "diagnosis", "job_id": job.id}) == {"ok": True}
     assert client.get(f"/api/jobs/{job.id}").json()["data"]["status"] == "succeeded"
-    out = agent_worker.handler(
-        {"mode": "verify", "connection_id": connection["id"], "user_id": "local-dev"}
-    )
+    out = agent_worker.handler({"mode": "verify", "connection_id": connection["id"]})
     assert out["status"] == "connected"
     with pytest.raises(ValueError):
         agent_worker.handler({"mode": "rm"})
@@ -319,7 +307,7 @@ def _patch_store(monkeypatch, store):
     import app.handlers.agent_worker as aw
 
     @contextlib.contextmanager
-    def same(user_id="local-dev"):
+    def same():
         yield store
 
     monkeypatch.setattr(aw, "open_store", same)
@@ -338,9 +326,7 @@ def test_remediation_flow_steps(kb1_proposal, lambda_runtime, monkeypatch, aws):
     assert start["name"] == pid and json.loads(start["input"])["proposal_id"] == pid
 
     # 1. the flow waits for the decision: the token is stored, nothing is sent yet
-    out = action_executor.handler(
-        {"mode": "store_token", "user_id": "local-dev", "proposal_id": pid, "task_token": "T1"}
-    )
+    out = action_executor.handler({"mode": "store_token", "proposal_id": pid, "task_token": "T1"})
     assert out["status"] == "PENDING_APPROVAL"
     assert "stepfunctions.send_task_success" not in lambda_runtime.ops()
     # 2. the user approves (api-handler): the decision resumes the flow, no write yet
@@ -349,23 +335,11 @@ def test_remediation_flow_steps(kb1_proposal, lambda_runtime, monkeypatch, aws):
     assert sent["taskToken"] == "T1"
     assert store.get_proposal(pid).status == "APPROVED"
     # 3. agent-worker re-checks, 4. action-executor writes, 5. agent-worker verifies
-    assert (
-        agent_worker.handler({"mode": "recheck", "user_id": "local-dev", "proposal_id": pid})["ok"]
-        is True
-    )
-    assert (
-        action_executor.handler({"mode": "execute", "user_id": "local-dev", "proposal_id": pid})[
-            "ok"
-        ]
-        is True
-    )
-    again = action_executor.handler(
-        {"mode": "execute", "user_id": "local-dev", "proposal_id": pid}
-    )  # retried state
+    assert agent_worker.handler({"mode": "recheck", "proposal_id": pid})["ok"] is True
+    assert action_executor.handler({"mode": "execute", "proposal_id": pid})["ok"] is True
+    again = action_executor.handler({"mode": "execute", "proposal_id": pid})  # retried state
     assert again["ok"] is True
-    final = agent_worker.handler(
-        {"mode": "verify_proposal", "user_id": "local-dev", "proposal_id": pid}
-    )
+    final = agent_worker.handler({"mode": "verify_proposal", "proposal_id": pid})
     assert final == {"ok": True, "status": "SUCCEEDED"}
     rts = n["ec2"].describe_route_tables(
         Filters=[{"Name": "association.subnet-id", "Values": [n["subnet"]]}]
@@ -389,9 +363,7 @@ def test_decision_before_the_token_is_delivered_when_it_arrives(
     pid = answer.proposals[0].proposal_id
     decide(store, store.get_proposal(pid), "reject")  # no token yet: nothing to send
     assert "stepfunctions.send_task_failure" not in lambda_runtime.ops()
-    action_executor.handler(
-        {"mode": "store_token", "user_id": "local-dev", "proposal_id": pid, "task_token": "T2"}
-    )
+    action_executor.handler({"mode": "store_token", "proposal_id": pid, "task_token": "T2"})
     [(op, sent)] = [c for c in lambda_runtime.calls if c[0] == "stepfunctions.send_task_failure"]
     assert sent["taskToken"] == "T2" and sent["error"] == "REJECTED"
 
@@ -404,12 +376,7 @@ def test_approval_timeout_expires(kb1_proposal, lambda_runtime, monkeypatch, aws
     _patch_store(monkeypatch, store)
     attach_proposals(store, conv, "msg_1", conn, aws, answer)
     pid = answer.proposals[0].proposal_id
-    assert (
-        agent_worker.handler({"mode": "expire", "user_id": "local-dev", "proposal_id": pid})[
-            "status"
-        ]
-        == "EXPIRED"
-    )
+    assert agent_worker.handler({"mode": "expire", "proposal_id": pid})["status"] == "EXPIRED"
 
 
 def test_customer_template_trusts_only_the_platform_roles(client, monkeypatch):

@@ -20,12 +20,10 @@ log = logging.getLogger(__name__)
 
 def handler(event: dict, context=None) -> dict:
     mode = event.get("mode")
-    if mode not in ("diagnosis", "verify", "recheck", "verify_proposal", "expire"):
-        raise ValueError(f"Unknown agent-worker mode {mode!r}")
     if mode == "diagnosis":
-        asyncio.run(run_job(event["job_id"], event["user_id"]))
+        asyncio.run(run_job(event["job_id"]))
         return {"ok": True}
-    with open_store(event["user_id"]) as store:
+    with open_store() as store:
         if mode == "verify":
             return verify_connection(store, event["connection_id"])
         if mode == "recheck":

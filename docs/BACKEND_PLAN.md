@@ -206,10 +206,11 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 - `AnthropicProvider` / `BedrockProvider` thật (+ Guardrails).
 - Tool M3: `cloudwatch_get_metric_data`, `logs_insights_query` (giới hạn khung thời gian, lọc mức lỗi, tóm tắt), `cloudtrail_lookup_events`.
 - Checklist runner (parser → chạy từng mục → lưu từng mục).
-- [x] Auth (2026-11-10): Cognito access JWT + middleware, Store theo `user_id` trên SQLite/DynamoDB, worker/Step Functions truyền owner, migration offline, stack Auth + JWT authorizer. Xem `AUTH.md`.
+- ~~Auth (Cognito JWT) — middleware FastAPI `Depends(current_user)`; mọi bảng thêm `user_id`~~ — **đã làm (2026-11-10)**: `app/auth.py`, `AUTH_MODE`, `user_id` trên connection / conversation / job / proposal (DynamoDB: `CONNECTIONS#<user>`, `PROPOSALS#<user>`), stack CDK `Auth`.
 - ~~Lưu trữ DynamoDB + KMS~~ — **đã làm (2026-10-27)**: `STORAGE_BACKEND=dynamodb`, xem `backend/README.md` mục Lưu trữ. Còn lại: mã hoá cấp trường cho secret, đóng gói `api-handler` / `agent-worker` lên Lambda (Mangum); Step Functions cho checklist.
 - [x] **EC2 + DynamoDB (2026-11-10)**: mặc định DynamoDB, template độc lập `infra/cloudformation/dynamodb.yaml`, Compose backend không dùng volume SQLite; bảng/region/endpoint do người deploy điền, kiểm tra bảng lúc startup và không tự tạo bảng trên EC2. Kiểm chứng: 209 test BE, ruff và cfn-lint sạch; chưa deploy AWS thật.
 - Giới hạn chi phí: cache kết quả tool theo (connection, tool, input) trong phiên; đếm token.
+- [x] **Hợp nhất auth + DynamoDB (2026-11-10)**: giữ auth và schema phân vùng từ `main`, ghép cấu hình DynamoDB/CloudFormation/Compose EC2; xác nhận đăng nhập, chặn truy cập chéo người dùng và lưu người quyết định trên DynamoDB. 235 test BE, 16 test FE, 11 test CDK; chưa deploy AWS thật.
 
 ## 7. Quy tắc bắt buộc (cho mọi người/agent sửa backend)
 1. Không thêm bất kỳ AWS action nào ngoài `Describe*/List*/Get*/LookupEvents/StartQuery/GetQueryResults/GetMetricData`. PR có action ghi → từ chối.

@@ -5,7 +5,6 @@
     .venv/bin/python app.py                      # synth only (or: npx cdk synth / deploy)
 
 Stacks (prefix AutoAws-<envName>-): Data, Auth, Agent, Workflow, Api, Frontend, Ops.
-Auth uses Cognito code + PKCE and JWT authorization.
 """
 
 import os
@@ -39,7 +38,18 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     workflow = WorkflowStack(
         app, f"{p}-Workflow", cfg, agent.agent_worker, agent.action_executor, env=env
     )
-    api = ApiStack(app, f"{p}-Api", cfg, data.table, data.key, agent.agent_worker, auth, env=env)
+    api = ApiStack(
+        app,
+        f"{p}-Api",
+        cfg,
+        data.table,
+        data.key,
+        agent.agent_worker,
+        auth.user_pool,
+        auth.client,
+        auth.domain_url,
+        env=env,
+    )
     frontend = FrontendStack(app, f"{p}-Frontend", cfg, api.http_api, env=env)
     ops = OpsStack(
         app,

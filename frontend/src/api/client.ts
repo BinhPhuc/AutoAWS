@@ -1,18 +1,8 @@
+import { authEnabled, clearSession, getAccessToken } from '@/lib/auth'
 import type { ApiErrorBody, Envelope } from './types'
 
 export const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
-
-let accessToken: (() => Promise<string | null>) | undefined
-let unauthorized: (() => void) | undefined
-
-export function configureAuthentication(
-  getToken: () => Promise<string | null>,
-  onUnauthorized: () => void,
-) {
-  accessToken = getToken
-  unauthorized = onUnauthorized
-}
 
 export class ApiError extends Error {
   status_code: number
@@ -40,8 +30,7 @@ function fallbackError(res: Response, path: string): ApiErrorBody {
   return {
     status_code: res.status,
     message: res.statusText || 'Request failed',
-    error:
-      res.status === 401 ? 'UNAUTHORIZED' : res.status >= 500 ? 'INTERNAL' : 'VALIDATION_ERROR',
+    error: res.status >= 500 ? 'INTERNAL' : 'VALIDATION_ERROR',
     path,
     timestamp: new Date().toISOString(),
   }
@@ -51,26 +40,33 @@ export async function toApiError(res: Response, path: string): Promise<ApiError>
   let body: ApiErrorBody
   try {
     body = (await res.json()) as ApiErrorBody
-    if (typeof body?.status_code !== 'number' || typeof body?.error !== 'string') {
-      body = { ...fallbackError(res, path), message: body?.message || res.statusText }
-    }
+    if (typeof body?.message !== 'string') body = fallbackError(res, path)
   } catch {
     body = fallbackError(res, path)
   }
   return new ApiError(body)
 }
 
-/** Fetch wrapper: JSON in/out, unwraps the success envelope, throws ApiError on failure. */
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
+async function send(path: string, init: RequestInit, forceRefresh = false): Promise<Response> {
   const headers = new Headers(init.headers)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   headers.set('Accept', 'application/json')
-  const token = await accessToken?.()
+  const token = await getAccessToken(forceRefresh)
   if (token) headers.set('Authorization', `Bearer ${token}`)
+  return fetch(`${API_BASE}${path}`, { ...init, headers })
+}
 
+/** Fetch wrapper: JSON in/out, unwraps the success envelope, throws ApiError on failure.
+ * Signed in (docs/API_CONTRACT.md §0.1): sends the access token; on 401 refreshes it once
+ * and retries, then signs out locally (the app shows the sign-in page). */
+export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
   let res: Response
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...init, headers })
+    res = await send(path, init)
+    if (res.status === 401 && authEnabled()) {
+      res = await send(path, init, true)
+      if (res.status === 401) clearSession()
+    }
   } catch (err) {
     throw new ApiError({
       status_code: 0,
@@ -80,7 +76,6 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       timestamp: new Date().toISOString(),
     })
   }
-  if (res.status === 401) unauthorized?.()
   if (!res.ok) throw await toApiError(res, path)
 
   const body = (await res.json()) as Envelope<T>

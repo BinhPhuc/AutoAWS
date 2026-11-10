@@ -1,4 +1,15 @@
-"""Cognito public SPA client: managed sign-in, email verification, code + PKCE."""
+"""AutoAws-Auth: who may use the platform (report §2.3.1, docs/API_CONTRACT.md §0.1).
+
+Cognito user pool (Lite feature plan: the free tier covers a class project), its Hosted UI
+domain and one public app client for the web app: OAuth2 authorization code + PKCE, no
+client secret (a browser cannot keep one). The HTTP API checks the access tokens with a JWT
+authorizer (AutoAws-Api); the backend reads the verified claims and keeps every user's data
+apart.
+
+The client's callback URLs need the CloudFront URL, which exists only after the Frontend
+stack: deploy once, then again with -c frontendUrl=https://dxxxx.cloudfront.net (the same
+second deploy the notification links already need).
+"""
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_cognito as cognito
@@ -6,14 +17,18 @@ from constructs import Construct
 
 from .config import Config
 
+LOCAL_WEB = "http://localhost:5173"
+
 
 class AuthStack(Stack):
     def __init__(self, scope: Construct, cid: str, cfg: Config, **kwargs) -> None:
         super().__init__(scope, cid, **kwargs)
-        self.pool = cognito.UserPool(
+        self.user_pool = cognito.UserPool(
             self,
             "Users",
-            self_sign_up_enabled=True,
+            user_pool_name=f"autoaws-{cfg.env_name}",
+            feature_plan=cognito.FeaturePlan.LITE,
+            self_sign_up_enabled=cfg.self_sign_up,
             sign_in_aliases=cognito.SignInAliases(email=True),
             auto_verify=cognito.AutoVerifiedAttrs(email=True),
             standard_attributes=cognito.StandardAttributes(
@@ -24,28 +39,28 @@ class AuthStack(Stack):
                 require_lowercase=True,
                 require_uppercase=True,
                 require_digits=True,
-                require_symbols=True,
+                require_symbols=False,
             ),
+            mfa=cognito.Mfa.OPTIONAL,
+            mfa_second_factor=cognito.MfaSecondFactor(otp=True, sms=False),
             account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
-            removal_policy=RemovalPolicy.RETAIN,
+            deletion_protection=not cfg.destroy_data,
+            removal_policy=RemovalPolicy.DESTROY if cfg.destroy_data else RemovalPolicy.RETAIN,
         )
-        domain = self.pool.add_domain(
-            "Domain",
-            cognito_domain=cognito.CognitoDomainOptions(
-                domain_prefix=f"autoaws-{cfg.env_name}-{self.account}"
-            ),
+        # Domain prefixes may not contain "aws", "amazon" or "cognito"
+        prefix = cfg.auth_domain_prefix or f"autodiag-{cfg.env_name}-{self.account}"
+        self.domain = self.user_pool.add_domain(
+            "HostedUi",
+            cognito_domain=cognito.CognitoDomainOptions(domain_prefix=prefix),
         )
-        # Deploy once to get CloudFront.Url, then set frontendUrl and deploy again.
-        origin = (cfg.frontend_url or "http://localhost:5173").rstrip("/")
-        self.client = self.pool.add_client(
+
+        origins = [cfg.frontend_url.rstrip("/")] if cfg.frontend_url else []
+        if cfg.env_name == "dev" or not origins:
+            origins.append(LOCAL_WEB)  # `pnpm dev` against the deployed API
+        self.client = self.user_pool.add_client(
             "WebClient",
+            user_pool_client_name=f"autoaws-{cfg.env_name}-web",
             generate_secret=False,
-            prevent_user_existence_errors=True,
-            supported_identity_providers=[cognito.UserPoolClientIdentityProvider.COGNITO],
-            access_token_validity=Duration.minutes(15),
-            id_token_validity=Duration.minutes(15),
-            refresh_token_validity=Duration.days(1),
-            enable_token_revocation=True,
             o_auth=cognito.OAuthSettings(
                 flows=cognito.OAuthFlows(authorization_code_grant=True),
                 scopes=[
@@ -53,12 +68,17 @@ class AuthStack(Stack):
                     cognito.OAuthScope.EMAIL,
                     cognito.OAuthScope.PROFILE,
                 ],
-                callback_urls=[f"{origin}/auth/callback"],
-                logout_urls=[origin],
+                callback_urls=[f"{o}/auth/callback" for o in origins],
+                logout_urls=[f"{o}/" for o in origins],
             ),
+            supported_identity_providers=[cognito.UserPoolClientIdentityProvider.COGNITO],
+            prevent_user_existence_errors=True,
+            enable_token_revocation=True,
+            access_token_validity=Duration.hours(1),
+            id_token_validity=Duration.hours(1),
+            refresh_token_validity=Duration.days(7),
         )
-        self.issuer = self.pool.user_pool_provider_url
-        self.domain = domain.base_url()
-        CfnOutput(self, "Issuer", value=self.issuer)
-        CfnOutput(self, "ClientId", value=self.client.user_pool_client_id)
-        CfnOutput(self, "DomainUrl", value=self.domain)
+        self.domain_url = self.domain.base_url()
+        CfnOutput(self, "UserPoolId", value=self.user_pool.user_pool_id)
+        CfnOutput(self, "WebClientId", value=self.client.user_pool_client_id)
+        CfnOutput(self, "HostedUiUrl", value=self.domain_url)

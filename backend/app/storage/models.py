@@ -5,6 +5,9 @@ from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
+# Owner of data created without sign-in (AUTH_MODE=none) and of rows from before user_id
+LOCAL_USER_ID = "local"
+
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(8)}"
@@ -16,7 +19,7 @@ def utcnow() -> datetime:
 
 class Connection(SQLModel, table=True):
     id: str = Field(default_factory=lambda: new_id("conn"), primary_key=True)
-    user_id: str = Field(default="local-dev", index=True)
+    user_id: str = Field(default=LOCAL_USER_ID, index=True)  # owner (docs/API_CONTRACT.md §0.1)
     name: str
     type: str  # "access_key" | "role"
     region: str
@@ -37,7 +40,7 @@ class Connection(SQLModel, table=True):
 
 class Conversation(SQLModel, table=True):
     id: str = Field(default_factory=lambda: new_id("conv"), primary_key=True)
-    user_id: str = Field(default="local-dev", index=True)
+    user_id: str = Field(default=LOCAL_USER_ID, index=True)
     connection_id: str = Field(index=True)
     title: str = ""
     created_at: datetime = Field(default_factory=utcnow)
@@ -46,7 +49,6 @@ class Conversation(SQLModel, table=True):
 
 class Message(SQLModel, table=True):
     id: str = Field(default_factory=lambda: new_id("msg"), primary_key=True)
-    user_id: str = Field(default="local-dev", index=True)
     conversation_id: str = Field(index=True)
     role: str  # user | assistant
     content: str = ""
@@ -56,7 +58,6 @@ class Message(SQLModel, table=True):
 
 class ToolCallRecord(SQLModel, table=True):
     id: str = Field(default_factory=lambda: new_id("tc"), primary_key=True)
-    user_id: str = Field(default="local-dev", index=True)
     message_id: str = Field(index=True)
     seq: int = 0
     tool: str
@@ -76,7 +77,7 @@ class Proposal(SQLModel, table=True):
     """A remediation the agent proposed; executed only after the user approves it."""
 
     id: str = Field(default_factory=lambda: new_id("prop"), primary_key=True)
-    user_id: str = Field(default="local-dev", index=True)
+    user_id: str = Field(default=LOCAL_USER_ID, index=True)  # owner of the conversation
     conversation_id: str = Field(index=True)
     message_id: str = ""
     connection_id: str = ""
@@ -105,7 +106,7 @@ class Job(SQLModel, table=True):
     """One background diagnosis turn (docs/API_CONTRACT.md §8)."""
 
     id: str = Field(default_factory=lambda: new_id("job"), primary_key=True)
-    user_id: str = Field(default="local-dev", index=True)
+    user_id: str = Field(default=LOCAL_USER_ID, index=True)  # owner of the conversation
     type: str = "diagnosis"
     conversation_id: str = Field(index=True)
     question: str = ""
