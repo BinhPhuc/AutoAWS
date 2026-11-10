@@ -17,6 +17,7 @@ import { useConversation } from '@/hooks/useConversations'
 import { useTheme } from '@/lib/theme'
 import { S } from '@/lib/strings'
 import { navItems } from '@/lib/nav'
+import { SignOutButton } from '@/lib/auth'
 
 /** Top bar: menu (mobile) · breadcrumb · backend/LLM status · active connection · theme. */
 export function HeaderBar({ onMenu }: { onMenu: () => void }) {
@@ -36,6 +37,7 @@ export function HeaderBar({ onMenu }: { onMenu: () => void }) {
       <div className="ml-auto flex items-center gap-2">
         <SystemStatus />
         <ConnectionSwitcher />
+        <SignOutButton />
         <Button
           variant="ghost"
           size="icon-sm"

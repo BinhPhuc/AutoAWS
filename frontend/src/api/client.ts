@@ -3,6 +3,17 @@ import type { ApiErrorBody, Envelope } from './types'
 export const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
+let accessToken: (() => Promise<string | null>) | undefined
+let unauthorized: (() => void) | undefined
+
+export function configureAuthentication(
+  getToken: () => Promise<string | null>,
+  onUnauthorized: () => void,
+) {
+  accessToken = getToken
+  unauthorized = onUnauthorized
+}
+
 export class ApiError extends Error {
   status_code: number
   error: string
@@ -29,7 +40,8 @@ function fallbackError(res: Response, path: string): ApiErrorBody {
   return {
     status_code: res.status,
     message: res.statusText || 'Request failed',
-    error: res.status >= 500 ? 'INTERNAL' : 'VALIDATION_ERROR',
+    error:
+      res.status === 401 ? 'UNAUTHORIZED' : res.status >= 500 ? 'INTERNAL' : 'VALIDATION_ERROR',
     path,
     timestamp: new Date().toISOString(),
   }
@@ -39,7 +51,9 @@ export async function toApiError(res: Response, path: string): Promise<ApiError>
   let body: ApiErrorBody
   try {
     body = (await res.json()) as ApiErrorBody
-    if (typeof body?.message !== 'string') body = fallbackError(res, path)
+    if (typeof body?.status_code !== 'number' || typeof body?.error !== 'string') {
+      body = { ...fallbackError(res, path), message: body?.message || res.statusText }
+    }
   } catch {
     body = fallbackError(res, path)
   }
@@ -51,6 +65,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const headers = new Headers(init.headers)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   headers.set('Accept', 'application/json')
+  const token = await accessToken?.()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
 
   let res: Response
   try {
@@ -64,6 +80,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       timestamp: new Date().toISOString(),
     })
   }
+  if (res.status === 401) unauthorized?.()
   if (!res.ok) throw await toApiError(res, path)
 
   const body = (await res.json()) as Envelope<T>

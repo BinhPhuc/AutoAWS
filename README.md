@@ -14,7 +14,7 @@ Người dùng kết nối tài khoản AWS của mình bằng **quyền chỉ �
 | **Chẩn đoán qua hỏi đáp** | ✅ 19 công cụ đọc (EC2, SSM, VPC, Route 53, DNS công khai, ELB, CloudWatch metrics/alarms, Logs Insights, CloudTrail); câu trả lời nhiều nguyên nhân gốc, server tự kiểm từng bằng chứng; giới hạn vòng / thời gian / token; chống prompt injection qua dữ liệu |
 | **Khắc phục có phê duyệt** (human-in-the-loop) | ✅ 6 hành động cố định (Bảng 2.11), xem trước → Duyệt / Từ chối / Góp ý → kiểm tra lại → thực thi bằng role riêng → kiểm chứng → đề xuất hoàn tác |
 | Kiểm tra theo checklist | ⏳ chưa làm |
-| Đăng nhập (Cognito) | ⏳ chưa làm — hiện chế độ 1 người dùng |
+| Đăng nhập (Cognito) | ✅ Hosted UI + PKCE, JWT, cách ly dữ liệu theo `user_id`; xem [cấu hình](docs/AUTH.md) |
 
 ## Kiến trúc
 
@@ -26,7 +26,7 @@ Frontend (React/Vite) ──REST + job polling──► Backend FastAPI
                                               ├─ Agent loop ──► LLM provider (mock | bedrock | anthropic | mcp)
                                               ├─ Tool đọc AWS ──► Sanitizer
                                               ├─ Luồng duyệt khắc phục (chạy nền)
-                                              └─ SQLite | DynamoDB
+                                              └─ DynamoDB
                                                     │ boto3: AssumeRole + ExternalId (hoặc Access Key cho dev)
                                                     ▼
                                     Tài khoản AWS của người dùng (role chỉ đọc · role sửa tuỳ chọn)
@@ -48,7 +48,7 @@ Agent-worker (thành phần duy nhất nói chuyện với LLM) **không bao gi�
 
 - Chạy end-to-end trên máy với LLM giả lập (`LLM_PROVIDER=mock`), hoặc một MCP client đóng vai LLM (`LLM_PROVIDER=mcp`), dữ liệu AWS từ LocalStack.
 - `BedrockProvider` (Claude qua Bedrock Mantle) và hạ tầng CDK **đã viết, chưa chạy trên AWS thật** (chưa có tài khoản).
-- Kiểm thử: 190 test backend (moto), 7 test frontend, 7 test CDK. Chi tiết ở [`AGENTS.md`](AGENTS.md) mục "Trạng thái hiện tại".
+- Kiểm thử: 209 test backend (moto), 7 test frontend, 7 test CDK. Chi tiết ở [`AGENTS.md`](AGENTS.md) mục "Trạng thái hiện tại".
 
 ## Kịch bản kiểm thử
 
@@ -110,6 +110,7 @@ Chi tiết: [`infra/localstack/README.md`](infra/localstack/README.md), [`infra/
 # 1. Backend
 cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]" && cp .env.example .env
+# Tạo bảng theo infra/cloudformation/README.md rồi điền DYNAMODB_TABLE, DYNAMODB_REGION trong .env
 uvicorn app.main:app --reload          # http://localhost:8000/docs
 
 # 2. Frontend (terminal khác)
@@ -121,7 +122,13 @@ cd frontend && pnpm install && cp .env.example .env && pnpm dev   # http://local
 Mở http://localhost:5173 → **Connections** → Add connection (Access Key cho dev, hoặc IAM Role + template CloudFormation) → Verify → **Diagnose** → mô tả sự cố. Đề xuất sửa (nếu có) hiện ngay trong câu trả lời và ở trang **Proposals**; với Access Key cần bật `REMEDIATION_ALLOW_ACCESS_KEYS=true` (chỉ dev).
 Không có backend? `VITE_USE_MOCK=true pnpm dev` chạy với dữ liệu giả lập.
 Không có AWS / Bedrock? Xem `infra/localstack/README.md`: dựng kịch bản trong LocalStack và để một MCP client (ví dụ Claude Code) đóng vai LLM qua `LLM_PROVIDER=mcp`.
-Triển khai lên AWS: [`infra/cdk/README.md`](infra/cdk/README.md) (`./build_lambda.sh` rồi `cdk deploy --all`).
+Triển khai backend trên EC2 + frontend trên S3/CloudFront: dùng
+`docker compose -f docker-compose.backend.yml up -d --build` cho backend; xem
+[`backend/README.md`](backend/README.md#deploy-backend-trên-ec2) và
+[`frontend/README.md`](frontend/README.md#build-riêng-để-deploy-s3cloudfront).
+Template DynamoDB độc lập: [`infra/cloudformation/dynamodb.yaml`](infra/cloudformation/dynamodb.yaml),
+cách tạo bảng và cấu hình backend: [`infra/cloudformation/README.md`](infra/cloudformation/README.md).
+Triển khai serverless lên AWS: [`infra/cdk/README.md`](infra/cdk/README.md) (`./build_lambda.sh` rồi `cdk deploy --all`).
 
 ## Nhóm
 

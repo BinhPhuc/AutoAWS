@@ -50,6 +50,28 @@ describe('useSendMessage', () => {
     send.mockResolvedValue(job('queued'))
   })
 
+  it('stops polling and cache updates when sign-out unmounts the chat', async () => {
+    let finishPoll!: (value: { data: Job }) => void
+    get.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPoll = resolve
+        }),
+    )
+    const { hook, invalidate } = setup()
+    let pending!: Promise<void>
+    await act(async () => {
+      pending = hook.result.current.send('Check my instance')
+    })
+    expect(get).toHaveBeenCalledOnce()
+    hook.unmount()
+    invalidate.mockClear()
+    finishPoll(job('running'))
+    await pending
+    expect(get).toHaveBeenCalledOnce()
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+
   it('polls the job, applies its events, then drops the live copy', async () => {
     get
       .mockResolvedValueOnce(

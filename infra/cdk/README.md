@@ -19,6 +19,7 @@ Trình duyệt ─► CloudFront ─┬─► S3 (giao diện React, OAC)
 
 | Stack (`AutoAws-<envName>-…`) | Tài nguyên |
 |---|---|
+| `Auth` | Cognito User Pool, xác minh email, public SPA client, Hosted UI domain; outputs Issuer / ClientId / DomainUrl |
 | `Data` | Bảng DynamoDB (single-table như `backend/app/storage/dynamo.py`), KMS key xoay vòng, PITR, TTL `ttl` |
 | `Agent` | Lambda `agent-worker` (role `autoaws-agent-worker`: AssumeRole chỉ `AutoAWSReadOnly`, `bedrock-mantle:CreateInference` giới hạn model, reserved concurrency 5, async retry 0), Lambda `action-executor` (role `autoaws-action-executor`: AssumeRole `AutoAWSRemediation` + `AutoAWSReadOnly`, Deny Bedrock) |
 | `Workflow` | State machine `autoaws-remediation-flow` (Standard), SNS topic + email |
@@ -26,7 +27,7 @@ Trình duyệt ─► CloudFront ─┬─► S3 (giao diện React, OAC)
 | `Frontend` | S3 riêng tư + CloudFront (OAC, SPA fallback, `/api/*` → HTTP API cùng origin) |
 | `Ops` | Alarm lỗi / throttle của 3 Lambda + flow thất bại, AWS Budgets 20 USD |
 
-Chưa có: stack **Auth (Cognito + JWT authorizer)** — API hiện **không có xác thực**, đừng chia sẻ URL; làm ở đợt sau.
+Stack **Auth** tạo Cognito User Pool + public client (code + PKCE), domain, callback/logout URLs theo `frontendUrl`; API dùng JWT authorizer + scope `openid`. Backend kiểm JWT độc lập. Xem [đăng nhập và migration](../../docs/AUTH.md).
 
 ## Deploy (khi có tài khoản)
 

@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { ChatPage } from '@/pages/ChatPage'
 import { ChecklistPage } from '@/pages/ChecklistPage'
@@ -8,6 +8,7 @@ import { ProposalsPage } from '@/pages/ProposalsPage'
 import { ToolsPage } from '@/pages/ToolsPage'
 
 export const router = createBrowserRouter([
+  { path: '/auth/callback', element: <Navigate to="/" replace /> },
   {
     path: '/',
     element: <AppShell />,

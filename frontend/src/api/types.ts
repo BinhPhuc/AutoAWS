@@ -307,3 +307,14 @@ export interface ToolSpec {
   input_schema: Record<string, unknown>
   aws_actions: string[]
 }
+export interface AuthConfig {
+  mode: 'cognito' | 'none'
+  issuer: string | null
+  client_id: string | null
+  domain: string | null
+}
+
+export interface AuthUser {
+  user_id: string
+  username: string | null
+}

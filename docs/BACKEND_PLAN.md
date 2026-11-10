@@ -170,7 +170,11 @@ Role `AutoAWSReadOnly`: trust policy `Principal: {AWS: <PLATFORM_AWS_ACCOUNT_ID>
 ### 4.8 Cấu hình (`.env.example`)
 ```
 APP_ENV=dev
-DB_PATH=./autoaws.db
+STORAGE_BACKEND=dynamodb
+DYNAMODB_TABLE=                # điền tên bảng từ CloudFormation Outputs
+DYNAMODB_REGION=               # điền region của bảng
+DYNAMODB_ENDPOINT_URL=         # để trống với AWS endpoint chuẩn
+DYNAMODB_CREATE_TABLE=false
 LLM_PROVIDER=mock              # mock | anthropic | bedrock
 ANTHROPIC_API_KEY=
 BEDROCK_MODEL_ID=
@@ -178,7 +182,7 @@ BEDROCK_REGION=
 PLATFORM_AWS_ACCOUNT_ID=       # cần cho type=role (tài khoản nền tảng)
 PLATFORM_AWS_PROFILE=          # hoặc AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY chuẩn của boto3
 MAX_AGENT_ITERATIONS=8
-CORS_ORIGINS=http://localhost:5173
+CORS_ORIGINS=*
 ```
 
 ## 5. Lộ trình thực hiện (tick khi xong)
@@ -202,8 +206,9 @@ Hoàn thành 2026-10-16: 25 test pass (`pytest`), ruff sạch. Ghi chú triển 
 - `AnthropicProvider` / `BedrockProvider` thật (+ Guardrails).
 - Tool M3: `cloudwatch_get_metric_data`, `logs_insights_query` (giới hạn khung thời gian, lọc mức lỗi, tóm tắt), `cloudtrail_lookup_events`.
 - Checklist runner (parser → chạy từng mục → lưu từng mục).
-- Auth (Cognito JWT) — middleware FastAPI `Depends(current_user)`; mọi bảng thêm `user_id`.
+- [x] Auth (2026-11-10): Cognito access JWT + middleware, Store theo `user_id` trên SQLite/DynamoDB, worker/Step Functions truyền owner, migration offline, stack Auth + JWT authorizer. Xem `AUTH.md`.
 - ~~Lưu trữ DynamoDB + KMS~~ — **đã làm (2026-10-27)**: `STORAGE_BACKEND=dynamodb`, xem `backend/README.md` mục Lưu trữ. Còn lại: mã hoá cấp trường cho secret, đóng gói `api-handler` / `agent-worker` lên Lambda (Mangum); Step Functions cho checklist.
+- [x] **EC2 + DynamoDB (2026-11-10)**: mặc định DynamoDB, template độc lập `infra/cloudformation/dynamodb.yaml`, Compose backend không dùng volume SQLite; bảng/region/endpoint do người deploy điền, kiểm tra bảng lúc startup và không tự tạo bảng trên EC2. Kiểm chứng: 209 test BE, ruff và cfn-lint sạch; chưa deploy AWS thật.
 - Giới hạn chi phí: cache kết quả tool theo (connection, tool, input) trong phiên; đếm token.
 
 ## 7. Quy tắc bắt buộc (cho mọi người/agent sửa backend)

@@ -1,6 +1,16 @@
 // All user-facing UI strings (English). Agent answers come from the backend (Vietnamese) and are shown as-is.
 
 export const S = {
+  auth: {
+    title: 'Sign in to AutoAWS',
+    description:
+      'Connect your AWS accounts and keep your diagnoses in your own workspace. Sign in or create an account with Amazon Cognito.',
+    loading: 'Checking your session…',
+    signIn: 'Sign in or create account',
+    signOut: 'Sign out',
+    failed: 'Could not sign in. Please try again.',
+    retry: 'Reload',
+  },
   app: {
     name: 'AutoAWS',
     tagline: 'AI troubleshooting assistant for AWS',

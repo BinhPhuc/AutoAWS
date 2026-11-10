@@ -36,6 +36,10 @@ function fail(status_code: number, error: string, message: string, path: string)
 const pathOf = (req: Request) => new URL(req.url).pathname
 
 export const handlers = [
+  http.get('/api/auth/config', () =>
+    ok({ mode: 'none', issuer: null, client_id: null, domain: null }),
+  ),
+  http.get('/api/auth/me', () => ok({ user_id: 'local-dev', username: 'Local developer' })),
   http.get('/api/health', async () => {
     await delay(100)
     return ok({ status: 'ok', version: '0.1.0-mock', llm_provider: 'mock' })

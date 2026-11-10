@@ -17,6 +17,27 @@ VITE_USE_MOCK=true pnpm dev
 
 Mở http://localhost:5173.
 
+## Build riêng để deploy S3/CloudFront
+
+Backend chạy độc lập trên EC2 bằng `../docker-compose.backend.yml`. Trong thư mục
+`frontend/`, build với URL HTTPS thực tế của backend:
+
+```bash
+pnpm install --frozen-lockfile
+VITE_API_URL=https://api.example.com VITE_USE_MOCK=false pnpm build
+```
+
+`VITE_API_URL` là origin của API, không thêm `/api` vì client đã thêm đường dẫn này.
+Biến được nhúng vào bundle khi build; đổi URL cần build và upload lại.
+Không đặt secret trong biến `VITE_*`.
+
+Upload nội dung `dist/` lên S3 origin của CloudFront, đặt default root object là
+`index.html`, và cấu hình SPA fallback về `index.html` cho đường dẫn React Router.
+Khi cập nhật bản build, invalidate cache CloudFront để nhận bản mới.
+Không cần chạy container frontend/nginx trên EC2.
+
+Nếu frontend phục vụ qua HTTPS, API cũng phải có URL HTTPS để tránh mixed content.
+
 ## Lệnh khác
 
 ```bash
@@ -41,3 +62,7 @@ src/
 Quy ước: text UI tiếng Anh, gom trong `src/lib/strings.ts`; nội dung câu trả lời của agent (tiếng Việt) đến từ backend và hiển thị nguyên văn. Kiểu API chỉ khai báo ở `src/api/types.ts`.
 
 Mock: tên kết nối chứa chữ "fail" sẽ giả lập verify thất bại.
+
+## Đăng nhập Cognito
+
+Xem [cấu hình Cognito, cách ly `user_id` và migration dữ liệu cũ](../docs/AUTH.md). Mặc định `AUTH_MODE=cognito`; EC2 cần `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN`. Dev offline đặt `AUTH_MODE=none` cùng `APP_ENV=dev`, `RUNTIME=local`. Frontend lấy cấu hình công khai từ API, không cần biến Vite riêng cho Cognito.

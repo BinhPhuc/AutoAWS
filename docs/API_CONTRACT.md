@@ -2,7 +2,7 @@
 
 > Hợp đồng dùng chung để frontend và backend làm **song song**. Mọi thay đổi endpoint/schema phải sửa file này trước, rồi mới sửa code hai phía.
 > Base URL dev: `http://localhost:8000`. Mọi endpoint có tiền tố `/api`. JSON, UTF-8. Thời gian ISO-8601 UTC.
-> Bản init **không có auth**; sau này thêm header `Authorization: Bearer <JWT>` không đổi payload.
+> API yêu cầu `Authorization: Bearer <Cognito access token>`; chỉ health và cấu hình đăng nhập công khai. `AUTH_MODE=none` chỉ dành cho local dev/test.
 > **Ngôn ngữ:** `message`, event `status` của job, label/mô tả tool, UI → **tiếng Anh**. Riêng **câu trả lời của agent** (`DiagnosisAnswer` và `content` của assistant) → **tiếng Việt**. Tài liệu này tiếng Việt.
 
 ## 0. Quy ước response (áp dụng cho MỌI endpoint JSON)
@@ -59,6 +59,18 @@ Không còn endpoint SSE: lỗi xảy ra **trong lúc** agent chạy nằm trong
 ---
 
 ## 1. Health
+
+### Xác thực và chủ sở hữu (2026-11-10)
+
+- `GET /api/auth/config` công khai, envelope chuẩn; `data` = `{mode: "cognito" | "none", issuer: string | null, client_id: string | null, domain: string | null}`. Chỉ chứa cấu hình công khai, không có client secret.
+- `GET /api/auth/me` yêu cầu đăng nhập; `data` = `{user_id: string, username: string | null}`. `user_id` lấy từ `sub` của access token đã kiểm chữ ký RS256, issuer, thời hạn, `token_use=access`, `client_id` và scope `openid`. Không nhận user ID từ body/query/header tự khai báo.
+- FE đăng ký/đăng nhập bằng Cognito Hosted UI, Authorization Code + PKCE S256; callback `/auth/callback`. Token chỉ ở bộ nhớ; refresh token dùng để gia hạn phiên. Logout xoá phiên/cache và chuyển tới Cognito `/logout` với `logout_uri` đã đăng ký.
+- Thiếu/sai/hết hạn token: HTTP 401, `error=UNAUTHORIZED`, `message="Authentication required"` hoặc `"Invalid or expired access token"`, envelope lỗi mục 0. JWKS tạm thời không truy cập được: 503 `AUTH_UNAVAILABLE`.
+- Mọi API nghiệp vụ (kể cả tools/checklists) phải đăng nhập. API Gateway cũng kiểm JWT + scope `openid`; lỗi bị Gateway từ chối trước Lambda dùng response mặc định của Gateway. Backend luôn kiểm JWT để bảo vệ cả khi chạy trực tiếp trên EC2.
+- Các bảng/item Connection, Conversation, Message, ToolCallRecord, Job, Proposal có `user_id` nội bộ. Mọi đọc/ghi/list/xoá/duyệt/huỷ chỉ trong người dùng hiện tại; ID của người khác trả 404 như ID không tồn tại. Payload nghiệp vụ giữ nguyên, không cho client gán chủ sở hữu.
+- Worker/Step Functions truyền `user_id` trong payload nội bộ, mở store theo người đó; thiếu user ID bị từ chối. Không có worker mặc định đọc toàn bộ người dùng.
+- DynamoDB thêm tiền tố `USER#<user_id>#` cho PK/GSI1PK; ById chỉ nhận item cùng `user_id`. SQLite thêm cột/index `user_id`, mọi truy vấn có điều kiện chủ sở hữu. Dữ liệu cũ không có chủ sở hữu bị cách ly; chỉ migration offline, có chỉ định người nhận rõ ràng mới chuyển dữ liệu (xem `docs/AUTH.md`).
+- `AUTH_MODE=none` dùng chủ sở hữu cố định `local-dev`, không hỗ trợ giả lập người khác bằng header. Không cho khởi động chế độ này ngoài `APP_ENV=dev|test` và `RUNTIME=local`. MCP bridge chưa có phân quyền nhiều người: không cho bật cùng Cognito.
 
 ### `GET /api/health`
 ```json

@@ -45,7 +45,11 @@ class WorkflowStack(Stack):
                 name,
                 lambda_function=fn,
                 payload=sfn.TaskInput.from_object(
-                    {"mode": mode, "proposal_id": sfn.JsonPath.string_at("$.proposal_id")}
+                    {
+                        "mode": mode,
+                        "proposal_id": sfn.JsonPath.string_at("$.proposal_id"),
+                        "user_id": sfn.JsonPath.string_at("$.user_id"),
+                    }
                 ),
                 payload_response_only=True,
                 result_path=result,
@@ -80,6 +84,7 @@ class WorkflowStack(Stack):
             payload=sfn.TaskInput.from_object(
                 {
                     "mode": "store_token",
+                    "user_id": sfn.JsonPath.string_at("$.user_id"),
                     "proposal_id": sfn.JsonPath.string_at("$.proposal_id"),
                     "task_token": sfn.JsonPath.task_token,
                 }

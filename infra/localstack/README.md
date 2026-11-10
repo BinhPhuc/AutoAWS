@@ -35,6 +35,8 @@ Chạy backend trỏ vào LocalStack, LLM do một MCP client đóng vai:
 cd backend
 LLM_PROVIDER=mcp AWS_ENDPOINT_URL=http://localhost:4566 PLATFORM_AWS_ACCOUNT_ID=000000000000 \
 AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE AWS_SECRET_ACCESS_KEY=localstack-secret-key \
+DYNAMODB_TABLE=autoaws DYNAMODB_REGION=ap-southeast-1 DYNAMODB_CREATE_TABLE=true \
+DYNAMODB_ENDPOINT_URL=http://localhost:4566 \
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

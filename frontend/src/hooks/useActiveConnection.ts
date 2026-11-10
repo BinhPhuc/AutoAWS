@@ -29,6 +29,10 @@ function setCurrent(id: string | null) {
   listeners.forEach((l) => l())
 }
 
+export function clearActiveConnection() {
+  setCurrent(null)
+}
+
 /**
  * Active connection = stored choice if it is still a connected connection,
  * otherwise the first connected one.

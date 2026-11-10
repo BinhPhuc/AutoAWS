@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -88,6 +88,13 @@ export function useSendMessage(conversationId: string | undefined) {
   const qc = useQueryClient()
   const [state, setState] = useState<LiveState>(initialLiveState)
   const jobRef = useRef<string | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const reset = useCallback(() => setState(initialLiveState), [])
 
@@ -113,7 +120,9 @@ export function useSendMessage(conversationId: string | undefined) {
       let job: Job
       try {
         job = (await conversationsApi.send(conversationId, content)).data
+        if (!mounted.current) return
       } catch (err) {
+        if (!mounted.current) return
         // Nothing was stored: keep the question and the error on screen.
         const msg = err instanceof ApiError ? err.message : S.chat.streamError
         setState((prev) => ({ ...prev, streaming: false, statusText: null, error: msg }))
@@ -128,11 +137,14 @@ export function useSendMessage(conversationId: string | undefined) {
       let failures = 0
       try {
         for (;;) {
+          if (!mounted.current) return
           let fresh: Job
           try {
             fresh = (await jobsApi.get(job.id, lastSeq)).data
+            if (!mounted.current) return
             failures = 0
           } catch {
+            if (!mounted.current) return
             if (++failures >= 5) throw new Error(S.chat.streamError)
             await new Promise((r) => setTimeout(r, polling.ms))
             continue
@@ -147,17 +159,20 @@ export function useSendMessage(conversationId: string | undefined) {
           await new Promise((r) => setTimeout(r, polling.ms))
         }
       } catch (err) {
+        if (!mounted.current) return
         const msg = err instanceof Error ? err.message : S.chat.streamError
         setState((prev) => ({ ...prev, error: msg }))
         toast.error(msg)
       } finally {
         jobRef.current = null
-        // Refresh the persisted conversation, then drop the live copy once the server copy
-        // is in cache (the server stores every turn, answered or not - API_CONTRACT §3).
-        await qc.invalidateQueries({ queryKey: conversationKeys.detail(conversationId) })
-        await qc.invalidateQueries({ queryKey: conversationKeys.all })
-        void qc.invalidateQueries({ queryKey: ['proposals'] })
-        setState(initialLiveState)
+        if (mounted.current) {
+          // Refresh the persisted conversation, then drop the live copy once the server copy
+          // is in cache (the server stores every turn, answered or not - API_CONTRACT §3).
+          await qc.invalidateQueries({ queryKey: conversationKeys.detail(conversationId) })
+          await qc.invalidateQueries({ queryKey: conversationKeys.all })
+          void qc.invalidateQueries({ queryKey: ['proposals'] })
+          setState(initialLiveState)
+        }
       }
     },
     [conversationId, qc],

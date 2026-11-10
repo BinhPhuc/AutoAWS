@@ -31,7 +31,9 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Khắc phục có phê duyệt (2026-11-08, nhánh `feat/remediation`): danh mục 6 hành động (`app/aws/remediation/catalog.py`), session ghi khoá theo hành động, luồng duyệt / từ chối / góp ý / hết hạn / STALE / kiểm chứng / đề xuất hoàn tác (`app/remediation/service.py`), API `/api/proposals*`, role `AutoAWSRemediation` trong CloudFormation (`EnableRemediation`), UI duyệt trong chat + trang Proposals. Ràng buộc #1 đã đổi tương ứng. 174 test BE, 12 test FE; chạy thật trên LocalStack (KB1).
 - [x] Serverless đúng báo cáo (2026-11-09, nhánh `feat/serverless`): bỏ SSE → job + hỏi lại (`/api/jobs/{id}`, huỷ, phát hiện worker mất); `RUNTIME=local|lambda` (`app/platform/dispatch.py`); handler `app/handlers/{api,agent_worker,action_executor}.py`; luồng duyệt tách 3 bước cho Step Functions (task token); trust policy template khách thu hẹp vào role `autoaws-agent-worker` / `autoaws-action-executor`; CDK `infra/cdk/` 6 stack (Data, Agent, Workflow, Api, Frontend, Ops) synth + cfn-lint sạch — **chưa deploy** (không có tài khoản AWS). 190 test BE, 7 test FE, 7 test CDK.
 - [x] Hoàn thiện khắc phục có phê duyệt (2026-11-10, nhánh `feat/remediation-complete`): DryRun trước khi ghi cho 4 hành động EC2 (chỉ trên AWS thật — moto/LocalStack bỏ qua DryRun và ghi thật; endpoint không trả `DryRunOperation` thì dừng), khôi phục đề xuất bị ngắt khi backend local khởi động lại, số đề xuất chờ duyệt trên thanh điều hướng. 200 test BE.
-- [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; auth Cognito (stack Auth, JWT authorizer, phân vùng `userId`); checklist runner
+- [x] Cấu hình demo EC2 + CloudFront + DynamoDB (2026-11-10): `docker-compose.backend.yml` chỉ chạy backend, mặc định dùng DynamoDB và không tự tạo bảng; template `infra/cloudformation/dynamodb.yaml` tạo bảng/index/TTL/KMS, table/region/endpoint điền qua `.env`; sửa thứ tự user/assistant khi timestamp trùng, bổ sung `tzdata` cho Windows/image tối giản. 209 test BE, ruff + cfn-lint sạch. **Chưa deploy AWS thật.**
+- [x] Đăng nhập và phân vùng người dùng (2026-11-10): Cognito Hosted UI + PKCE, kiểm access JWT trên EC2/Lambda, stack Auth + JWT authorizer; `user_id` trên sáu bảng, Store/worker/Step Functions/cache phiên AWS theo owner; FE refresh/logout/401 xoá cache và dừng polling; migration offline dữ liệu cũ. 236 test BE, 15 test FE, 8 test CDK; lint/build đạt. Xem `docs/AUTH.md`. **Chưa deploy/kiểm chứng Hosted UI trên AWS thật.**
+- [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; checklist runner
 
 ## Bố cục repo
 
@@ -47,8 +49,9 @@ AutoAWS/
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
 ├── frontend/                # Vite + React + TS — src/{api,hooks,pages,components,lib,mocks} (xem frontend/README.md)
-├── infra/                   # localstack/ (seed), aws-scenarios/ (KB1–KB7), demo-apps/, eval/, cdk/ (hạ tầng nền tảng)
+├── infra/                   # cloudformation/ (DynamoDB EC2), localstack/, aws-scenarios/, demo-apps/, eval/, cdk/
 ├── docker-compose.yml
+├── docker-compose.backend.yml  # backend EC2 + DynamoDB; frontend build riêng lên CloudFront
 └── .claude/ .agents/ .gemini/   # skills của AI tool — gitignore, mỗi người tự cài
 ```
 
@@ -78,10 +81,10 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 | # | Quyết định | Lý do |
 |---|---|---|
-| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) mặc định; DynamoDB chọn bằng `STORAGE_BACKEND` | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE; DynamoDB là lưu trữ đích |
+| 1 | Backend **Python + FastAPI**, boto3, **DynamoDB mặc định** (bảng tạo bằng IaC); SQLite chỉ bật tường minh cho local/test | Khớp lưu trữ đích; EC2 không cần database volume |
 | 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
-| 4 | **Chưa có auth**, chế độ 1 người dùng | Init tập trung luồng kết nối → chat; chừa middleware |
+| 4 | **Cognito Hosted UI + PKCE**, JWT access token; `user_id=sub` trên mọi bảng | Cách ly nhiều người dùng; `AUTH_MODE=none` chỉ cho local dev/test |
 | 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**; tiến trình chẩn đoán = job + hỏi lại (`GET /api/jobs/{id}`) | Nhẹ, đầu ra tĩnh cho S3/CloudFront |
 | 7 | Triển khai **serverless đúng báo cáo** (`RUNTIME=lambda`): API Gateway HTTP API → Lambda api-handler / agent-worker / action-executor, Step Functions `remediation-flow`, SNS; hạ tầng CDK `infra/cdk/`. Local vẫn chạy 1 tiến trình (`RUNTIME=local`) | API Gateway giới hạn 30 giây → bỏ SSE; agent-worker không bao giờ có quyền ghi |
 | 6 | Checklist, metrics/logs/CloudTrail đầy đủ, DynamoDB, Lambda → **sau init** | |

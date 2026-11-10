@@ -169,3 +169,45 @@ def test_alarms_and_budget(stacks):
         "AWS::Budgets::Budget",
         {"Budget": Match.object_like({"BudgetLimit": {"Amount": 20, "Unit": "USD"}})},
     )
+
+
+def test_cognito_and_jwt_protect_the_api(stacks):
+    stacks["auth"].has_resource_properties(
+        "AWS::Cognito::UserPoolClient",
+        {
+            "GenerateSecret": False,
+            "AllowedOAuthFlows": ["code"],
+            "AllowedOAuthScopes": ["openid", "email", "profile"],
+            "CallbackURLs": ["http://localhost:5173/auth/callback"],
+            "LogoutURLs": ["http://localhost:5173"],
+            "EnableTokenRevocation": True,
+        },
+    )
+    stacks["api"].has_resource_properties(
+        "AWS::ApiGatewayV2::Authorizer",
+        {
+            "AuthorizerType": "JWT",
+            "IdentitySource": ["$request.header.Authorization"],
+        },
+    )
+    stacks["api"].has_resource_properties(
+        "AWS::ApiGatewayV2::Route",
+        {
+            "RouteKey": "$default",
+            "AuthorizationType": "JWT",
+            "AuthorizationScopes": ["openid"],
+        },
+    )
+    routes = stacks["api"].find_resources("AWS::ApiGatewayV2::Route")
+    public = {
+        r["Properties"]["RouteKey"]
+        for r in routes.values()
+        if r["Properties"].get("AuthorizationType") == "NONE"
+    }
+    assert public == {"GET /api/health", "GET /api/auth/config"}
+    api_functions = stacks["api"].find_resources("AWS::Lambda::Function")
+    variables = next(iter(api_functions.values()))["Properties"]["Environment"]["Variables"]
+    assert variables["AUTH_MODE"] == "cognito"
+    assert {"COGNITO_ISSUER", "COGNITO_CLIENT_ID", "COGNITO_DOMAIN"} <= variables.keys()
+    workflow = json.dumps(stacks["workflow"].find_resources("AWS::StepFunctions::StateMachine"))
+    assert "$.user_id" in workflow

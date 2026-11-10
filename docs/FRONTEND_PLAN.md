@@ -154,7 +154,7 @@ Hoàn thành 2026-10-16. Đã kiểm tra tích hợp thật với backend (khôn
 Ước tính: F1–F2 ≈ 1 ngày, F3 ≈ 1 ngày, F4–F5 ≈ 1.5 ngày, F6–F8 ≈ 0.5 ngày.
 
 ## 7. Sau init (không làm bây giờ)
-- Đăng nhập Cognito (Hosted UI, PKCE) → gắn `Authorization` vào `client.ts`/`sse.ts`.
+- [x] Đăng nhập Cognito (2026-11-10): Hosted UI + PKCE, callback, refresh trong bộ nhớ, bearer ở `client.ts`, logout/401 xoá query cache và dừng polling. Cấu hình runtime `/api/auth/config`, xem `AUTH.md`.
 - Màn Checklist: chọn/tải checklist, bảng kết quả từng mục cập nhật dần, báo cáo tổng hợp.
 - Hiển thị chỉ số/log (M3): mini chart cho metric, bảng log entries trong ToolCallTimeline.
 - Deploy S3 + CloudFront qua CDK.
