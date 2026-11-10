@@ -40,6 +40,88 @@ try {
 `__with_libyaml__ = False` nghĩa là đang dùng bản Python thuần; vẫn đọc/ghi YAML bình thường.
 Các cảnh báo `License classifiers` / `bdist_wheel` không phải nguyên nhân gây lỗi này.
 
+## Chat với model local qua Ollama
+
+Provider `openai` dùng Chat Completions và function calling qua HTTP async, tương thích
+[Ollama](https://docs.ollama.com/api/openai-compatibility). Model cần hỗ trợ tool calling;
+[Qwen2.5](https://ollama.com/library/qwen2.5) có hỗ trợ. Provider này gọi endpoint đã cấu
+hình; tên `openai` không có nghĩa request được gửi tới dịch vụ OpenAI.
+
+Kiểm tra Ollama đang chạy và lấy đúng tên model:
+
+```bash
+ollama list
+curl http://localhost:11434/v1/models
+```
+
+Với Qwen local, tạo biến thể context 16.384 token từ thư mục gốc repo:
+
+```bash
+ollama create autoaws-qwen2.5:16k -f infra/ollama/Modelfile
+```
+
+Biến thể dùng lại trọng số `qwen2.5:latest`, đặt temperature 0.2. Khi thử trên máy dev,
+context 4.096 không giữ được đầy đủ prompt và bộ tool (khoảng 5–6 nghìn token trước khi có lịch sử), khiến
+model bỏ qua chỉ thị ngay cả với lời chào. Tăng `OPENAI_MAX_TOKENS` chỉ tăng giới hạn
+đầu ra; context đầu vào được đặt bằng `num_ctx` trong Modelfile. Context 16.384 vẫn
+cần đủ chỗ cho lịch sử, kết quả tool và đầu ra; đây không phải bảo đảm chất lượng mọi lượt.
+
+Sửa hoặc thêm các dòng sau trong **`backend/.env` hiện có**:
+
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=autoaws-qwen2.5:16k
+OPENAI_API_KEY=
+OPENAI_TIMEOUT_SECONDS=120
+OPENAI_MAX_TOKENS=4096
+OPENAI_TOKEN_LIMIT_FIELD=max_tokens
+```
+
+`OPENAI_MODEL` phải khớp tên trong `ollama list`; đổi hostname nếu Ollama nằm trên máy
+khác. URL gồm `/v1`, provider tự nối `/chat/completions`. Local Ollama không cần API key;
+server có xác thực dùng `OPENAI_API_KEY`. Một số server yêu cầu trường giới hạn token
+`max_completion_tokens`: đặt `OPENAI_TOKEN_LIMIT_FIELD=max_completion_tokens`.
+
+Khởi động lại backend sau khi sửa `.env`, kể cả khi dùng `--reload`:
+
+```bash
+cd backend
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m uvicorn app.main:app --reload
+```
+
+Chạy frontend với `VITE_USE_MOCK=false` (hoặc bỏ biến này), mở Chat trên kết nối AWS đã
+verify và hỏi bằng tiếng Việt. Timeline hiển thị các tool đọc AWS; model trả kết luận
+qua `submit_diagnosis`, server kiểm bằng chứng và lưu lịch sử như các provider khác.
+Đây là chat chẩn đoán AWS: vẫn cần kết nối AWS đã verify. Ollama thay phần suy luận LLM,
+không thay DynamoDB, Cognito hay quyền AWS của backend. Không cần quyền Bedrock để gọi Ollama.
+
+Backend trong Docker truy cập Ollama trên host bằng
+`OPENAI_BASE_URL=http://host.docker.internal:11434/v1`. Trên Linux, thêm vào service
+`backend` trong file Compose đang dùng:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+Ollama phải lắng nghe trên địa chỉ mà Docker truy cập được; cấu hình `OLLAMA_HOST` cho
+tiến trình/dịch vụ Ollama nếu cần. `localhost` trong container là container đó.
+
+Timeout: kiểm tra tài nguyên máy và tăng `OPENAI_TIMEOUT_SECONDS` nếu model tải chậm.
+`MAX_AGENT_SECONDS` mặc định 240 giây áp dụng cho toàn lượt chẩn đoán; tăng riêng nếu
+model local cần nhiều thời gian qua nhiều vòng. Phản hồi bị cắt hoặc tool arguments sai
+JSON sẽ bị từ chối; có thể tăng `OPENAI_MAX_TOKENS` nếu thiếu token. Model nhỏ có thể
+bỏ sót lớp kiểm tra hoặc gọi lặp tool: tích hợp thành công chưa xác nhận độ chính xác
+chẩn đoán. Backend không tự đổi sang provider khác khi endpoint lỗi.
+
+Đã smoke test Ollama thật với `qwen2.5:latest` (2026-11-10): model chọn đúng
+`describe_instances` từ registry, nhận kết quả mô phỏng rồi gọi `submit_diagnosis` với
+arguments hợp lệ theo `DiagnosisAnswer`. Test không gọi AWS thật. Bộ test HTTP giả lập
+kiểm tra thêm luồng job, che secret, kiểm bằng chứng, từ chối tool không đăng ký và giới
+hạn vòng lặp; chưa đánh giá độ chính xác Qwen trên các kịch bản AWS thật.
+
 ## Deploy backend trên EC2
 
 Frontend build riêng và phục vụ từ S3 qua CloudFront. Trên EC2 đã cài Docker Engine
@@ -119,7 +201,7 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 | `app/aws/tools/` | 19 công cụ **đọc** (registry chỉ nhận action đọc, guard botocore chặn ghi lúc chạy) |
 | `app/aws/remediation/` | **Nơi duy nhất ghi**: danh mục 6 hành động + session ghi khoá theo hành động |
 | `app/remediation/` | Vòng đời đề xuất: duyệt / từ chối / góp ý / hết hạn / kiểm tra lại / thực thi / kiểm chứng |
-| `app/llm/` | Provider: mock, bedrock + anthropic (`claude.py`), mcp (MCP client đóng vai LLM) |
+| `app/llm/` | Provider: mock, openai (Ollama/Chat Completions), bedrock + anthropic (`claude.py`), mcp (MCP client đóng vai LLM) |
 | `app/worker.py`, `app/handlers/`, `app/platform/` | Việc chạy nền (job chẩn đoán, verify), Lambda handler, điều phối `RUNTIME=local\|lambda` |
 | `app/storage/` | `Store`: SQLite hoặc DynamoDB (một bảng) |
 
@@ -142,6 +224,9 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 Điền `DYNAMODB_REGION`, để trống `DYNAMODB_ENDPOINT_URL` khi dùng endpoint AWS chuẩn
 hoặc điền URL tuỳ chọn; giữ `DYNAMODB_CREATE_TABLE=false` khi dùng bảng đã tạo.
 Backend kiểm tra bảng bằng `DescribeTable` khi khởi động, không tự fallback sang SQLite.
+Khi chạy uvicorn từ `backend/`, app nạp `.env` vào môi trường để boto3 cũng đọc được
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` và `AWS_SESSION_TOKEN` (nếu dùng credentials
+tạm thời). Biến đã có trong môi trường tiến trình được ưu tiên hơn `.env`.
 Router và agent loop dùng interface `app/storage/base.py::Store`.
 SQLite còn là tuỳ chọn tường minh cho test/local (`STORAGE_BACKEND=sqlite`, `DB_PATH`),
 không được dùng trong hai file Compose. Không có bước tự chuyển dữ liệu SQLite cũ.

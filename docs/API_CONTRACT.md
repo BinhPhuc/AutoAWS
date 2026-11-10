@@ -38,6 +38,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `UNAUTHORIZED` | 401 | `"Sign in required"` / `"Invalid or expired token"` | `AUTH_MODE=cognito`: thiếu / sai / hết hạn access token (mục 0.1) |
 | `VALIDATION_ERROR` | 422 | `"Invalid request: <field> <reason>"` | Body/query sai schema |
 | `CONNECTION_NOT_FOUND` | 404 | `"Connection not found"` | |
+| `CONNECTION_SETUP_UNAVAILABLE` | 503 | `"Connection setup is temporarily unavailable"` | Preview template khi thiếu account nền tảng hợp lệ |
 | `CONVERSATION_NOT_FOUND` | 404 | `"Conversation not found"` | |
 | `CONNECTION_NOT_VERIFIED` | 400 | `"Connection is not verified yet"` | Tạo hội thoại / gửi câu hỏi trên connection chưa `connected` |
 | `AWS_AUTH_FAILED` | 400 | `"AWS authentication failed: <reason>"` | Credentials sai, AssumeRole bị từ chối |
@@ -133,7 +134,7 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
   "external_id": "autoaws-7f3a...",
   "remediation_role_arn": "arn:aws:iam::123456789012:role/AutoAWSRemediation" }   // tuỳ chọn
 ```
-`external_id` với `type=role`: **luôn do server sinh** (`autoaws-` + 24 ký tự hex ngẫu nhiên) và trả về; giá trị client gửi lên bị bỏ qua (chống confused deputy: không ai chọn được ExternalId của khách khác). Client hiển thị nó trong bước CloudFormation (`GET /api/connections/{id}/cloudformation`).
+`external_id` với `type=role`: theo luồng đã có trên nhánh `dev`, client sinh giá trị ngẫu nhiên trước khi tạo role, hiển thị trong form và dùng cùng giá trị cho trust policy / template / POST tạo connection. Server **giữ nguyên** giá trị client gửi để `AssumeRole` khớp trust policy; nếu bỏ qua hoặc `null`, server sinh `autoaws-` + 24 ký tự hex để tương thích client cũ. Giá trị tường minh phải dài 2–1224 ký tự, chỉ gồm chữ/số và `_+=,.@:/-` (định dạng STS). Thử lại verify trên cùng connection, không tạo connection mới.
 ```json
 201 { "status_code": 201, "message": "Connection created", "data": Connection }   // status "pending"
 ```
@@ -142,6 +143,20 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
 ```json
 200 { "status_code": 200, "message": "OK", "data": [Connection] }
 ```
+### `GET /api/connections/setup`
+Thông tin chuẩn bị tạo role, yêu cầu đăng nhập như các route connection khác. Khai báo trước route `/{id}`.
+```json
+200 { "status_code": 200, "message": "OK", "data": {
+  "account_id": "111122223333" | null,
+  "role_name": "AutoAWSReadOnly",
+  "trust_principals": ["arn:aws:iam::111122223333:role/autoaws-agent-worker", "arn:aws:iam::111122223333:role/autoaws-action-executor"]
+} }
+```
+`account_id=null` nếu nền tảng chưa cấu hình account hợp lệ. `trust_principals` dùng các role nền tảng đã cấu hình (giống template CloudFormation); khi không cấu hình role cụ thể, dùng ARN root của account nền tảng. UI không dựng policy khi thiếu account hợp lệ.
+
+### `POST /api/connections/cloudformation-preview`
+Tạo template **trước khi lưu connection**, yêu cầu đăng nhập. Body `{ "external_id": "autoaws-..." }` theo định dạng trên. Trả cùng schema `CloudFormationOut` như `GET /api/connections/{id}/cloudformation`, với chính External ID đã gửi, giữ trust policy theo các role nền tảng hiện tại. Thiếu account nền tảng hợp lệ → `503 CONNECTION_SETUP_UNAVAILABLE`, message `Connection setup is temporarily unavailable`.
+
 ### `GET /api/connections/{id}`
 ```json
 200 { "status_code": 200, "message": "OK", "data": Connection }

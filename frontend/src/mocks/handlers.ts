@@ -47,6 +47,25 @@ export const handlers = [
   http.get('/api/me', () => ok({ user_id: 'local', username: 'local', auth_mode: 'none' })),
 
   // ---------- connections ----------
+  http.get('/api/connections/setup', () =>
+    ok({
+      account_id: '111122223333',
+      role_name: 'AutoAWSReadOnly',
+      trust_principals: ['arn:aws:iam::111122223333:root'],
+    }),
+  ),
+  http.post('/api/connections/cloudformation-preview', async ({ request }) => {
+    const { external_id } = (await request.json()) as { external_id: string }
+    if (!/^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(external_id))
+      return fail(422, 'VALIDATION_ERROR', 'Invalid External ID', pathOf(request))
+    return ok({
+      stack_name: 'AutoAWSReadOnlyRole',
+      role_name: 'AutoAWSReadOnly',
+      external_id,
+      platform_account_id: '111122223333',
+      template_yaml: cfnTemplate(external_id),
+    })
+  }),
   http.get('/api/connections', async () => {
     await delay(150)
     return ok(db.connections)
@@ -71,7 +90,8 @@ export const handlers = [
       status: 'pending',
       account_id: null,
       role_arn: body.type === 'role' ? body.role_arn : null,
-      external_id: body.type === 'role' ? `autoaws-${nextId('x').slice(2)}` : null, // always server-chosen
+      external_id:
+        body.type === 'role' ? (body.external_id ?? `autoaws-${nextId('x').slice(2)}`) : null,
       access_key_id_masked:
         body.type === 'access_key'
           ? `${body.access_key_id.slice(0, 4)}****${body.access_key_id.slice(-4)}`
