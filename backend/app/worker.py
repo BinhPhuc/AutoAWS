@@ -30,6 +30,7 @@ ACTIVE = ("queued", "running")
 
 def new_job(conversation: Conversation, question: str) -> Job:
     return Job(
+        user_id=conversation.user_id,
         conversation_id=conversation.id,
         question=question,
         expires_at=utcnow() + timedelta(days=get_settings().job_ttl_days),

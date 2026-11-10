@@ -2,7 +2,7 @@
 
 > Hợp đồng dùng chung để frontend và backend làm **song song**. Mọi thay đổi endpoint/schema phải sửa file này trước, rồi mới sửa code hai phía.
 > Base URL dev: `http://localhost:8000`. Mọi endpoint có tiền tố `/api`. JSON, UTF-8. Thời gian ISO-8601 UTC.
-> Bản init **không có auth**; sau này thêm header `Authorization: Bearer <JWT>` không đổi payload.
+> **Xác thực:** xem mục 0.1 — `AUTH_MODE=none` (dev, một người dùng) hoặc `cognito` (Bearer JWT của Cognito). Payload không đổi giữa hai chế độ.
 > **Ngôn ngữ:** `message`, event `status` của job, label/mô tả tool, UI → **tiếng Anh**. Riêng **câu trả lời của agent** (`DiagnosisAnswer` và `content` của assistant) → **tiếng Việt**. Tài liệu này tiếng Việt.
 
 ## 0. Quy ước response (áp dụng cho MỌI endpoint JSON)
@@ -35,6 +35,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 
 | `error` | HTTP | `message` mẫu | Khi nào |
 |---|---|---|---|
+| `UNAUTHORIZED` | 401 | `"Sign in required"` / `"Invalid or expired token"` | `AUTH_MODE=cognito`: thiếu / sai / hết hạn access token (mục 0.1) |
 | `VALIDATION_ERROR` | 422 | `"Invalid request: <field> <reason>"` | Body/query sai schema |
 | `CONNECTION_NOT_FOUND` | 404 | `"Connection not found"` | |
 | `CONVERSATION_NOT_FOUND` | 404 | `"Conversation not found"` | |
@@ -55,6 +56,34 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `INTERNAL` | 500 | `"Internal server error"` | Lỗi không lường trước |
 
 Không còn endpoint SSE: lỗi xảy ra **trong lúc** agent chạy nằm trong `events` của job (mục 8), event `error`.
+
+## 0.1 Xác thực và phân vùng dữ liệu theo người dùng
+
+- `AUTH_MODE=none` (mặc định, dev / test): không cần header; mọi request là người dùng cố định `local`.
+- `AUTH_MODE=cognito` (bản triển khai): mọi endpoint **trừ** `GET /api/health` và `GET /api/auth/config` cần
+  `Authorization: Bearer <access_token>` — **access token** của Cognito User Pool (không phải ID token), lấy bằng
+  OAuth2 Authorization Code + PKCE qua Hosted UI. Thiếu / sai chữ ký / sai issuer / sai client / hết hạn → `401 UNAUTHORIZED`.
+  Trên AWS, JWT authorizer của API Gateway kiểm token trước; backend đọc claims đã kiểm (hoặc tự kiểm bằng JWKS khi chạy ngoài Lambda).
+- Người dùng = claim `sub`. Connection, conversation, job và proposal **thuộc về** người tạo ra nó (job / proposal thuộc người sở hữu hội thoại).
+  Mọi danh sách chỉ trả tài nguyên của người gọi; đọc / sửa / xoá tài nguyên của người khác → **404** với mã `*_NOT_FOUND`
+  như khi không tồn tại (không lộ là có tồn tại).
+
+### `GET /api/auth/config` (không cần token)
+```json
+200 { "status_code": 200, "message": "OK",
+      "data": { "mode": "cognito",                                              // "none" | "cognito"
+                "domain": "https://autodiag-dev-1111.auth.ap-southeast-1.amazoncognito.com",  // Hosted UI; null khi none
+                "client_id": "4abc...",                                         // public client (không có secret); null khi none
+                "scopes": ["openid", "email", "profile"] } }
+```
+FE dùng để dựng URL `/oauth2/authorize`, đổi code ở `/oauth2/token`, refresh token, `/logout`. `redirect_uri` = `<origin>/auth/callback`,
+`logout_uri` = `<origin>/` (phải nằm trong danh sách URL của app client).
+
+### `GET /api/me`
+```json
+200 { "status_code": 200, "message": "OK",
+      "data": { "user_id": "local" | "<cognito sub>", "username": "local" | "<cognito username>", "auth_mode": "none" | "cognito" } }
+```
 
 ---
 
@@ -104,7 +133,7 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
   "external_id": "autoaws-7f3a...",
   "remediation_role_arn": "arn:aws:iam::123456789012:role/AutoAWSRemediation" }   // tuỳ chọn
 ```
-`external_id` với `type=role`: nếu bỏ trống, server tự sinh và trả về (client hiển thị để người dùng đưa vào CloudFormation).
+`external_id` với `type=role`: **luôn do server sinh** (`autoaws-` + 24 ký tự hex ngẫu nhiên) và trả về; giá trị client gửi lên bị bỏ qua (chống confused deputy: không ai chọn được ExternalId của khách khác). Client hiển thị nó trong bước CloudFormation (`GET /api/connections/{id}/cloudformation`).
 ```json
 201 { "status_code": 201, "message": "Connection created", "data": Connection }   // status "pending"
 ```
@@ -346,7 +375,7 @@ Agent **không có công cụ ghi**: nó chỉ đưa `proposals` vào câu trả
   "result": { ... } | null,                  // thực thi: id tạo ra (allocation, association…)
   "verification": { "ok": true, "details": "..." } | null,
   "error": null | "...",
-  "history": [ { "status": "PENDING_APPROVAL", "at": "...", "note": "..." } ],   // nhật ký kiểm toán
+  "history": [ { "status": "PENDING_APPROVAL", "at": "...", "note": "...", "by": null | "<user_id>" } ],   // nhật ký kiểm toán; `by` = người quyết định (duyệt / từ chối / góp ý)
   "created_at": "...", "updated_at": "...", "expires_at": "..."                // hết hạn sau 24 giờ
 }
 ```
@@ -430,6 +459,8 @@ Yêu cầu dừng: agent-worker kiểm tra cờ giữa các bước và kết th
 - `RUNTIME=local` (mặc định): một tiến trình FastAPI; job và luồng duyệt chạy nền trong tiến trình.
 - `RUNTIME=lambda`: API Gateway HTTP API → Lambda `api-handler` (cùng app FastAPI, adapter Mangum) · Lambda `agent-worker` (chẩn đoán, kiểm tra kết nối, kiểm tra lại / kiểm chứng đề xuất) · Lambda `action-executor` (thực thi đề xuất đã duyệt, lưu task token) · Step Functions `remediation-flow` · SNS. Hạ tầng: `infra/cdk/`.
 - `POST /api/connections/{id}/verify` chạy trong agent-worker (gọi đồng bộ): api-handler không có quyền vào tài khoản người dùng.
+- Đăng nhập: stack `Auth` (Cognito User Pool, Hosted UI, app client public + PKCE). HTTP API gắn JWT authorizer cho mọi route trừ
+  `GET /api/health` và `GET /api/auth/config`. Callback / logout URL của app client = `frontendUrl` (CloudFront) + `http://localhost:5173`.
 
 ---
 

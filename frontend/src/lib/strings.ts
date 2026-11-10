@@ -17,6 +17,17 @@ export const S = {
     expand: 'Expand sidebar',
     readOnly: 'Read-only access',
   },
+  auth: {
+    title: 'Sign in to AutoAWS',
+    body: 'Your connections, conversations and proposals are private to your account.',
+    signIn: 'Sign in',
+    signOut: 'Sign out',
+    newHere: 'No account yet? Choose “Sign up” on the next page.',
+    signingIn: 'Signing you in…',
+    failed: 'Sign-in failed',
+    tryAgain: 'Try again',
+    signedInAs: 'Signed in as',
+  },
   header: {
     backend: 'Backend',
     online: 'Online',
@@ -115,9 +126,8 @@ export const S = {
       accessKeyNote: 'For learning/dev environments only. The secret is stored on the server.',
       roleArn: 'Role ARN',
       roleArnPlaceholder: 'arn:aws:iam::123456789012:role/AutoAWSReadOnly',
-      externalId: 'External ID',
-      externalIdHint: 'Auto-generated. Use it in the CloudFormation template below.',
-      regenerate: 'Regenerate',
+      roleNote:
+        'AutoAWS generates the External ID for this connection; the next step shows it inside the CloudFormation template.',
       submit: 'Save & verify',
       submitting: 'Saving…',
       errors: {

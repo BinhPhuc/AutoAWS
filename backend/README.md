@@ -57,7 +57,7 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 
 - Access key của kết nối `access_key` lưu **plaintext trong SQLite** (`DB_PATH`) hoặc trong item DynamoDB — chỉ dùng dev/học tập. Kiểu `role` (AssumeRole + ExternalId) là đường chuẩn; credentials tạm thời chỉ nằm trong bộ nhớ.
 - Mọi tool chỉ gọi API đọc; `app/aws/registry.py` từ chối đăng ký action ghi. Lệnh ghi chỉ có trong `app/aws/remediation/`, chạy sau khi người dùng duyệt, bằng role `AutoAWSRemediation` (access key chỉ khi `REMEDIATION_ALLOW_ACCESS_KEYS=true`).
-- Chưa có xác thực: đừng mở API ra mạng ngoài.
+- Xác thực (`docs/API_CONTRACT.md` §0.1): `AUTH_MODE=none` (mặc định) = một người dùng `local`, **đừng mở API ra mạng ngoài**; `AUTH_MODE=cognito` = mọi route trừ `/api/health`, `/api/auth/config` cần access token Cognito (`app/auth.py`: trên Lambda đọc claims JWT authorizer đã kiểm, ngoài Lambda tự kiểm chữ ký qua JWKS; luôn kiểm issuer / `token_use=access` / `client_id`). Connection, conversation, job, proposal có `user_id`; tài nguyên của người khác trả 404. ExternalId do server sinh.
 - Dữ liệu AWS đi qua `app/sanitizer.py` trước khi tới LLM và trước khi lưu `output_summary`.
 
 ## Lưu trữ: SQLite hoặc DynamoDB

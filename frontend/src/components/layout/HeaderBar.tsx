@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, Menu, Moon, Sun } from 'lucide-react'
 import { healthApi } from '@/api/tools'
+import { UserMenu } from '@/components/auth/UserMenu'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -45,6 +46,7 @@ export function HeaderBar({ onMenu }: { onMenu: () => void }) {
           <Sun className="dark:hidden" />
           <Moon className="hidden dark:block" />
         </Button>
+        <UserMenu />
       </div>
     </header>
   )

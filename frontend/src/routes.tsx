@@ -1,5 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom'
+import { AuthGate } from '@/components/auth/AuthGate'
 import { AppShell } from '@/components/layout/AppShell'
+import { AuthCallbackPage } from '@/pages/AuthCallbackPage'
 import { ChatPage } from '@/pages/ChatPage'
 import { ChecklistPage } from '@/pages/ChecklistPage'
 import { ConnectPage } from '@/pages/ConnectPage'
@@ -8,9 +10,14 @@ import { ProposalsPage } from '@/pages/ProposalsPage'
 import { ToolsPage } from '@/pages/ToolsPage'
 
 export const router = createBrowserRouter([
+  { path: '/auth/callback', element: <AuthCallbackPage /> },
   {
     path: '/',
-    element: <AppShell />,
+    element: (
+      <AuthGate>
+        <AppShell />
+      </AuthGate>
+    ),
     children: [
       { index: true, element: <HomeRedirect /> },
       { path: 'connect', element: <ConnectPage /> },

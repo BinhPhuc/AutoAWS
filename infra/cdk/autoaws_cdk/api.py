@@ -2,13 +2,15 @@
 
 api-handler has NO access to users' accounts: it hands diagnosis to agent-worker (async
 invoke), connection checks to agent-worker (sync invoke) and decisions to remediation-flow.
-No authorizer yet: Cognito / JWT is the next step (report §2.3.1) — until then keep the API
-private (throttled, and do not share the URL).
+Every route needs a Cognito access token (JWT authorizer, AutoAws-Auth) except the health
+check and the sign-in settings the web app reads before signing in.
 """
 
 from aws_cdk import CfnOutput, Duration, Stack
 from aws_cdk import aws_apigatewayv2 as apigw
+from aws_cdk import aws_apigatewayv2_authorizers as authorizers
 from aws_cdk import aws_apigatewayv2_integrations as integrations
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
@@ -28,6 +30,9 @@ class ApiStack(Stack):
         table: ddb.ITableV2,
         key: kms.IKey,
         agent_worker: lambda_.IFunction,
+        user_pool: cognito.IUserPool,
+        web_client: cognito.IUserPoolClient,
+        hosted_ui_url: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, cid, **kwargs)
@@ -79,19 +84,35 @@ class ApiStack(Stack):
                 "LLM_PROVIDER": "mock",  # the API never calls a model
                 # Served through CloudFront under the same origin; CORS only for frontendUrl
                 "CORS_ORIGINS": cfg.frontend_url or "https://localhost",
+                "AUTH_MODE": "cognito",
+                "COGNITO_USER_POOL_ID": user_pool.user_pool_id,
+                "COGNITO_CLIENT_ID": web_client.user_pool_client_id,
+                "COGNITO_DOMAIN": hosted_ui_url,
             },
+        )
+        integration = integrations.HttpLambdaIntegration(
+            "ApiHandlerIntegration",
+            self.handler,
+            payload_format_version=apigw.PayloadFormatVersion.VERSION_2_0,
         )
         self.http_api = apigw.HttpApi(
             self,
             "HttpApi",
             api_name=f"autoaws-{cfg.env_name}",
             create_default_stage=False,
-            default_integration=integrations.HttpLambdaIntegration(
-                "ApiHandlerIntegration",
-                self.handler,
-                payload_format_version=apigw.PayloadFormatVersion.VERSION_2_0,
+            default_integration=integration,
+            # Access tokens of the web client only (the authorizer checks their client_id)
+            default_authorizer=authorizers.HttpUserPoolAuthorizer(
+                "CognitoAuthorizer", user_pool, user_pool_clients=[web_client]
             ),
         )
+        for path in ("/api/health", "/api/auth/config"):  # read before signing in
+            self.http_api.add_routes(
+                path=path,
+                methods=[apigw.HttpMethod.GET],
+                integration=integration,
+                authorizer=apigw.HttpNoneAuthorizer(),
+            )
         self.http_api.add_stage(
             "DefaultStage",
             stage_name="$default",

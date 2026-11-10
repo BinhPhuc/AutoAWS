@@ -65,13 +65,19 @@ def _history(p: Proposal) -> list[dict]:
 
 
 def transition(
-    store: Store, p: Proposal, to: str, note: str = "", expected: str | None = None, **fields
+    store: Store,
+    p: Proposal,
+    to: str,
+    note: str = "",
+    expected: str | None = None,
+    by: str | None = None,
+    **fields,
 ) -> bool:
     """Move ``p`` to ``to`` only if its stored status is still ``expected`` (default: the
-    status ``p`` has now). Appends the change to the audit history."""
+    status ``p`` has now). Appends the change to the audit history (``by``: who decided)."""
     expected = expected or p.status
     history = _history(p)
-    history.append({"status": to, "at": utcnow().isoformat(), "note": note})
+    history.append({"status": to, "at": utcnow().isoformat(), "note": note, "by": by})
     p.status = to
     p.history_json = json.dumps(history, ensure_ascii=False)
     for key, value in fields.items():
@@ -157,6 +163,7 @@ def attach_proposals(
             continue
         proposal = Proposal(
             id=new_id("prop"),
+            user_id=conversation.user_id,
             conversation_id=conversation.id,
             message_id=message_id,
             connection_id=conn.id,
@@ -180,9 +187,10 @@ def attach_proposals(
 
 
 def decide(
-    store: Store, p: Proposal, decision: str, feedback: str = ""
+    store: Store, p: Proposal, decision: str, feedback: str = "", by: str | None = None
 ) -> tuple[Proposal, str | None]:
-    """Apply the user's decision. Returns (proposal, follow-up question for feedback)."""
+    """Apply the user's decision (``by``: their user id, for the audit trail). Returns
+    (proposal, follow-up question for feedback)."""
     expire_due(store, p)
     if p.status != PENDING:
         raise AppError(
@@ -194,14 +202,14 @@ def decide(
             raise AppError(
                 "REMEDIATION_DISABLED", 400, "Remediation is not enabled for this connection"
             )
-        ok = transition(store, p, APPROVED, "approved by the user", expected=PENDING)
+        ok = transition(store, p, APPROVED, "approved by the user", expected=PENDING, by=by)
         followup = None
     elif decision == "reject":
-        ok = transition(store, p, REJECTED, "rejected by the user", expected=PENDING)
+        ok = transition(store, p, REJECTED, "rejected by the user", expected=PENDING, by=by)
         followup = None
     else:
         text = feedback.strip()
-        ok = transition(store, p, SUPERSEDED, f"feedback: {text}", expected=PENDING)
+        ok = transition(store, p, SUPERSEDED, f"feedback: {text}", expected=PENDING, by=by)
         spec = get_action(p.action)
         label = spec.label if spec else p.action
         followup = (
@@ -426,6 +434,7 @@ def _propose_rollback(
     undo = spec.undo_description(params, json.loads(p.snapshot_json))
     rollback = Proposal(
         id=new_id("prop"),
+        user_id=p.user_id,
         conversation_id=p.conversation_id,
         message_id=p.message_id,
         connection_id=p.connection_id,

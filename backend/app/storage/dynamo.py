@@ -1,16 +1,17 @@
 """DynamoDB implementation of the Store (single-table design).
 
 Items (PK / SK):
-  connection    CONN#<id>              / META                      GSI1: CONNECTIONS
+  connection    CONN#<id>              / META                      GSI1: CONNECTIONS#<user_id>
   conversation  CONV#<id>              / META                      GSI1: CONVS#<connection_id>
   message       CONV#<conversation_id> / MSG#<created_at>#<id>     (tool calls embedded)
-  proposal      PROP#<id>              / META                      GSI1: PROPOSALS
+  proposal      PROP#<id>              / META                      GSI1: PROPOSALS#<user_id>
   job           JOB#<id>               / META                      GSI1: JOBS#<conversation_id>
                                                                    (attribute ttl: DynamoDB TTL)
 
 Indexes:
-  GSI1  (GSI1PK, GSI1SK)  listings — connections newest first, conversations of a connection
-                          most recently updated first, proposals newest first
+  GSI1  (GSI1PK, GSI1SK)  listings — one user's connections newest first, conversations of a
+                          connection most recently updated first, one user's proposals newest
+                          first (docs/API_CONTRACT.md §0.1: data is partitioned by user)
                           (GSI1SK = <timestamp>#<id>; proposals are filtered by
                           conversation / status after the query — demo-scale volume)
   ById  (id)              any item by its id; used to load one message's tool calls
@@ -19,6 +20,9 @@ Attributes are the model fields as JSON types (datetimes as ISO-8601 UTC). Sort 
 fixed-width timestamp so string order equals time order. Tool calls are always written and
 read with their message, so they live inside the message item. The table is encrypted with
 KMS (AWS managed key unless DYNAMODB_KMS_KEY_ID is set).
+
+Listing every user's connections / proposals (no user_id: background recovery, never a
+request) scans the table — rare and internal.
 
 Uses the low-level client (thread-safe; FastAPI runs sync routes in a thread pool).
 GSIs are eventually consistent: a listing right after a write may lag by a few ms.
@@ -121,8 +125,14 @@ class DynamoStore:
         self._put(self._connection_item(conn), new=True)
         return conn
 
-    def list_connections(self) -> list[Connection]:
-        return [Connection.model_validate(self._fields(i)) for i in self._query_gsi1("CONNECTIONS")]
+    def list_connections(self, user_id: str | None = None) -> list[Connection]:
+        items = (
+            self._query_gsi1(f"CONNECTIONS#{user_id}")
+            if user_id is not None
+            else self._scan_entity("connection")
+        )
+        conns = [Connection.model_validate(self._fields(i)) for i in items]
+        return sorted(conns, key=lambda c: c.created_at, reverse=True)
 
     def get_connection(self, conn_id: str) -> Connection | None:
         item = self._get(f"CONN#{conn_id}", "META")
@@ -142,13 +152,19 @@ class DynamoStore:
         self._put(self._conversation_item(conv), new=True)
         return conv
 
-    def list_conversations(self, connection_id: str | None = None) -> list[Conversation]:
-        conn_ids = [connection_id] if connection_id else [c.id for c in self.list_connections()]
+    def list_conversations(
+        self, connection_id: str | None = None, user_id: str | None = None
+    ) -> list[Conversation]:
+        conn_ids = (
+            [connection_id] if connection_id else [c.id for c in self.list_connections(user_id)]
+        )
         convs = [
             Conversation.model_validate(self._fields(item))
             for cid in conn_ids
             for item in self._query_gsi1(f"CONVS#{cid}")
         ]
+        if user_id is not None:
+            convs = [c for c in convs if c.user_id == user_id]
         return sorted(convs, key=lambda c: c.updated_at, reverse=True)
 
     def get_conversation(self, conv_id: str) -> Conversation | None:
@@ -217,17 +233,25 @@ class DynamoStore:
         return Proposal.model_validate(self._fields(item)) if item else None
 
     def list_proposals(
-        self, conversation_id: str | None = None, status: str | None = None
+        self,
+        conversation_id: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> list[Proposal]:
+        items = (
+            self._query_gsi1(f"PROPOSALS#{user_id}")
+            if user_id is not None
+            else self._scan_entity("proposal")
+        )
         out = []
-        for item in self._query_gsi1("PROPOSALS"):
+        for item in items:
             p = Proposal.model_validate(self._fields(item))
             if (conversation_id and p.conversation_id != conversation_id) or (
                 status and p.status != status
             ):
                 continue
             out.append(p)
-        return out
+        return sorted(out, key=lambda p: p.created_at, reverse=True)
 
     def update_proposal(self, proposal: Proposal, expected_status: str | None = None) -> bool:
         proposal.updated_at = utcnow()
@@ -319,7 +343,7 @@ class DynamoStore:
         return {
             "PK": f"PROP#{p.id}",
             "SK": "META",
-            "GSI1PK": "PROPOSALS",
+            "GSI1PK": f"PROPOSALS#{p.user_id}",
             "GSI1SK": f"{_ts(p.created_at)}#{p.id}",
             "entity": "proposal",
             **p.model_dump(mode="json"),
@@ -330,7 +354,7 @@ class DynamoStore:
         return {
             "PK": f"CONN#{conn.id}",
             "SK": "META",
-            "GSI1PK": "CONNECTIONS",
+            "GSI1PK": f"CONNECTIONS#{conn.user_id}",
             "GSI1SK": f"{_ts(conn.created_at)}#{conn.id}",
             "entity": "connection",
             **conn.model_dump(mode="json"),
@@ -408,6 +432,14 @@ class DynamoStore:
             ExpressionAttributeNames={"#a": attr},
             ExpressionAttributeValues={":v": {"S": value}},
         )
+
+    def _scan_entity(self, entity: str) -> Iterator[dict]:
+        for page in self.client.get_paginator("scan").paginate(
+            TableName=self.table,
+            FilterExpression="entity = :e",
+            ExpressionAttributeValues={":e": {"S": entity}},
+        ):
+            yield from page.get("Items", [])
 
     def _paginate(self, **kwargs) -> Iterator[dict]:
         for page in self.client.get_paginator("query").paginate(TableName=self.table, **kwargs):
