@@ -60,6 +60,13 @@ class _FakeClient:
 
         self.beta = type("Beta", (), {"messages": _Messages()})()
 
+        class _PlainMessages:  # client.messages: the non-beta endpoint (gateways)
+            def stream(self, **params):
+                outer.requests.append({**params, "_endpoint": "messages"})
+                return _FakeStream(message)
+
+        self.messages = _PlainMessages()
+
 
 def test_tool_results_of_one_step_share_one_user_message():
     raw = [
@@ -174,3 +181,103 @@ def test_bedrock_provider_builds_the_mantle_client(monkeypatch):
     monkeypatch.setattr(get_settings(), "bedrock_model_id", "")
     with pytest.raises(LLMError, match="BEDROCK_MODEL_ID"):
         BedrockProvider()
+
+
+async def test_a_gateway_gets_only_the_basic_request():
+    """ANTHROPIC_BASE_URL (a Messages API gateway, possibly another model behind it): no
+    Claude-only parameters, plain endpoint."""
+    client = _FakeClient(_message([{"type": "text", "text": "{}"}]))
+    provider = ClaudeMessagesProvider(
+        "anthropic", client, "gemini-x", "high", 16000, claude_features=False
+    )
+    await provider.chat(
+        [LLMMessage(role="system", content="SYS"), LLMMessage(role="user", content="Hỏi")],
+        llm_tools(list_tools()),
+    )
+    [req] = client.requests
+    assert req.pop("_endpoint") == "messages"
+    assert set(req) == {"model", "max_tokens", "system", "messages", "tools"}
+    assert req["model"] == "gemini-x"
+
+
+def test_anthropic_provider_modes(monkeypatch):
+    from app.config import get_settings
+    from app.llm.anthropic import AnthropicProvider
+
+    s = get_settings()
+    # explicit: a developer's own .env may point at a gateway
+    monkeypatch.setattr(s, "anthropic_base_url", "")
+    monkeypatch.setattr(s, "anthropic_auth_token", "")
+    monkeypatch.setattr(s, "anthropic_gateway_cache", False)
+    monkeypatch.setattr(s, "anthropic_model", "claude-opus-5-5")
+    monkeypatch.setattr(s, "anthropic_api_key", "sk-ant-test")
+    direct = AnthropicProvider()
+    assert direct.claude_features and direct.extra["fallbacks"] == "default"
+
+    monkeypatch.setattr(s, "anthropic_api_key", "")
+    monkeypatch.setattr(s, "anthropic_base_url", "https://gateway.example.com/")
+    monkeypatch.setattr(s, "anthropic_auth_token", "sk-gateway-test")
+    monkeypatch.setattr(s, "anthropic_model", "gemini-x")
+    gw = AnthropicProvider()
+    assert not gw.claude_features and gw.extra == {} and gw.model == "gemini-x"
+    assert gw.gateway_cache is False
+    assert str(gw.client.base_url).rstrip("/") == "https://gateway.example.com"
+    assert gw.client.auth_headers == {"Authorization": "Bearer sk-gateway-test"}
+
+    monkeypatch.setattr(s, "anthropic_gateway_cache", True)
+    assert AnthropicProvider().gateway_cache is True
+
+    monkeypatch.setattr(s, "anthropic_auth_token", "")
+    with pytest.raises(LLMError, match="ANTHROPIC_AUTH_TOKEN"):
+        AnthropicProvider()
+
+
+async def test_gateway_cache_marks_the_repeated_prefix():
+    """ANTHROPIC_GATEWAY_CACHE: explicit breakpoints on the system prompt, the last tool and
+    the latest message, so every round after the first reads the prefix from the cache."""
+    client = _FakeClient(_message([{"type": "text", "text": "{}"}]))
+    provider = ClaudeMessagesProvider(
+        "anthropic", client, "gemini-x", "high", 16000, claude_features=False, gateway_cache=True
+    )
+    messages = [
+        LLMMessage(role="system", content="SYS"),
+        LLMMessage(role="user", content="Hỏi"),
+        LLMMessage(
+            role="assistant",
+            tool_calls=[ToolCallRequest(id="t1", name="describe_instances", input={})],
+        ),
+        LLMMessage(role="tool", tool_call_id="t1", tool_name="describe_instances", content="{}"),
+    ]
+    await provider.chat(messages, llm_tools(list_tools()))
+    [req] = client.requests
+    mark = {"type": "ephemeral"}
+    assert req["system"] == [{"type": "text", "text": "SYS", "cache_control": mark}]
+    assert req["tools"][-1]["cache_control"] == mark
+    assert all("cache_control" not in t for t in req["tools"][:-1])
+    assert req["messages"][-1]["content"][-1]["cache_control"] == mark  # the tool result
+    assert "cache_control" not in req["messages"][0]["content"][-1]
+    assert "cache_control" not in req  # no top-level form, no Claude-only parameters
+    assert "thinking" not in req and "output_config" not in req
+
+
+def test_cache_breakpoints_do_not_change_the_original_request():
+    from app.llm.claude import with_cache_breakpoints
+
+    req = {
+        "system": "SYS",
+        "tools": [{"name": "a"}, {"name": "b"}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "q"}]}],
+    }
+    marked = with_cache_breakpoints(req)
+    assert req == {
+        "system": "SYS",
+        "tools": [{"name": "a"}, {"name": "b"}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "q"}]}],
+    }
+    assert marked["tools"][0] == {"name": "a"}
+    # nothing to mark: stays as it was
+    assert with_cache_breakpoints({"system": "", "tools": [], "messages": []}) == {
+        "system": "",
+        "tools": [],
+        "messages": [],
+    }

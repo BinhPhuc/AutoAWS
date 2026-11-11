@@ -47,27 +47,40 @@ def connection_id(client: httpx.Client, api: str) -> str:
     return conn["id"]
 
 
-def ask(client: httpx.Client, api: str, conn_id: str, question: str) -> dict:
+def ask(
+    client: httpx.Client, api: str, conn_id: str, question: str, timeout: float = 900
+) -> dict:
+    """Ask one question the way the web app does (docs/API_CONTRACT.md §3, §8): the POST
+    starts a job, then the job is polled until it ends."""
     conv = client.post(f"{api}/conversations", json={"connection_id": conn_id}).json()["data"]
     run: dict = {"conversation_id": conv["id"], "tool_calls": [], "answer": None, "error": None}
     started = time.monotonic()
-    event = None
-    with client.stream(
-        "POST", f"{api}/conversations/{conv['id']}/messages", json={"content": question}
-    ) as resp:
-        for line in resp.iter_lines():
-            if line.startswith("event:"):
-                event = line[6:].strip()
-            elif line.startswith("data:"):
-                data = json.loads(line[5:])
-                if event == "tool_call":
-                    run["tool_calls"].append({"tool": data["tool"], "input": data["input"]})
-                elif event == "tool_result" and run["tool_calls"]:
-                    run["tool_calls"][-1]["status"] = data["status"]
-                elif event == "answer":
-                    run["answer"] = data["answer"]
-                elif event == "error":
-                    run["error"] = data
+    resp = client.post(f"{api}/conversations/{conv['id']}/messages", json={"content": question})
+    body = resp.json()
+    if resp.status_code != 202:
+        run["error"] = {"error": body.get("error", "HTTP_ERROR"), "message": body.get("message")}
+        run["seconds"] = round(time.monotonic() - started, 1)
+        return run
+    job_id, last = body["data"]["id"], -1
+    while True:
+        job = client.get(f"{api}/jobs/{job_id}", params={"after": last}).json()["data"]
+        for event in job["events"]:
+            last, data = event["seq"], event["data"]
+            if event["type"] == "tool_call":
+                run["tool_calls"].append({"tool": data["tool"], "input": data["input"]})
+            elif event["type"] == "tool_result" and run["tool_calls"]:
+                run["tool_calls"][-1]["status"] = data["status"]
+            elif event["type"] == "answer":
+                run["answer"] = data["answer"]
+            elif event["type"] == "error":
+                run["error"] = data
+        if job["status"] not in ("queued", "running"):
+            break
+        if time.monotonic() - started > timeout:
+            client.post(f"{api}/jobs/{job_id}/cancel")
+            run["error"] = {"error": "EVAL_TIMEOUT", "message": f"no answer in {timeout:.0f} s"}
+            break
+        time.sleep(1.5)
     run["seconds"] = round(time.monotonic() - started, 1)
     return run
 
@@ -139,6 +152,7 @@ def main() -> None:
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--only", default="", help="comma-separated scenario ids, e.g. kb1,kb2")
     p.add_argument("--answers", type=Path, default=ANSWERS)
+    p.add_argument("--timeout", type=float, default=900, help="seconds to wait per question")
     args = p.parse_args()
 
     if not args.answers.exists():
@@ -148,13 +162,13 @@ def main() -> None:
     scenarios = {kb: a for kb, a in sorted(answers.items()) if not only or kb in only}
 
     results: dict = {}
-    with httpx.Client(timeout=None) as client:
+    with httpx.Client(timeout=60) as client:
         health = client.get(f"{args.api}/health").json()["data"]
         conn_id = connection_id(client, args.api)
         print(f"Backend {health['version']}, LLM provider: {health['llm_provider']}")
         for kb, expected in scenarios.items():
             for i in range(args.runs):
-                run = ask(client, args.api, conn_id, expected["ask"])
+                run = ask(client, args.api, conn_id, expected["ask"], args.timeout)
                 run["score"] = score(run, expected)
                 results.setdefault(kb, []).append(run)
                 s = run["score"]

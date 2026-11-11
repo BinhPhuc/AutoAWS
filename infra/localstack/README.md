@@ -40,7 +40,20 @@ DYNAMODB_ENDPOINT_URL=http://localhost:4566 \
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Trong app: tạo kết nối Access Key `AKIAIOSFODNN7EXAMPLE` / secret bất kỳ ≥16 ký tự, region `ap-southeast-1`.
+Form **Add connection** trên web chỉ còn kiểu IAM role, nên kết nối Access Key của LocalStack tạo qua API
+(key `AKIAIOSFODNN7EXAMPLE`, secret bất kỳ ≥16 ký tự; `infra/eval/run_eval.py` tự tạo kết nối này nếu chưa có):
+
+```bash
+ID=$(curl -s localhost:8000/api/connections -H 'content-type: application/json' -d '{
+  "type":"access_key","name":"LocalStack","region":"ap-southeast-1",
+  "access_key_id":"AKIAIOSFODNN7EXAMPLE","secret_access_key":"localstack-secret-key"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')
+curl -s -X POST localhost:8000/api/connections/$ID/verify     # status: connected
+```
+Sau đó kết nối hiện trên trang Connections và chọn được ở Diagnose. Muốn bấm duyệt đề xuất sửa trên kết nối
+Access Key: chạy backend với `REMEDIATION_ALLOW_ACCESS_KEYS=true`.
+LLM khác MCP: đổi `LLM_PROVIDER` (ví dụ `anthropic` + gateway hoặc `openai`), xem `backend/README.md` mục Chọn LLM.
+
 Kết nối Role: lấy template CloudFormation từ app, deploy vào LocalStack, dán `arn:aws:iam::000000000000:role/AutoAWSReadOnly`.
 
 Giới hạn của LocalStack Community: không kiểm tra IAM (thiếu quyền chỉ lộ ra trên AWS thật — có `tests/test_policy.py` bù),

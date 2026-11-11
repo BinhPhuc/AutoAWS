@@ -4,14 +4,14 @@
 
 ## Project là gì
 
-**AutoAWS** — trợ lý AI chẩn đoán và khắc phục sự cố trên AWS (đồ án môn Điện toán đám mây, Nhóm 16, UET-VNU).
+**AutoAWS** — trợ lý AI chẩn đoán và khắc phục sự cố trên AWS (bài tập lớn môn Điện toán đám mây, Nhóm 16, UET-VNU).
 Người dùng kết nối tài khoản AWS bằng quyền **chỉ đọc**, mô tả sự cố bằng ngôn ngữ tự nhiên; agent (LLM + tool use) gọi **bộ công cụ đọc AWS cố định** (EC2, SG/NACL/route table, Route 53, ELB, CloudWatch, CloudTrail), đối chiếu dữ liệu thật và trả lời: **nguyên nhân → bằng chứng → cách khắc phục → điểm chưa xác nhận**.
 Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.docx`).
 
 ## Trạng thái hiện tại
 
-> **Giai đoạn: INIT hoàn thành (2026-10-16) — chạy được end-to-end local với `LLM_PROVIDER=mock`.**
-> Cập nhật mục này mỗi khi hoàn thành một mốc.
+> **Hiện tại (2026-11-11): chẩn đoán, khắc phục có phê duyệt, đăng nhập và hai phương án triển khai (CDK serverless, EC2 + Docker) đã có code và test; chạy trọn luồng trên LocalStack với LLM thật. Chưa deploy lên AWS thật, chưa làm checklist.**
+> Cập nhật mục này mỗi khi hoàn thành một mốc. Các dòng dưới là nhật ký theo thứ tự thời gian (dòng cũ có thể đã bị dòng sau thay thế).
 
 - [x] Kế hoạch backend/frontend (`docs/*_PLAN.md`) — đã duyệt, mọi task B1–B10, F1–F8 đã tick
 - [x] Hợp đồng API `docs/API_CONTRACT.md`
@@ -40,7 +40,8 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Đồng bộ `/connect` theo nhánh `dev` (2026-11-10): form sinh/hiển thị External ID trước khi tạo role, hướng dẫn IAM thủ công và preview/tải CloudFormation, backend giữ đúng ID đã dùng trong trust policy thay vì sinh lại; verify ngay khi lưu, thử lại trên cùng connection. Giữ bố cục bảng/hộp thoại; form chỉ có IAM thủ công hoặc CloudFormation (mặc định, Recommended), bỏ Access Key khỏi form. Policy dùng đúng principal nền tảng và endpoint vẫn yêu cầu auth. 247 test BE, 20 test FE; lint/build đạt; kiểm tra Chrome desktop/mobile bằng MSW và STS qua moto, **chưa verify với AWS thật**. Luồng External ID này thay thế cách luôn sinh tại server ở mốc auth trước đó.
 - [x] Model local qua Ollama (2026-11-10): chuyển OpenAI-compatible provider từ `dev`, `LLM_PROVIDER=openai`, cấu hình URL/model/key/timeout/token; dùng lại job, sanitizer, registry và `submit_diagnosis`, đếm token theo giới hạn agent. 289 test BE, ruff sạch; smoke test Ollama thật `qwen2.5:latest` chọn `describe_instances`, nhận dữ liệu mô phỏng và gọi `submit_diagnosis` đúng schema. **Chưa đánh giá chẩn đoán AWS thật bằng Qwen.**
 - [x] Trả lời gọn theo `dev` (2026-11-11): prompt chỉ điều tra trong phạm vi câu hỏi, dừng khi có nguyên nhân chặn đủ để trả lời; tóm tắt 1–2 câu, lời chào/cảm ơn hoặc hỏi lại không gọi AWS. Giữ job, `submit_diagnosis`, kiểm chứng bằng chứng và phê duyệt khắc phục. Thêm `infra/ollama/Modelfile` cho Qwen context 16.384, temperature 0.2; context 4.096 trên máy dev không đủ giữ prompt và bộ tool. 289 test BE và ruff đạt; smoke test Qwen thật qua agent loop: “hi”, “cảm ơn”, “giúp tôi với” đều trả lời ngắn bằng tiếng Việt, không gọi AWS. Chưa đánh giá lại chẩn đoán AWS thật.
-- [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; checklist runner
+- [x] Gộp phần còn nằm ngoài `main` + rà soát (2026-11-11, nhánh `chore/sync-final-readme`): CDK deploy **một lần** (HTTP API rỗng tạo ở stack Frontend để cắt vòng CloudFront ↔ Cognito ↔ authorizer; `frontendUrl` chỉ còn dùng cho tên miền riêng); `LLM_PROVIDER=anthropic` + `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` = gateway định dạng Anthropic ở chế độ tương thích (không thinking / effort / beta), `ANTHROPIC_GATEWAY_CACHE` gắn `cache_control` cho phần lặp lại — đã chạy thật KB1, KB2 trên LocalStack qua một gateway (model Gemini); sửa `infra/eval/run_eval.py` còn đọc SSE (hỏng từ khi đổi sang job); README viết lại; hướng dẫn LocalStack tạo kết nối Access Key qua API (form chỉ còn IAM role). 293 test BE, 20 test FE, 13 test CDK.
+- [ ] **Tiếp theo** (xếp theo ưu tiên): External ID do server cấp và kiểm theo người dùng (hiện trình duyệt sinh, backend nhận nguyên → confused deputy); deploy thật một phương án (CDK hoặc EC2) rồi thử Cognito + Bedrock; `run_eval.py --runs 5` với LLM thật; KB3 + CloudTrail trên AWS; CI (GitHub Actions: pytest, ruff, vitest, build, test CDK); mặc định an toàn hơn (`CORS_ORIGINS`, `AUTH_MODE` trong Compose EC2); checklist runner
 
 ## Bố cục repo
 
@@ -89,12 +90,12 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 | # | Quyết định | Lý do |
 |---|---|---|
 | 1 | Backend **Python + FastAPI**, boto3, **DynamoDB mặc định** (bảng tạo bằng IaC); SQLite chỉ bật tường minh cho local/test | Khớp lưu trữ đích; EC2 không cần database volume |
-| 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
-| 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
+| 2 | **LLM sau một interface** (`app/llm/base.py`), chọn bằng `LLM_PROVIDER`: `bedrock` (đích), `anthropic` (kể cả gateway), `openai` (Ollama / tương thích OpenAI), `mcp`, `mock` (mặc định) | Pipeline chạy end-to-end không cần key; đổi model không đụng vòng lặp agent |
+| 3 | Kết nối AWS: **Role ARN + ExternalId** (đúng thiết kế, kiểu duy nhất trên form); **Access Key** chỉ tạo qua API cho dev / LocalStack | Giữ đường bảo mật chuẩn; vẫn test nhanh được với LocalStack |
 | 4 | **Auth: `AUTH_MODE=none`** (dev, 1 người dùng `local`) **hoặc `cognito`** (bản triển khai: Cognito + JWT authorizer, dữ liệu tách theo `user_id`) | Dev/test không cần Cognito; bản AWS luôn bật đăng nhập |
 | 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**; tiến trình chẩn đoán = job + hỏi lại (`GET /api/jobs/{id}`) | Nhẹ, đầu ra tĩnh cho S3/CloudFront |
 | 7 | Triển khai **serverless đúng báo cáo** (`RUNTIME=lambda`): API Gateway HTTP API → Lambda api-handler / agent-worker / action-executor, Step Functions `remediation-flow`, SNS; hạ tầng CDK `infra/cdk/`. Local vẫn chạy 1 tiến trình (`RUNTIME=local`) | API Gateway giới hạn 30 giây → bỏ SSE; agent-worker không bao giờ có quyền ghi |
-| 6 | Checklist, metrics/logs/CloudTrail đầy đủ, DynamoDB, Lambda → **sau init** | |
+| 6 | Checklist → **chưa làm** (metrics / logs / CloudTrail, DynamoDB, Lambda đã xong) | |
 
 ## Ràng buộc cứng — KHÔNG được vi phạm
 
@@ -116,7 +117,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 - **Câu trả lời của agent tiếng Việt**: `DiagnosisAnswer` và `content` của assistant (system prompt ép đầu ra tiếng Việt; tên tài nguyên/lệnh/mã lỗi AWS giữ nguyên).
 - Tài liệu trong `docs/` và commit body: tiếng Việt. Code (tên biến/hàm/file, comment), commit subject: tiếng Anh, dạng conventional (`feat(backend): add describe_route_tables tool`).
 - Python: ruff (lint + format), type hints đầy đủ, pytest + moto cho mọi tool AWS.
-- TypeScript: strict, eslint + prettier; kiểu API chỉ khai báo ở `frontend/src/api/types.ts`.
+- TypeScript: strict, oxlint + prettier; kiểu API chỉ khai báo ở `frontend/src/api/types.ts`.
 - Tool AWS mới = 1 hàm `@tool(...)` trong `backend/app/aws/tools/` + test + 1 dòng trong bảng cuối `API_CONTRACT.md`.
 - Hoàn thành task trong plan → tick checkbox trong `docs/*_PLAN.md` và cập nhật mục "Trạng thái" ở trên.
 
