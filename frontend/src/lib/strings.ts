@@ -406,6 +406,8 @@ export const S = {
       links: {
         '/connect': 'Add or verify an AWS account',
         '/chat': 'Describe a problem and get a diagnosis',
+        '/proposals': 'Review proposed fixes and approvals',
+        '/tools': 'Explore the available read-only tools',
         '/checklist': 'Run checks against your environment',
       } as Record<string, string>,
     },

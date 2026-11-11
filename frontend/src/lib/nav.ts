@@ -1,9 +1,11 @@
-import { ClipboardCheck, MessageSquare, Plug } from 'lucide-react'
+import { ClipboardCheck, MessageSquare, Plug, ShieldCheck, Wrench } from 'lucide-react'
 import { S } from '@/lib/strings'
 
-/** Top-level destinations, shared by the sidebar and the error pages. */
+/** Primary navigation (sidebar + breadcrumb). */
 export const navItems = [
-  { to: '/connect', label: S.nav.connect, icon: Plug, end: true },
   { to: '/chat', label: S.nav.chat, icon: MessageSquare, end: false },
+  { to: '/proposals', label: S.nav.proposals, icon: ShieldCheck, end: true },
+  { to: '/tools', label: S.nav.tools, icon: Wrench, end: true },
   { to: '/checklist', label: S.nav.checklist, icon: ClipboardCheck, end: true },
-] as const
+  { to: '/connect', label: S.nav.connect, icon: Plug, end: true },
+]
