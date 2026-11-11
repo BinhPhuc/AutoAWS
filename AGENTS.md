@@ -46,6 +46,7 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 
 - [x] Sửa chuyển lab trong chat (2026-11-12): chỉ đồng bộ connection khi mở hội thoại, tránh effect của hội thoại cũ ghi đè lựa chọn lab mới trong lúc điều hướng. Thêm 2 test hồi quy; 22 test FE, build và kiểm tra định dạng file sửa đạt.
 - [x] Sửa merge `main` vào `feat/404page` (2026-11-12): lấy Sidebar và navigation ổn định từ `main`, loại import `ConnectionBadge` đã bị xoá gây màn hình trắng; nối lại route 404 và error boundary của nhánh 404, giữ AuthGate và các trang mới từ `main`. 24 test FE, build và lint đạt (còn cảnh báo Fast Refresh); Chrome xác nhận cổng 5173 hiện trang đăng nhập, mock xác nhận 404/Tools/Proposals hoạt động.
+- [x] Tách bundle frontend theo trang (2026-11-12): tải động Connect, Chat, Proposals và Tools qua `route.lazy`, thêm trạng thái chờ khi mở trực tiếp route; giữ AuthGate và error boundary. Build không còn chunk vượt 500 kB (chunk lớn nhất 327,87 kB; thư viện dùng chung vẫn được tải riêng), 24 test FE và lint đạt (còn cảnh báo Fast Refresh đã có).
 
 ## Bố cục repo
 

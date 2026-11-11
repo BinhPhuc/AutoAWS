@@ -1,15 +1,12 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { AuthGate } from '@/components/auth/AuthGate'
 import { AppShell } from '@/components/layout/AppShell'
+import { PageLoading } from '@/components/layout/PageState'
 import { AuthCallbackPage } from '@/pages/AuthCallbackPage'
-import { ChatPage } from '@/pages/ChatPage'
 import { ChecklistPage } from '@/pages/ChecklistPage'
-import { ConnectPage } from '@/pages/ConnectPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
 import { NotFoundPage } from '@/pages/NotFoundPage'
-import { ProposalsPage } from '@/pages/ProposalsPage'
 import { RootErrorPage, RouteErrorPage } from '@/pages/RouteErrorPage'
-import { ToolsPage } from '@/pages/ToolsPage'
 
 export const router = createBrowserRouter([
   { path: '/auth/callback', element: <AuthCallbackPage />, errorElement: <RootErrorPage /> },
@@ -21,16 +18,31 @@ export const router = createBrowserRouter([
       </AuthGate>
     ),
     errorElement: <RootErrorPage />,
+    HydrateFallback: PageLoading,
     children: [
       {
         // Page errors render inside AppShell so navigation stays available.
         errorElement: <RouteErrorPage />,
         children: [
           { index: true, element: <HomeRedirect /> },
-          { path: 'connect', element: <ConnectPage /> },
-          { path: 'chat/:conversationId?', element: <ChatPage /> },
-          { path: 'proposals', element: <ProposalsPage /> },
-          { path: 'tools', element: <ToolsPage /> },
+          {
+            path: 'connect',
+            lazy: async () => ({ Component: (await import('@/pages/ConnectPage')).ConnectPage }),
+          },
+          {
+            path: 'chat/:conversationId?',
+            lazy: async () => ({ Component: (await import('@/pages/ChatPage')).ChatPage }),
+          },
+          {
+            path: 'proposals',
+            lazy: async () => ({
+              Component: (await import('@/pages/ProposalsPage')).ProposalsPage,
+            }),
+          },
+          {
+            path: 'tools',
+            lazy: async () => ({ Component: (await import('@/pages/ToolsPage')).ToolsPage }),
+          },
           { path: 'checklist', element: <ChecklistPage /> },
           { path: '*', element: <NotFoundPage /> },
         ],
