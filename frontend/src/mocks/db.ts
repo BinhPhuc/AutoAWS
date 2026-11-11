@@ -1,4 +1,4 @@
-import type { Connection, Conversation, Message, ToolSpec } from '@/api/types'
+import type { Connection, Conversation, Job, Message, Proposal, ToolSpec } from '@/api/types'
 
 let seq = 0
 export const nextId = (prefix: string) => `${prefix}_${(++seq).toString(36).padStart(4, '0')}`
@@ -8,6 +8,8 @@ export const db = {
   connections: [] as Connection[],
   conversations: [] as Conversation[],
   messages: new Map<string, Message[]>(),
+  proposals: [] as Proposal[],
+  jobs: [] as Job[],
 }
 
 export function seed() {
@@ -21,6 +23,8 @@ export function seed() {
     role_arn: null,
     external_id: null,
     access_key_id_masked: 'AKIA****LAB1',
+    remediation_role_arn: null,
+    remediation_enabled: true,
     last_verified_at: now(),
     last_error: null,
     created_at: now(),

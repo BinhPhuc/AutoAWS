@@ -5,6 +5,7 @@ import { toastApiError } from './useConnections'
 
 export const conversationKeys = {
   all: ['conversations'] as const,
+  lists: () => ['conversations', 'list'] as const,
   list: (connectionId?: string) => ['conversations', 'list', connectionId ?? 'all'] as const,
   detail: (id: string) => ['conversations', 'detail', id] as const,
 }

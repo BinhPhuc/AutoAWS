@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Conversation, CreateConversationInput } from './types'
+import type { Conversation, CreateConversationInput, Job } from './types'
 
 export const conversationsApi = {
   list: (connectionId?: string) =>
@@ -11,5 +11,7 @@ export const conversationsApi = {
   get: (id: string) => api.get<Conversation>(`/api/conversations/${id}`),
   create: (input: CreateConversationInput) => api.post<Conversation>('/api/conversations', input),
   remove: (id: string) => api.delete<null>(`/api/conversations/${id}`),
-  messagesPath: (id: string) => `/api/conversations/${id}/messages`,
+  /** Starts a diagnosis job (202); poll it with jobsApi.get. */
+  send: (id: string, content: string) =>
+    api.post<Job>(`/api/conversations/${id}/messages`, { content }),
 }

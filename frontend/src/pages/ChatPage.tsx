@@ -1,15 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Plug } from 'lucide-react'
+import { ListTree, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { ChatActionsContext } from '@/components/chat/chatActions'
 import { Composer } from '@/components/chat/Composer'
+import { ConversationList } from '@/components/chat/ConversationList'
 import { EmptyChat } from '@/components/chat/EmptyChat'
 import { AssistantMessage, MessageItem, UserMessage } from '@/components/chat/Messages'
 import { EmptyState, PageError, PageLoading } from '@/components/layout/PageState'
@@ -29,16 +25,36 @@ export function ChatPage() {
   const conversation = useConversation(conversationId)
   const create = useCreateConversation()
   const { state, send, stop } = useSendMessage(conversationId)
+  // A live turn is shown only in the conversation it belongs to; while another conversation
+  // is streaming, this one can be read but not sent to.
+  const live = state.conversationId === conversationId ? state : null
+  const busyElsewhere = state.streaming && !live
   const [prefill, setPrefill] = useState('')
+  const [listOpen, setListOpen] = useState(false)
+  // Close the mobile drawer once a conversation is opened.
+  const [listFor, setListFor] = useState(conversationId)
+  if (listFor !== conversationId) {
+    setListFor(conversationId)
+    setListOpen(false)
+  }
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Keep the active connection in sync with the opened conversation.
+  // Select the conversation's connection once on entry. Reapplying it when the
+  // user switches connections can overwrite their choice before navigation finishes.
+  const syncedConversation = useRef<string | null>(null)
   useEffect(() => {
+    if (!conversationId) {
+      syncedConversation.current = null
+      return
+    }
+    if (syncedConversation.current === conversationId) return
     const cid = conversation.data?.connection_id
-    if (cid && cid !== activeConnectionId && connectedConnections.some((c) => c.id === cid)) {
-      setActiveConnectionId(cid)
+    if (cid && connectedConnections.some((c) => c.id === cid)) {
+      syncedConversation.current = conversationId
+      if (cid !== activeConnectionId) setActiveConnectionId(cid)
     }
   }, [
+    conversationId,
     conversation.data?.connection_id,
     activeConnectionId,
     connectedConnections,
@@ -52,18 +68,18 @@ export function ChatPage() {
   }, [messageCount, state.toolCalls.length, state.answer, state.statusText])
 
   /** Sends the first message: creates a conversation on demand, then streams. */
+  const pendingFirstMessage = useRef<string | null>(null)
   const handleSend = (text: string) => {
     if (conversationId) return void send(text)
     if (!activeConnectionId) return
     create.mutate(activeConnectionId, {
       onSuccess: ({ data }) => {
-        navigate(`/chat/${data.id}`, { replace: true })
-        // The hook is bound to the URL param; send on next tick once it re-renders.
+        // The hook is bound to the URL param; send once the page re-renders with the new id.
         pendingFirstMessage.current = text
+        navigate(`/chat/${data.id}`, { replace: true })
       },
     })
   }
-  const pendingFirstMessage = useRef<string | null>(null)
   useEffect(() => {
     if (conversationId && pendingFirstMessage.current) {
       const text = pendingFirstMessage.current
@@ -88,78 +104,73 @@ export function ChatPage() {
 
   const messages = conversation.data?.messages ?? []
   const showEmpty =
-    !conversationId || (conversation.isSuccess && messages.length === 0 && !state.streaming)
+    !conversationId || (conversation.isSuccess && messages.length === 0 && !live?.streaming)
+  // The server stores the question when the turn starts, so a refetch during the turn (e.g.
+  // after switching away and back) already ends with it: render the question only once.
+  const lastMessage = messages.at(-1)
+  const questionStored =
+    lastMessage?.role === 'user' && lastMessage.content === live?.pendingQuestion
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b px-4 py-2">
-        <span className="text-xs text-muted-foreground">{S.chat.connection}</span>
-        <Select
-          value={activeConnectionId ?? ''}
-          onValueChange={(v) => {
-            if (!v) return
-            setActiveConnectionId(String(v))
-            if (conversationId) navigate('/chat')
-          }}
-        >
-          <SelectTrigger size="sm" className="min-w-48">
-            <SelectValue>
-              {connectedConnections.find((c) => c.id === activeConnectionId)?.name ??
-                S.chat.selectConnection}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {connectedConnections.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name} · {c.region}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {conversation.data?.title && (
-          <span className="ml-2 hidden truncate text-sm font-medium md:inline">
-            {conversation.data.title}
-          </span>
-        )}
-      </div>
+    <div className="flex h-full">
+      <aside className="hidden w-72 shrink-0 border-r bg-card lg:block">
+        <ConversationList connectionId={activeConnectionId} />
+      </aside>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {conversationId && conversation.isPending ? (
-          <PageLoading />
-        ) : conversationId && conversation.isError ? (
-          <PageError error={conversation.error} onRetry={() => void conversation.refetch()} />
-        ) : showEmpty && !state.pendingQuestion ? (
-          <EmptyChat onPick={(text) => setPrefill(text)} />
-        ) : (
-          <div className="mx-auto max-w-3xl space-y-5 p-4">
-            {messages.map((m) => (
-              <MessageItem key={m.id} message={m} />
-            ))}
-            {state.pendingQuestion && (
-              <>
-                <UserMessage content={state.pendingQuestion} />
-                <AssistantMessage
-                  toolCalls={state.toolCalls}
-                  answer={state.answer?.answer}
-                  content={state.answer?.content}
-                  streaming={state.streaming}
-                  statusText={state.statusText}
-                  error={state.error}
-                />
-              </>
-            )}
-            <div ref={bottomRef} />
-          </div>
-        )}
-      </div>
+      <Sheet open={listOpen} onOpenChange={setListOpen}>
+        <SheetContent side="left" className="w-80 p-0" showCloseButton>
+          <SheetTitle className="sr-only">{S.chat.conversations}</SheetTitle>
+          <ConversationList connectionId={activeConnectionId} />
+        </SheetContent>
+      </Sheet>
 
-      <Composer
-        onSend={handleSend}
-        onStop={stop}
-        streaming={state.streaming}
-        disabled={create.isPending || !activeConnectionId}
-        initialValue={prefill}
-      />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex h-10 shrink-0 items-center border-b bg-card px-3 lg:hidden">
+          <Button variant="ghost" size="sm" onClick={() => setListOpen(true)}>
+            <ListTree />
+            {S.chat.conversations}
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {conversationId && conversation.isPending ? (
+            <PageLoading />
+          ) : conversationId && conversation.isError ? (
+            <PageError error={conversation.error} onRetry={() => void conversation.refetch()} />
+          ) : showEmpty && !live?.pendingQuestion ? (
+            <EmptyChat onPick={(text) => setPrefill(text)} />
+          ) : (
+            <ChatActionsContext.Provider value={{ followup: (q) => void send(q) }}>
+              <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-6">
+                {messages.map((m) => (
+                  <MessageItem key={m.id} message={m} />
+                ))}
+                {live?.pendingQuestion && (
+                  <>
+                    {!questionStored && <UserMessage content={live.pendingQuestion} />}
+                    <AssistantMessage
+                      toolCalls={live.toolCalls}
+                      answer={live.answer?.answer}
+                      content={live.answer?.content}
+                      streaming={live.streaming}
+                      statusText={live.statusText}
+                      error={live.error}
+                    />
+                  </>
+                )}
+                <div ref={bottomRef} />
+              </div>
+            </ChatActionsContext.Provider>
+          )}
+        </div>
+
+        <Composer
+          onSend={handleSend}
+          onStop={stop}
+          streaming={!!live?.streaming}
+          disabled={create.isPending || !activeConnectionId || busyElsewhere}
+          initialValue={prefill}
+        />
+      </div>
     </div>
   )
 }

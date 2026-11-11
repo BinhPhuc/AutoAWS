@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { connectionsApi } from '@/api/connections'
 import { ApiError } from '@/api/client'
@@ -14,6 +14,29 @@ export function useConnections() {
   return useQuery({
     queryKey: connectionKeys.all,
     queryFn: async () => (await connectionsApi.list()).data,
+  })
+}
+
+export const connectionSetupKey = ['connection-setup'] as const
+
+/** Setup info + a server-issued External ID. Fetched once and kept: the ID must not change
+ * while the user creates the role with it (refetch only on "Regenerate" or after saving). */
+export function useConnectionSetup() {
+  return useQuery({
+    queryKey: connectionSetupKey,
+    queryFn: async () => (await connectionsApi.setup()).data,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+export function useCloudFormationPreview(externalId: string) {
+  return useQuery({
+    queryKey: ['cloudformation-preview', externalId],
+    queryFn: async () => (await connectionsApi.cloudformationPreview(externalId)).data,
+    enabled: /^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(externalId),
+    // Keep the previous template on screen while a regenerated ID loads (no layout jump)
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -62,6 +85,19 @@ export function useDeleteConnection() {
       toast.success(message)
       void qc.invalidateQueries({ queryKey: connectionKeys.all })
       void qc.invalidateQueries({ queryKey: ['conversations'] })
+    },
+    onError: (e) => toastApiError(e),
+  })
+}
+
+export function useSetRemediationRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, arn }: { id: string; arn: string | null }) =>
+      connectionsApi.setRemediationRole(id, arn),
+    onSuccess: ({ message }) => {
+      toast.success(message)
+      void qc.invalidateQueries({ queryKey: connectionKeys.all })
     },
     onError: (e) => toastApiError(e),
   })

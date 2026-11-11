@@ -1,0 +1,29 @@
+# EC2 backend only. The frontend is built separately and hosted on S3/CloudFront.
+# Usage: docker compose -f docker-compose.backend.yml up -d --build
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      RUNTIME: local
+      STORAGE_BACKEND: dynamodb
+      DYNAMODB_CREATE_TABLE: "false"
+      CORS_ORIGINS: "*"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).close()"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

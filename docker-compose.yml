@@ -5,10 +5,10 @@ services:
     build: ./backend
     env_file: backend/.env
     environment:
-      DB_PATH: /data/autoaws.db
-      CORS_ORIGINS: http://localhost:5173
+      STORAGE_BACKEND: dynamodb
+      DYNAMODB_CREATE_TABLE: "false"
+      CORS_ORIGINS: "*"
     volumes:
-      - backend-data:/data
       # Platform AWS credentials for role connections (optional)
       - ~/.aws:/root/.aws:ro
     ports:
@@ -20,6 +20,3 @@ services:
       - backend
     ports:
       - "5173:80"
-
-volumes:
-  backend-data:

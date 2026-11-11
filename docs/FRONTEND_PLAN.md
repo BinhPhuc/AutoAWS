@@ -136,7 +136,8 @@ export async function streamSSE(path: string, body: unknown, onEvent: (e: AgentE
 ### `ConnectionForm`
 - Validation: ARN regex `^arn:aws:iam::\d{12}:role/.+`, access key `^AKIA[0-9A-Z]{16}$`, region bắt buộc.
 - Không bao giờ hiển thị lại secret sau khi lưu (contract chỉ trả `access_key_id_masked`).
-- Tab IAM Role được đánh dấu **"Recommended"**; tab Access Key có ghi chú "For learning/dev environments only".
+- Form chỉ hỗ trợ IAM role với hai cách thiết lập: **CloudFormation** (mặc định, **"Recommended"**) hoặc tạo thủ công trong IAM. Không còn tab / trường Access Key; chuyển cách thiết lập vẫn giữ Name, Region, Role ARN và External ID, kể cả khi thử lại verify.
+- Luồng role theo nhánh `dev` (2026-11-10): sinh/hiển thị External ID trước khi tạo role; hướng dẫn IAM thủ công hoặc tải template CloudFormation từ preview; lưu đúng ID rồi verify ngay. Khi thất bại, hiện lỗi và thử lại cùng connection. Giữ bố cục bảng/hộp thoại hiện tại; policy thủ công dùng đúng principal nền tảng từ `/api/connections/setup`.
 
 ## 6. Lộ trình thực hiện (tick khi xong)
 
@@ -154,7 +155,7 @@ Hoàn thành 2026-10-16. Đã kiểm tra tích hợp thật với backend (khôn
 Ước tính: F1–F2 ≈ 1 ngày, F3 ≈ 1 ngày, F4–F5 ≈ 1.5 ngày, F6–F8 ≈ 0.5 ngày.
 
 ## 7. Sau init (không làm bây giờ)
-- Đăng nhập Cognito (Hosted UI, PKCE) → gắn `Authorization` vào `client.ts`/`sse.ts`.
+- ~~Đăng nhập Cognito (Hosted UI, PKCE) → gắn `Authorization` vào `client.ts`~~ — **đã làm (2026-11-10)**: `src/lib/auth.ts` (PKCE, refresh, sign out), `AuthGate` + `/auth/callback`, `UserMenu` trên HeaderBar; cấu hình lấy từ `GET /api/auth/config`.
 - Màn Checklist: chọn/tải checklist, bảng kết quả từng mục cập nhật dần, báo cáo tổng hợp.
 - Hiển thị chỉ số/log (M3): mini chart cho metric, bảng log entries trong ToolCallTimeline.
 - Deploy S3 + CloudFront qua CDK.

@@ -1,33 +1,49 @@
-"""AnthropicProvider — PLACEHOLDER, not implemented yet.
+"""AnthropicProvider — the Messages API through the official ``anthropic`` SDK.
 
-How to implement (Anthropic Messages API with tool use):
-  - pip install anthropic; client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-  - messages[0] (role=system) -> `system=` parameter
-  - LLMMessage(role=user)      -> {"role": "user", "content": text}
-  - LLMMessage(role=assistant) -> {"role": "assistant", "content": [{"type": "text", ...},
-                                   {"type": "tool_use", "id", "name", "input"} ...]}
-  - LLMMessage(role=tool)      -> {"role": "user", "content": [{"type": "tool_result",
-                                   "tool_use_id": tool_call_id, "content": content}]}
-    (consecutive tool messages must be merged into ONE user message)
-  - ToolSpec -> {"name", "description", "input_schema"}
-  - response.content blocks: text -> LLMResponse.text; tool_use -> ToolCallRequest
-  - stop_reason "tool_use" | "end_turn" | "max_tokens"
-Keep max_tokens ~2048 and pass the tool list on every turn.
+Two uses:
+- Claude API (``ANTHROPIC_API_KEY``, ``sk-ant-…``): dev alternative to Bedrock, same request
+  as BedrockProvider (app/llm/claude.py). Refusals use the server-side fallback in its
+  "default" form, which routes a declined request by refusal category.
+- A gateway that speaks the Messages API (``ANTHROPIC_BASE_URL`` + ``ANTHROPIC_AUTH_TOKEN``,
+  the settings such services give for Claude Code), possibly serving other models behind
+  it: compatibility mode, only the basic request (``claude_features=False``). Demo only:
+  the question and the sanitized AWS data pass through that gateway.
 """
 
-from app.aws.registry import ToolSpec
+from anthropic import AsyncAnthropic
+
 from app.config import get_settings
-from app.llm.base import LLMError, LLMMessage, LLMResponse
+from app.llm.base import LLMError
+from app.llm.claude import ClaudeMessagesProvider
 
 
-class AnthropicProvider:
-    name = "anthropic"
-
+class AnthropicProvider(ClaudeMessagesProvider):
     def __init__(self) -> None:
-        settings = get_settings()
-        if not settings.anthropic_api_key:
-            raise LLMError("ANTHROPIC_API_KEY is not set")
-        self.model = settings.anthropic_model
-
-    async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
-        raise NotImplementedError("TODO: implement AnthropicProvider.chat (see module docstring)")
+        s = get_settings()
+        if not s.anthropic_model:
+            raise LLMError("ANTHROPIC_MODEL is not set")
+        gateway = bool(s.anthropic_base_url)
+        if gateway:
+            if not (s.anthropic_auth_token or s.anthropic_api_key):
+                raise LLMError("ANTHROPIC_BASE_URL is set: also set ANTHROPIC_AUTH_TOKEN")
+            client = AsyncAnthropic(
+                base_url=s.anthropic_base_url.rstrip("/"),
+                auth_token=s.anthropic_auth_token or None,  # Authorization: Bearer
+                api_key=None if s.anthropic_auth_token else s.anthropic_api_key,
+            )
+        else:
+            if not s.anthropic_api_key:
+                raise LLMError("ANTHROPIC_API_KEY is not set")
+            client = AsyncAnthropic(api_key=s.anthropic_api_key)
+        super().__init__(
+            name="anthropic",
+            client=client,
+            model=s.anthropic_model,
+            effort=s.llm_effort,
+            max_tokens=s.llm_max_tokens,
+            extra={}
+            if gateway
+            else {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"},
+            claude_features=not gateway,
+            gateway_cache=gateway and s.anthropic_gateway_cache,
+        )
