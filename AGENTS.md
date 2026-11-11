@@ -45,6 +45,7 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [ ] **Tiếp theo** (xếp theo ưu tiên): deploy thật một phương án (CDK hoặc EC2) rồi thử Cognito + Bedrock; `run_eval.py --runs 5` với LLM thật; KB3 + CloudTrail trên AWS; CI (GitHub Actions: pytest, ruff, vitest, build, test CDK); mặc định an toàn hơn (`CORS_ORIGINS`, `AUTH_MODE` trong Compose EC2); checklist runner
 
 - [x] Sửa chuyển lab trong chat (2026-11-12): chỉ đồng bộ connection khi mở hội thoại, tránh effect của hội thoại cũ ghi đè lựa chọn lab mới trong lúc điều hướng. Thêm 2 test hồi quy; 22 test FE, build và kiểm tra định dạng file sửa đạt.
+- [x] Sửa merge `main` vào `feat/404page` (2026-11-12): lấy Sidebar và navigation ổn định từ `main`, loại import `ConnectionBadge` đã bị xoá gây màn hình trắng; nối lại route 404 và error boundary của nhánh 404, giữ AuthGate và các trang mới từ `main`. 24 test FE, build và lint đạt (còn cảnh báo Fast Refresh); Chrome xác nhận cổng 5173 hiện trang đăng nhập, mock xác nhận 404/Tools/Proposals hoạt động.
 
 ## Bố cục repo
 
