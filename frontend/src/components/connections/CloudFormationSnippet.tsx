@@ -1,19 +1,22 @@
 import { useState } from 'react'
-import { Check, Copy, Download } from 'lucide-react'
+import { Check, Copy, Download, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCloudFormation, useCloudFormationPreview } from '@/hooks/useConnections'
 import { S } from '@/lib/strings'
+import { cn } from '@/lib/utils'
 import { InstructionText } from './InstructionText'
 
 export function CopyButton({
   text,
   label = S.common.copy,
   accessibleLabel,
+  disabled = false,
 }: {
   text: string
   label?: string
   accessibleLabel?: string
+  disabled?: boolean
 }) {
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -24,6 +27,7 @@ export function CopyButton({
         aria-label={accessibleLabel}
         variant="outline"
         size="sm"
+        disabled={disabled}
         onClick={async () => {
           try {
             setFailed(false)
@@ -57,6 +61,8 @@ export function CloudFormationSnippet({
   const preview = useCloudFormationPreview(externalId ?? '')
   const saved = useCloudFormation(connectionId ?? null)
   const { data, isPending, isError, isFetching, refetch } = connectionId ? saved : preview
+  // A regenerated External ID is loading: the template on screen still carries the old one
+  const stale = !connectionId && (preview.isPlaceholderData || data?.external_id !== externalId)
   const t = S.connections.cfn
 
   if (!connectionId && !externalId) {
@@ -105,8 +111,19 @@ export function CloudFormationSnippet({
   }
 
   return (
-    <section className="min-w-0 space-y-4 text-sm">
-      <h3 className="font-semibold">{t.title}</h3>
+    <section className="min-w-0 space-y-4 text-sm" aria-busy={stale}>
+      <h3 className="flex items-center gap-2 font-semibold">
+        {t.title}
+        {stale && (
+          <span
+            role="status"
+            className="flex items-center gap-1 text-xs font-normal text-muted-foreground"
+          >
+            <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+            {S.common.loading}
+          </span>
+        )}
+      </h3>
       <p className="text-muted-foreground">{t.intro}</p>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
         {t.existingRole}
@@ -120,22 +137,16 @@ export function CloudFormationSnippet({
           <CopyButton text={data.stack_name} accessibleLabel={`${S.common.copy}: ${t.stackName}`} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
+          <div className={cn('min-w-0 transition-opacity', stale && 'opacity-40')}>
             <p className="text-xs text-muted-foreground">{t.externalId}</p>
             <code className="break-all font-semibold">{data.external_id}</code>
           </div>
           <CopyButton
             text={data.external_id}
             accessibleLabel={`${S.common.copy}: ${t.externalId}`}
+            disabled={stale}
           />
         </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={download}>
-          <Download aria-hidden="true" />
-          {t.downloadTemplate}
-        </Button>
-        <CopyButton text={data.template_yaml} label={t.copyTemplate} />
       </div>
       <ol className="list-decimal space-y-3 pl-5 text-muted-foreground">
         {[t.step1, t.step2, t.step3, t.step4, t.step5, t.step6].map((step) => (
@@ -154,6 +165,13 @@ export function CloudFormationSnippet({
           <code>{data.template_yaml}</code>
         </pre>
       </details>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" onClick={download} disabled={stale}>
+          <Download aria-hidden="true" />
+          {t.downloadTemplate}
+        </Button>
+        <CopyButton text={data.template_yaml} label={t.copyTemplate} disabled={stale} />
+      </div>
       <a
         href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html"
         target="_blank"

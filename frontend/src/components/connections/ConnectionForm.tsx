@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
+import { useIsFetching, useQueryClient } from '@tanstack/react-query'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -29,6 +29,9 @@ export function ConnectionForm({ onCreated }: Props) {
   const verify = useVerifyConnection()
   const setup = useConnectionSetup()
   const queryClient = useQueryClient()
+  // New External ID on its way, or its CloudFormation template still loading
+  const regenerating =
+    useIsFetching({ queryKey: ['cloudformation-preview'] }) > 0 || setup.isFetching
 
   const [setupMethod, setSetupMethod] = useState<RoleSetupMethod>('cloudformation')
   const [name, setName] = useState('')
@@ -163,10 +166,11 @@ export function ConnectionForm({ onCreated }: Props) {
               variant="outline"
               size="icon"
               aria-label={t.regenerate}
-              disabled={setup.isFetching}
+              disabled={regenerating}
+              aria-busy={regenerating}
               onClick={() => void setup.refetch()}
             >
-              <RefreshCw />
+              {regenerating ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             </Button>
           </div>
         </Field>

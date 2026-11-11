@@ -13,7 +13,7 @@ export function PageHeader({
   className?: string
 }) {
   return (
-    <div className={cn('flex flex-wrap items-start justify-between gap-3', className)}>
+    <div className={cn('flex flex-wrap items-center justify-between gap-3', className)}>
       <div className="min-w-0 space-y-0.5">
         <h1 className="text-lg font-semibold tracking-tight [text-wrap:balance]">{title}</h1>
         {description && <p className="max-w-3xl text-sm text-muted-foreground">{description}</p>}
@@ -32,7 +32,7 @@ export function PageBody({
   className?: string
 }) {
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
       <div className={cn('mx-auto w-full max-w-7xl space-y-4 p-4 md:p-6', className)}>
         {children}
       </div>
