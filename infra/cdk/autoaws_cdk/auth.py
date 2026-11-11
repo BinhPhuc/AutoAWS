@@ -6,9 +6,8 @@ client secret (a browser cannot keep one). The HTTP API checks the access tokens
 authorizer (AutoAws-Api); the backend reads the verified claims and keeps every user's data
 apart.
 
-The client's callback URLs need the CloudFront URL, which exists only after the Frontend
-stack: deploy once, then again with -c frontendUrl=https://dxxxx.cloudfront.net (the same
-second deploy the notification links already need).
+The client's callback URLs are the site URL from the Frontend stack (deployed before this
+one), so a single `cdk deploy` is enough.
 """
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
@@ -21,7 +20,7 @@ LOCAL_WEB = "http://localhost:5173"
 
 
 class AuthStack(Stack):
-    def __init__(self, scope: Construct, cid: str, cfg: Config, **kwargs) -> None:
+    def __init__(self, scope: Construct, cid: str, cfg: Config, site_url: str, **kwargs) -> None:
         super().__init__(scope, cid, **kwargs)
         self.user_pool = cognito.UserPool(
             self,
@@ -54,8 +53,8 @@ class AuthStack(Stack):
             cognito_domain=cognito.CognitoDomainOptions(domain_prefix=prefix),
         )
 
-        origins = [cfg.frontend_url.rstrip("/")] if cfg.frontend_url else []
-        if cfg.env_name == "dev" or not origins:
+        origins = [site_url]
+        if cfg.env_name == "dev":
             origins.append(LOCAL_WEB)  # `pnpm dev` against the deployed API
         self.client = self.user_pool.add_client(
             "WebClient",

@@ -1,5 +1,11 @@
 """AutoAws-Frontend: private S3 bucket + CloudFront (OAC). /api/* is forwarded to the HTTP
-API, so the web app and the API share one origin (no CORS, relative /api URLs)."""
+API, so the web app and the API share one origin (no CORS, relative /api URLs).
+
+The HTTP API itself is created here, empty (no stage, no routes): CloudFront needs its
+domain, Cognito needs the CloudFront URL for its callbacks, and the API's authorizer needs
+the Cognito client. Creating the bare API first makes that a straight line
+(Frontend -> Auth -> Api, which adds the stage, routes and authorizer), so one
+`cdk deploy` sets everything up."""
 
 from aws_cdk import CfnOutput, RemovalPolicy, Stack
 from aws_cdk import aws_apigatewayv2 as apigw
@@ -18,10 +24,13 @@ class FrontendStack(Stack):
         scope: Construct,
         cid: str,
         cfg: Config,
-        http_api: apigw.IHttpApi,
         **kwargs,
     ) -> None:
         super().__init__(scope, cid, **kwargs)
+        self.http_api = apigw.HttpApi(
+            self, "HttpApi", api_name=f"autoaws-{cfg.env_name}", create_default_stage=False
+        )
+        http_api = self.http_api
         bucket = s3.Bucket(
             self,
             "Site",
@@ -81,4 +90,9 @@ class FrontendStack(Stack):
                 destination_bucket=bucket,
                 distribution=self.distribution,
             )
-        CfnOutput(self, "Url", value=f"https://{self.distribution.distribution_domain_name}")
+        # The site URL: a custom domain when configured, otherwise CloudFront's own
+        self.site_url = (
+            cfg.frontend_url.rstrip("/") or f"https://{self.distribution.distribution_domain_name}"
+        )
+        CfnOutput(self, "Url", value=self.site_url)
+        CfnOutput(self, "ApiUrl", value=self.http_api.api_endpoint)

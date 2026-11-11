@@ -77,6 +77,26 @@ def to_tools(tools: list[ToolSpec]) -> list[dict]:
     ]
 
 
+def with_cache_breakpoints(req: dict) -> dict:
+    """Explicit ``cache_control`` breakpoints (gateways may not know the top-level form):
+    the system prompt, the last tool (caches every tool before it) and the last block of the
+    latest message (the next round reads this whole prefix from the cache). 3 of the 4
+    breakpoints the Messages API allows."""
+    mark = {"type": "ephemeral"}
+    out = dict(req)
+    if out.get("system"):
+        out["system"] = [{"type": "text", "text": out["system"], "cache_control": mark}]
+    if out.get("tools"):
+        out["tools"] = [*out["tools"][:-1], {**out["tools"][-1], "cache_control": mark}]
+    if out.get("messages"):
+        last = out["messages"][-1]
+        blocks = list(last["content"])
+        if blocks:
+            blocks[-1] = {**blocks[-1], "cache_control": mark}
+        out["messages"] = [*out["messages"][:-1], {**last, "content": blocks}]
+    return out
+
+
 def from_message(message: Any) -> LLMResponse:
     """LLMResponse from an SDK message; refusals and truncation become LLMError."""
     if message.stop_reason == "refusal":
@@ -122,6 +142,8 @@ class ClaudeMessagesProvider:
         effort: str,
         max_tokens: int,
         extra: dict | None = None,
+        claude_features: bool = True,
+        gateway_cache: bool = False,
     ) -> None:
         self.name = name
         self.client = client
@@ -129,9 +151,21 @@ class ClaudeMessagesProvider:
         self.effort = effort
         self.max_tokens = max_tokens
         self.extra = extra or {}
+        # False: a third-party Messages API gateway — send only the basic request
+        self.claude_features = claude_features
+        self.gateway_cache = gateway_cache
 
     def request(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> dict:
         system, api_messages = to_messages(messages)
+        if not self.claude_features:
+            req = {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "system": system,
+                "messages": api_messages,
+                "tools": to_tools(tools),
+            }
+            return with_cache_breakpoints(req) if self.gateway_cache else req
         return {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -148,7 +182,9 @@ class ClaudeMessagesProvider:
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
         params = self.request(messages, tools)
         try:
-            async with self.client.beta.messages.stream(**params) as stream:
+            # Gateways get the plain endpoint (the beta one adds ?beta=true)
+            api = self.client.beta.messages if self.claude_features else self.client.messages
+            async with api.stream(**params) as stream:
                 message = await stream.get_final_message()
         except anthropic.AuthenticationError as e:
             raise LLMError(f"{self.name}: authentication failed ({e.message})") from e
@@ -166,13 +202,16 @@ class ClaudeMessagesProvider:
         except anthropic.APIConnectionError as e:
             raise LLMError(f"{self.name}: cannot reach the API") from e
         response = from_message(message)
+        usage = message.usage
         log.info(
-            "%s %s: stop=%s tools=%d in=%d out=%d",
+            "%s %s: stop=%s tools=%d in=%d out=%d cache_read=%d cache_write=%d",
             self.name,
             self.model,
             response.stop_reason,
             len(response.tool_calls),
             response.input_tokens,
             response.output_tokens,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
         )
         return response

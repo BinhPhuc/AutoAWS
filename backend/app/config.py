@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     openai_token_limit_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-5-5"
+    # A gateway that speaks the Messages API (e.g. one serving other models behind it, set up
+    # for Claude Code with ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN). Set: compatibility mode
+    # — only the basic request (no thinking / effort / betas), Bearer auth.
+    anthropic_base_url: str = ""
+    anthropic_auth_token: str = ""
+    # Gateway mode: also mark cache breakpoints (system, tools, latest message) so a gateway
+    # that bills "cache read" can serve the repeated prefix of each round cheaply
+    anthropic_gateway_cache: bool = False
     # Claude on Bedrock (Mantle client): model ids carry the `anthropic.` prefix
     bedrock_model_id: str = "anthropic.claude-opus-5-5"
     bedrock_region: str = ""
@@ -84,6 +92,9 @@ class Settings(BaseSettings):
     cognito_user_pool_id: str = ""  # e.g. ap-southeast-1_AbCdEf (the region is its prefix)
     cognito_client_id: str = ""  # public app client (PKCE, no secret)
     cognito_domain: str = ""  # Hosted UI base URL, e.g. https://x.auth.<region>.amazoncognito.com
+    # Signs the External IDs the server issues for role connections (app/external_id.py).
+    # Required with AUTH_MODE=cognito or RUNTIME=lambda; the same value on every instance.
+    external_id_secret: SecretStr = SecretStr("")
 
     # Human-in-the-loop remediation (docs/API_CONTRACT.md §7)
     # Dev only: let access-key connections execute approved proposals (LocalStack, test

@@ -49,6 +49,9 @@ AUTH_MODE=cognito
 COGNITO_USER_POOL_ID=<UserPoolId>
 COGNITO_CLIENT_ID=<WebClientId>
 COGNITO_DOMAIN=<HostedUiUrl>
+# Bắt buộc khi AUTH_MODE=cognito: khoá ký External ID của kết nối IAM role.
+# Tạo một lần, giữ cố định: python -c "import secrets; print(secrets.token_hex(32))"
+EXTERNAL_ID_SECRET=<chuỗi ngẫu nhiên dài>
 ```
 
 `COGNITO_DOMAIN` là URL đầy đủ `https://<prefix>.auth.<region>.amazoncognito.com`,

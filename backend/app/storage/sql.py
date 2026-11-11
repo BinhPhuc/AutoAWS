@@ -33,6 +33,10 @@ class SqlStore:
     def get_connection(self, conn_id: str) -> Connection | None:
         return self.db.get(Connection, conn_id)
 
+    def find_connection_by_external_id(self, external_id: str) -> Connection | None:
+        stmt = select(Connection).where(Connection.external_id == external_id)
+        return self.db.exec(stmt).first()
+
     def save_connection(self, conn: Connection) -> None:
         self._save(conn)
 

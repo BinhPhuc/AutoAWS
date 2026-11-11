@@ -1,11 +1,17 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { Connection, CreateRoleConnection } from '@/api/types'
-import { useCreateConnection, useVerifyConnection } from '@/hooks/useConnections'
-import { DEFAULT_REGION, generateExternalId } from '@/lib/format'
+import {
+  connectionSetupKey,
+  useConnectionSetup,
+  useCreateConnection,
+  useVerifyConnection,
+} from '@/hooks/useConnections'
+import { DEFAULT_REGION } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { RegionSelect } from './RegionSelect'
 import { RoleSetupGuide, type RoleSetupMethod } from './RoleSetupGuide'
@@ -21,12 +27,15 @@ export function ConnectionForm({ onCreated }: Props) {
   const t = S.connections.form
   const create = useCreateConnection()
   const verify = useVerifyConnection()
+  const setup = useConnectionSetup()
+  const queryClient = useQueryClient()
 
   const [setupMethod, setSetupMethod] = useState<RoleSetupMethod>('cloudformation')
   const [name, setName] = useState('')
   const [region, setRegion] = useState(DEFAULT_REGION)
   const [roleArn, setRoleArn] = useState('')
-  const [externalId, setExternalId] = useState(generateExternalId)
+  // Issued by the server for this user (docs/API_CONTRACT.md §2); read-only in the form
+  const externalId = setup.data?.external_id ?? ''
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [created, setCreated] = useState<Connection | null>(null)
 
@@ -35,8 +44,7 @@ export function ConnectionForm({ onCreated }: Props) {
     if (!name.trim()) e.name = t.errors.nameRequired
     if (!region) e.region = t.errors.regionRequired
     if (!ARN_RE.test(roleArn.trim())) e.roleArn = t.errors.roleArnInvalid
-    if (!/^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(externalId))
-      e.externalId = t.errors.externalIdInvalid
+    if (!externalId) e.externalId = t.errors.externalIdMissing
     setErrors(e)
     if (Object.keys(e).length) return null
     return {
@@ -55,6 +63,8 @@ export function ConnectionForm({ onCreated }: Props) {
     create.mutate(input, {
       onSuccess: ({ data }) => {
         setCreated(data)
+        // This ID is now taken: the next connection gets a fresh one
+        void queryClient.invalidateQueries({ queryKey: connectionSetupKey })
         verify.mutate(data.id, {
           onSuccess: ({ data: result }) => {
             if (result.status === 'connected') onCreated(data)
@@ -144,7 +154,8 @@ export function ConnectionForm({ onCreated }: Props) {
             <Input
               id="conn-extid"
               value={externalId}
-              onChange={(e) => setExternalId(e.target.value)}
+              readOnly
+              placeholder={setup.isPending ? S.common.loading : ''}
               className="font-mono text-xs"
             />
             <Button
@@ -152,7 +163,8 @@ export function ConnectionForm({ onCreated }: Props) {
               variant="outline"
               size="icon"
               aria-label={t.regenerate}
-              onClick={() => setExternalId(generateExternalId())}
+              disabled={setup.isFetching}
+              onClick={() => void setup.refetch()}
             >
               <RefreshCw />
             </Button>

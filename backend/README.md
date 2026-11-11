@@ -8,7 +8,7 @@ FastAPI + boto3. Thiết kế chi tiết: `../docs/BACKEND_PLAN.md`; hợp đồ
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env          # Điền DYNAMODB_TABLE, DYNAMODB_REGION và credentials nền tảng
+cp .env.example .env          # DynamoDB: điền DYNAMODB_TABLE, DYNAMODB_REGION; hoặc local: STORAGE_BACKEND=sqlite
 uvicorn app.main:app --reload # http://localhost:8000/docs
 ```
 
@@ -39,6 +39,56 @@ try {
 
 `__with_libyaml__ = False` nghĩa là đang dùng bản Python thuần; vẫn đọc/ghi YAML bình thường.
 Các cảnh báo `License classifiers` / `bdist_wheel` không phải nguyên nhân gây lỗi này.
+
+## Chọn LLM (`LLM_PROVIDER`)
+
+Backend đọc cấu hình từ `backend/.env`; biến môi trường đặt lúc chạy được ưu tiên hơn file.
+Mẫu đủ các biến: [`.env.example`](.env.example). Key chỉ để trong `.env` (đã nằm trong `.gitignore`).
+
+| `LLM_PROVIDER` | Dùng khi | Biến cần điền |
+|---|---|---|
+| `mock` (mặc định) | Chạy thử giao diện / luồng, không cần key (không suy luận) | — |
+| `bedrock` | Bản đích theo báo cáo: Claude trên Amazon Bedrock | `BEDROCK_MODEL_ID`, `BEDROCK_REGION`, credentials tài khoản nền tảng |
+| `anthropic` | Key Claude API (`sk-ant-…`) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
+| `anthropic` + gateway | Key `sk-…` của một **gateway định dạng Anthropic** — loại được hướng dẫn cấu hình cho Claude Code bằng `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` (có thể chạy model khác phía sau) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` |
+| `openai` | Máy chủ **định dạng OpenAI** (`/v1/chat/completions`): Ollama local, OpenAI, gateway tương thích | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` (mục Ollama bên dưới) |
+| `mcp` | Một MCP client (ví dụ Claude Code) đóng vai LLM | — (xem `../infra/localstack/README.md`) |
+
+Key thuộc loại nào: xem hướng dẫn của bên cấp key. Họ bảo đặt `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`
+→ dòng *anthropic + gateway*; họ đưa "OpenAI base URL" → dòng `openai`.
+
+### Gateway định dạng Anthropic
+
+```dotenv
+LLM_PROVIDER=anthropic
+ANTHROPIC_BASE_URL=https://gateway.example.com   # URL bên cấp key đưa, không thêm /v1
+ANTHROPIC_AUTH_TOKEN=sk-...                      # key của bạn
+ANTHROPIC_MODEL=<tên model gateway liệt kê>
+ANTHROPIC_GATEWAY_CACHE=true                     # tuỳ chọn, xem dưới
+```
+
+- Có `ANTHROPIC_BASE_URL` thì provider chạy **chế độ tương thích** (`app/llm/anthropic.py`): chỉ gửi request
+  Messages API cơ bản (model, system, messages, tools, max_tokens), xác thực `Authorization: Bearer`, không gửi
+  thinking / `LLM_EFFORT` / beta riêng của Claude — gateway chạy model khác thường từ chối các tham số đó.
+- `ANTHROPIC_GATEWAY_CACHE=true` gắn `cache_control` vào system prompt, tool cuối và tin nhắn mới nhất. Mỗi vòng
+  của agent gửi lại toàn bộ prompt + bộ tool + hội thoại; gateway có tính giá "cache read" sẽ tính phần lặp lại
+  này rẻ hơn. Kiểm tra trong log backend: `cache_read=…` lớn hơn 0 từ vòng thứ hai.
+- Kiểm tra nhanh key và model:
+  ```bash
+  curl -s $ANTHROPIC_BASE_URL/v1/messages -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+    -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+    -d '{"model":"<model>","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}'
+  ```
+- Đã chạy thật (2026-11-10/11) với một gateway phục vụ model Gemini, dữ liệu từ LocalStack: KB1 và KB2 chẩn đoán
+  đúng, đề xuất sửa được duyệt và kiểm chứng đạt. Một câu hỏi tốn khoảng 150–300 nghìn token đầu vào (4–8 vòng);
+  model chia nhỏ nhiều vòng có thể chạm `MAX_TURN_TOKENS` (mặc định 200.000) — nâng lên nếu cần.
+
+Lưu ý khi dùng gateway hoặc máy chủ bên thứ ba (cả `anthropic` + gateway lẫn `openai`):
+
+- Model **phải gọi được tool**: agent gọi các tool đọc AWS và kết thúc bằng tool `submit_diagnosis`.
+- **Dữ liệu đi qua máy chủ đó**: câu hỏi và kết quả đọc AWS (đã qua sanitizer nhưng vẫn có tên tài nguyên, IP,
+  cấu hình, log). Chỉ dùng với LocalStack hoặc tài khoản test; đây là đường thay thế cho demo, bản đích là Bedrock.
+- Header của web hiện tên provider (`LLM: anthropic` / `openai`); khi demo nên nói rõ LLM đang chạy qua bên thứ ba.
 
 ## Chat với model local qua Ollama
 
@@ -161,7 +211,9 @@ trước backend, ví dụ reverse proxy trên EC2 hoặc ALB, rồi build front
 dù CORS là `*` ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content)).
 File Compose không cấu hình TLS, DNS hay Security Group.
 Trước khi mở API cho người dùng, đặt `AUTH_MODE=cognito`, `COGNITO_USER_POOL_ID`,
-`COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` theo stack Auth hiện có (xem README gốc, mục
+`COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` và `EXTERNAL_ID_SECRET` (khoá ký External ID; thiếu thì
+backend không khởi động; giữ cố định, đổi khoá làm mọi External ID đã cấp mà chưa dùng mất hiệu lực)
+theo stack Auth hiện có (xem README gốc, mục
 chạy local với Cognito thật). Cơ chế auth và phân vùng người dùng giữ nguyên từ `main`.
 Với bản EC2 không dùng CDK, có thể tạo stack Cognito độc lập bằng
 [`cognito.yaml`](../infra/cloudformation/cognito.yaml); xem

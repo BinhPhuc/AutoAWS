@@ -59,11 +59,13 @@ export function CloudFormationSnippet({
   const { data, isPending, isError, isFetching, refetch } = connectionId ? saved : preview
   const t = S.connections.cfn
 
-  if (!connectionId && !/^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(externalId ?? '')) {
+  if (!connectionId && !externalId) {
+    // waiting for the server-issued External ID (GET /api/connections/setup)
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {S.connections.form.errors.externalIdInvalid}
-      </p>
+      <div role="status" className="space-y-2">
+        <span>{S.common.loading}</span>
+        <Skeleton className="h-32" />
+      </div>
     )
   }
 

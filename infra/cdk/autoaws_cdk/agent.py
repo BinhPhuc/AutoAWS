@@ -24,8 +24,9 @@ def code(cfg: Config) -> lambda_.Code:
     return lambda_.Code.from_asset(str(cfg.lambda_asset))
 
 
-def common_env(stack: Stack, cfg: Config, table: ddb.ITableV2) -> dict[str, str]:
-    """Backend settings (app/config.py) shared by every function."""
+def common_env(stack: Stack, cfg: Config, table: ddb.ITableV2, site_url: str) -> dict[str, str]:
+    """Backend settings (app/config.py) shared by every function. ``site_url``: the web app
+    (links in notification emails)."""
     return {
         "APP_ENV": cfg.env_name,
         "RUNTIME": "lambda",
@@ -37,7 +38,7 @@ def common_env(stack: Stack, cfg: Config, table: ddb.ITableV2) -> dict[str, str]
         "PLATFORM_AWS_ACCOUNT_ID": stack.account,
         "PLATFORM_AGENT_ROLE_ARN": f"arn:aws:iam::{stack.account}:role/{AGENT_ROLE_NAME}",
         "PLATFORM_EXECUTOR_ROLE_ARN": f"arn:aws:iam::{stack.account}:role/{EXECUTOR_ROLE_NAME}",
-        "FRONTEND_URL": cfg.frontend_url or "https://localhost",
+        "FRONTEND_URL": site_url,
     }
 
 
@@ -59,10 +60,11 @@ class AgentStack(Stack):
         cfg: Config,
         table: ddb.ITableV2,
         key: kms.IKey,
+        site_url: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, cid, **kwargs)
-        env = common_env(self, cfg, table)
+        env = common_env(self, cfg, table, site_url)
         sm_arn = state_machine_arn(self)
 
         # ---- agent-worker: LLM + read-only role ----------------------------------------

@@ -17,10 +17,16 @@ export function useConnections() {
   })
 }
 
+export const connectionSetupKey = ['connection-setup'] as const
+
+/** Setup info + a server-issued External ID. Fetched once and kept: the ID must not change
+ * while the user creates the role with it (refetch only on "Regenerate" or after saving). */
 export function useConnectionSetup() {
   return useQuery({
-    queryKey: ['connection-setup'],
+    queryKey: connectionSetupKey,
     queryFn: async () => (await connectionsApi.setup()).data,
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 }
 

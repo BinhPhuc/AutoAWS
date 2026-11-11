@@ -9,6 +9,7 @@ from app.api import auth, checklists, connections, conversations, health, jobs, 
 from app.auth import current_user
 from app.config import get_settings
 from app.errors import install_exception_handlers
+from app.external_id import check_settings as external_id_settings
 from app.storage.store import init_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -42,6 +43,7 @@ def _check_auth_settings(settings) -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
     _check_auth_settings(settings)
+    external_id_settings(settings)
 
     # LLM_PROVIDER=mcp: an MCP client plays the LLM through /mcp/ (docs/API_CONTRACT.md §6)
     mcp_server = None
