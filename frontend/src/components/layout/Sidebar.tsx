@@ -17,7 +17,7 @@ export function Sidebar({
 }) {
   const pending = usePendingProposals()
   return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+    <div className="flex h-full flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
       <div
         className={cn(
           'flex h-12 shrink-0 items-center gap-2.5 border-b border-sidebar-border',
@@ -37,7 +37,7 @@ export function Sidebar({
         )}
       </div>
 
-      <nav aria-label="Main" className="flex-1 space-y-0.5 overflow-y-auto py-3">
+      <nav aria-label="Main" className="flex-1 space-y-0.5 overflow-x-hidden overflow-y-auto py-3">
         {navItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -65,11 +65,15 @@ export function Sidebar({
                 />
               )}
             </span>
-            {collapsed ? <span className="sr-only">{label}</span> : <span>{label}</span>}
+            {collapsed ? (
+              <span className="sr-only">{label}</span>
+            ) : (
+              <span className="truncate">{label}</span>
+            )}
             {to === '/proposals' && pending > 0 && (
               <span
                 className={cn(
-                  'tabular ml-auto rounded-sm bg-warning-bg px-1.5 text-xs font-semibold text-warning',
+                  'tabular ml-auto shrink-0 rounded-sm bg-warning-bg px-1.5 text-xs font-semibold text-warning',
                   collapsed && 'sr-only',
                 )}
               >
@@ -83,8 +87,8 @@ export function Sidebar({
 
       <div className="shrink-0 border-t border-sidebar-border p-2">
         {!collapsed && (
-          <p className="flex items-center gap-1.5 px-2 pb-2 text-xs">
-            <ShieldCheck className="size-3.5" aria-hidden />
+          <p className="flex items-center gap-1.5 overflow-hidden px-2 pb-2 text-xs whitespace-nowrap">
+            <ShieldCheck className="size-3.5 shrink-0" aria-hidden />
             {S.nav.readOnly}
           </p>
         )}

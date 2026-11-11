@@ -19,6 +19,9 @@ import { useTheme } from '@/lib/theme'
 import { S } from '@/lib/strings'
 import { navItems } from '@/lib/nav'
 
+/** Every control on the right of the bar shares one height, so tags and the select line up. */
+const CONTROL = 'h-7 px-2'
+
 /** Top bar: menu (mobile) · breadcrumb · backend/LLM status · active connection · theme. */
 export function HeaderBar({ onMenu }: { onMenu: () => void }) {
   const { resolvedTheme, setTheme } = useTheme()
@@ -27,14 +30,14 @@ export function HeaderBar({ onMenu }: { onMenu: () => void }) {
       <Button
         variant="ghost"
         size="icon-sm"
-        className="md:hidden"
+        className="shrink-0 md:hidden"
         onClick={onMenu}
         aria-label={S.nav.openMenu}
       >
         <Menu />
       </Button>
       <Breadcrumb />
-      <div className="ml-auto flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <SystemStatus />
         <ConnectionSwitcher />
         <Button
@@ -58,24 +61,30 @@ function Breadcrumb() {
   const conversation = useConversation(conversationId)
   const section = navItems.find((n) => pathname.startsWith(n.to))
   return (
-    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
-      <span className="hidden text-muted-foreground sm:inline">{S.app.name}</span>
+    <nav
+      aria-label="Breadcrumb"
+      className="flex h-7 min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-sm leading-none whitespace-nowrap"
+    >
+      <span className="hidden shrink-0 text-muted-foreground sm:inline">{S.app.name}</span>
       {section && (
         <>
-          <ChevronRight aria-hidden className="hidden size-3.5 text-muted-foreground sm:inline" />
+          <ChevronRight
+            aria-hidden
+            className="hidden size-3.5 shrink-0 text-muted-foreground sm:block"
+          />
           {conversationId ? (
-            <Link to={section.to} className="text-muted-foreground hover:text-foreground">
+            <Link to={section.to} className="shrink-0 text-muted-foreground hover:text-foreground">
               {section.label}
             </Link>
           ) : (
-            <span className="font-medium">{section.label}</span>
+            <span className="truncate font-medium">{section.label}</span>
           )}
         </>
       )}
       {conversationId && (
         <>
           <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate font-medium" title={conversation.data?.title}>
+          <span className="min-w-0 truncate font-medium" title={conversation.data?.title}>
             {conversation.data?.title || S.chat.untitled}
           </span>
         </>
@@ -94,16 +103,16 @@ function SystemStatus() {
   if (health.isPending) return null
   if (health.isError)
     return (
-      <StatusTag tone="danger" dot>
+      <StatusTag tone="danger" dot className={CONTROL}>
         {S.header.backend}: {S.header.offline}
       </StatusTag>
     )
   return (
-    <span className="hidden items-center gap-1.5 lg:flex">
-      <StatusTag tone="success" dot title={`v${health.data.version}`}>
+    <span className="hidden items-center gap-2 lg:flex">
+      <StatusTag tone="success" dot title={`v${health.data.version}`} className={CONTROL}>
         {S.header.backend}: {S.header.online}
       </StatusTag>
-      <StatusTag tone="neutral">
+      <StatusTag tone="neutral" className={CONTROL}>
         {S.header.llm}: <span className="font-mono">{health.data.llm_provider}</span>
       </StatusTag>
     </span>
@@ -119,7 +128,7 @@ function ConnectionSwitcher() {
   if (!connectedConnections.length) {
     return (
       <Link to="/connect" className="hidden sm:block">
-        <StatusTag tone="warning" dot>
+        <StatusTag tone="warning" dot className={CONTROL}>
           {S.header.noConnection}
         </StatusTag>
       </Link>
@@ -135,24 +144,38 @@ function ConnectionSwitcher() {
         if (pathname.startsWith('/chat/')) navigate('/chat')
       }}
     >
-      <SelectTrigger size="sm" className="max-w-56 min-w-36" aria-label={S.header.connection}>
-        <SelectValue>
+      <SelectTrigger
+        size="sm"
+        className="max-w-40 min-w-0 gap-1 px-2 text-xs leading-none font-medium data-[size=sm]:rounded-sm sm:max-w-72"
+        aria-label={S.header.connection}
+      >
+        <SelectValue className="min-w-0">
           <span className="flex min-w-0 items-center gap-1.5">
             <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
             <span className="truncate">{active?.name ?? S.chat.selectConnection}</span>
             {active && (
-              <span className="hidden font-mono text-xs text-muted-foreground md:inline">
+              <span className="hidden shrink-0 font-mono font-normal text-muted-foreground md:inline">
                 {active.region}
               </span>
             )}
           </span>
         </SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent align="end" alignItemWithTrigger={false} className="w-auto max-w-[90vw]">
         {connectedConnections.map((c) => (
           <SelectItem key={c.id} value={c.id}>
-            {c.name} · <span className="font-mono text-xs">{c.account_id ?? '—'}</span> ·{' '}
-            <span className="font-mono text-xs">{c.region}</span>
+            {/* one baseline for the name and the smaller monospace ids */}
+            <span className="flex items-baseline gap-1.5">
+              <span>{c.name}</span>
+              <span aria-hidden className="text-muted-foreground">
+                ·
+              </span>
+              <span className="font-mono text-xs">{c.account_id ?? '—'}</span>
+              <span aria-hidden className="text-muted-foreground">
+                ·
+              </span>
+              <span className="font-mono text-xs">{c.region}</span>
+            </span>
           </SelectItem>
         ))}
       </SelectContent>

@@ -61,7 +61,7 @@ export function ProposalsPage() {
             <TBody>
               {proposals.data.map((p) => (
                 <Fragment key={p.id}>
-                  <Tr>
+                  <Tr className="[&>td]:align-middle">
                     <Td>
                       <Button
                         variant="ghost"
@@ -77,7 +77,7 @@ export function ProposalsPage() {
                       <ProposalStatusTag status={p.status} />
                     </Td>
                     <Td>
-                      <Mono>{p.action}</Mono>
+                      <Mono className="whitespace-nowrap">{p.action}</Mono>
                       {p.kind === 'rollback' && (
                         <span className="block text-xs text-warning">
                           {t.rollbackOf(p.parent_id ?? '')}
@@ -101,7 +101,10 @@ export function ProposalsPage() {
                     <tr className="border-b bg-muted/40">
                       <td />
                       <td colSpan={5} className="px-3 py-3">
-                        <ProposalCard id={p.id} />
+                        {/* w-0 + min-w-full: fills the cell without widening the columns above. */}
+                        <div className="w-0 min-w-full">
+                          <ProposalCard id={p.id} />
+                        </div>
                       </td>
                     </tr>
                   )}

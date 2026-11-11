@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { connectionsApi } from '@/api/connections'
 import { ApiError } from '@/api/client'
@@ -35,6 +35,8 @@ export function useCloudFormationPreview(externalId: string) {
     queryKey: ['cloudformation-preview', externalId],
     queryFn: async () => (await connectionsApi.cloudformationPreview(externalId)).data,
     enabled: /^[A-Za-z0-9_+=,.@:/-]{2,1224}$/.test(externalId),
+    // Keep the previous template on screen while a regenerated ID loads (no layout jump)
+    placeholderData: keepPreviousData,
   })
 }
 
