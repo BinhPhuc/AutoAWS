@@ -44,6 +44,8 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] External ID do server cấp (2026-11-11, nhánh `final`): `GET /api/connections/setup` trả `external_id` = `autoaws-<nonce>-<HMAC(EXTERNAL_ID_SECRET, user_id:nonce)>` (`app/external_id.py`, không lưu trạng thái); `POST /api/connections` và `cloudformation-preview` chỉ nhận mã server cấp cho đúng người gọi (`400 EXTERNAL_ID_INVALID`), mã đã có kết nối dùng → `409 EXTERNAL_ID_IN_USE`; giữ luồng của Bình (mã hiện trước khi tạo role), ô External ID chỉ đọc, Regenerate xin mã mới; bắt buộc `EXTERNAL_ID_SECRET` khi `AUTH_MODE=cognito` / `RUNTIME=lambda`, CDK sinh khoá trong Secrets Manager. 305 test BE, 20 test FE, 14 test CDK.
 - [ ] **Tiếp theo** (xếp theo ưu tiên): deploy thật một phương án (CDK hoặc EC2) rồi thử Cognito + Bedrock; `run_eval.py --runs 5` với LLM thật; KB3 + CloudTrail trên AWS; CI (GitHub Actions: pytest, ruff, vitest, build, test CDK); mặc định an toàn hơn (`CORS_ORIGINS`, `AUTH_MODE` trong Compose EC2); checklist runner
 
+- [x] Sửa chuyển lab trong chat (2026-11-12): chỉ đồng bộ connection khi mở hội thoại, tránh effect của hội thoại cũ ghi đè lựa chọn lab mới trong lúc điều hướng. Thêm 2 test hồi quy; 22 test FE, build và kiểm tra định dạng file sửa đạt.
+
 ## Bố cục repo
 
 ```

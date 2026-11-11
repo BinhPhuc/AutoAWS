@@ -39,13 +39,22 @@ export function ChatPage() {
   }
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Keep the active connection in sync with the opened conversation.
+  // Select the conversation's connection once on entry. Reapplying it when the
+  // user switches connections can overwrite their choice before navigation finishes.
+  const syncedConversation = useRef<string | null>(null)
   useEffect(() => {
+    if (!conversationId) {
+      syncedConversation.current = null
+      return
+    }
+    if (syncedConversation.current === conversationId) return
     const cid = conversation.data?.connection_id
-    if (cid && cid !== activeConnectionId && connectedConnections.some((c) => c.id === cid)) {
-      setActiveConnectionId(cid)
+    if (cid && connectedConnections.some((c) => c.id === cid)) {
+      syncedConversation.current = conversationId
+      if (cid !== activeConnectionId) setActiveConnectionId(cid)
     }
   }, [
+    conversationId,
     conversation.data?.connection_id,
     activeConnectionId,
     connectedConnections,
