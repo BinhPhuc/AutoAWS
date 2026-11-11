@@ -1,5 +1,5 @@
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
-import { ClipboardCheck, MessageSquare, Moon, Plug, Plus, Sun, Trash2 } from 'lucide-react'
+import { Moon, Plus, Sun, Trash2 } from 'lucide-react'
 import { useTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { S } from '@/lib/strings'
+import { navItems } from '@/lib/nav'
 import { formatRelative } from '@/lib/format'
 import { useConnections } from '@/hooks/useConnections'
 import {
@@ -16,12 +17,6 @@ import {
 } from '@/hooks/useConversations'
 import { useActiveConnection } from '@/hooks/useActiveConnection'
 import { ConnectionBadge } from './ConnectionBadge'
-
-const navItems = [
-  { to: '/connect', label: S.nav.connect, icon: Plug },
-  { to: '/chat', label: S.nav.chat, icon: MessageSquare, end: false },
-  { to: '/checklist', label: S.nav.checklist, icon: ClipboardCheck },
-]
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate()
@@ -69,7 +64,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <NavLink
             key={to}
             to={to}
-            end={end ?? true}
+            end={end}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(

@@ -136,4 +136,27 @@ export const S = {
     comingSoon: 'Coming soon',
     body: 'Run a checklist against your environment (e.g. "No security group opens port 22 to 0.0.0.0/0"). Each item is evaluated as Pass / Fail / Not enough data, with evidence.',
   },
+  errors: {
+    notFound: {
+      code: '404',
+      title: 'Page not found',
+      body: 'No page matches this address. The link may be outdated or mistyped. Your AWS connections are not affected.',
+      requestedPath: 'Requested path',
+      whereTo: 'Where to next',
+      links: {
+        '/connect': 'Add or verify an AWS account',
+        '/chat': 'Describe a problem and get a diagnosis',
+        '/checklist': 'Run checks against your environment',
+      } as Record<string, string>,
+    },
+    app: {
+      title: 'Something went wrong',
+      body: 'The app hit an unexpected error while showing this page. Try reloading; if it keeps happening, copy the details below and send them to the team.',
+      details: 'Technical details',
+      copyDetails: 'Copy details',
+    },
+    goBack: 'Go back',
+    backHome: 'Back to home',
+    reload: 'Reload page',
+  },
 } as const
