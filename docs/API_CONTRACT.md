@@ -38,6 +38,8 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `UNAUTHORIZED` | 401 | `"Sign in required"` / `"Invalid or expired token"` | `AUTH_MODE=cognito`: thiếu / sai / hết hạn access token (mục 0.1) |
 | `VALIDATION_ERROR` | 422 | `"Invalid request: <field> <reason>"` | Body/query sai schema |
 | `CONNECTION_NOT_FOUND` | 404 | `"Connection not found"` | |
+| `EXTERNAL_ID_INVALID` | 400 | `"External ID was not issued for this account; get a new one from the setup step"` | External ID không do server cấp cho người gọi (mục 2) |
+| `EXTERNAL_ID_IN_USE` | 409 | `"External ID is already used by another connection"` | Hai kết nối dùng cùng một External ID (mục 2) |
 | `CONNECTION_SETUP_UNAVAILABLE` | 503 | `"Connection setup is temporarily unavailable"` | Preview template khi thiếu account nền tảng hợp lệ |
 | `CONVERSATION_NOT_FOUND` | 404 | `"Conversation not found"` | |
 | `CONNECTION_NOT_VERIFIED` | 400 | `"Connection is not verified yet"` | Tạo hội thoại / gửi câu hỏi trên connection chưa `connected` |
@@ -134,7 +136,12 @@ Tạo kết nối. Hai dạng body (phân biệt bằng `type`):
   "external_id": "autoaws-7f3a...",
   "remediation_role_arn": "arn:aws:iam::123456789012:role/AutoAWSRemediation" }   // tuỳ chọn
 ```
-`external_id` với `type=role`: theo luồng đã có trên nhánh `dev`, client sinh giá trị ngẫu nhiên trước khi tạo role, hiển thị trong form và dùng cùng giá trị cho trust policy / template / POST tạo connection. Server **giữ nguyên** giá trị client gửi để `AssumeRole` khớp trust policy; nếu bỏ qua hoặc `null`, server sinh `autoaws-` + 24 ký tự hex để tương thích client cũ. Giá trị tường minh phải dài 2–1224 ký tự, chỉ gồm chữ/số và `_+=,.@:/-` (định dạng STS). Thử lại verify trên cùng connection, không tạo connection mới.
+`external_id` với `type=role` **luôn do server cấp**, không do client tự đặt (chống confused deputy: người biết Role ARN + External ID của người khác không được gắn chúng vào kết nối của mình):
+- Client lấy mã từ `GET /api/connections/setup` (trường `external_id`) **trước khi tạo role**, hiển thị trong form và dùng cùng mã cho trust policy / template / POST tạo connection.
+- Mã có dạng `autoaws-<nonce 16 hex>-<chữ ký 24 hex>`; chữ ký là HMAC-SHA256 (khoá `EXTERNAL_ID_SECRET` của nền tảng) trên `user_id` của người được cấp + nonce. Server không lưu mã đã cấp.
+- `POST /api/connections` với `external_id`: server kiểm chữ ký với **người đang gọi**. Không phải mã server cấp cho người này (tự đặt, sửa tay, của người khác) → `400 EXTERNAL_ID_INVALID`. Mã đã có kết nối khác dùng → `409 EXTERNAL_ID_IN_USE`.
+- Bỏ qua hoặc `null`: server tự cấp một mã mới cho người gọi (client cũ, script).
+- Thử lại verify trên cùng connection, không tạo connection mới.
 ```json
 201 { "status_code": 201, "message": "Connection created", "data": Connection }   // status "pending"
 ```
@@ -149,13 +156,14 @@ Thông tin chuẩn bị tạo role, yêu cầu đăng nhập như các route con
 200 { "status_code": 200, "message": "OK", "data": {
   "account_id": "111122223333" | null,
   "role_name": "AutoAWSReadOnly",
-  "trust_principals": ["arn:aws:iam::111122223333:role/autoaws-agent-worker", "arn:aws:iam::111122223333:role/autoaws-action-executor"]
+  "trust_principals": ["arn:aws:iam::111122223333:role/autoaws-agent-worker", "arn:aws:iam::111122223333:role/autoaws-action-executor"],
+  "external_id": "autoaws-3f9c1a2b4d5e6f70-9a8b7c6d5e4f3a2b1c0d9e8f"   // mới mỗi lần gọi, chỉ hợp lệ với người gọi
 } }
 ```
 `account_id=null` nếu nền tảng chưa cấu hình account hợp lệ. `trust_principals` dùng các role nền tảng đã cấu hình (giống template CloudFormation); khi không cấu hình role cụ thể, dùng ARN root của account nền tảng. UI không dựng policy khi thiếu account hợp lệ.
 
 ### `POST /api/connections/cloudformation-preview`
-Tạo template **trước khi lưu connection**, yêu cầu đăng nhập. Body `{ "external_id": "autoaws-..." }` theo định dạng trên. Trả cùng schema `CloudFormationOut` như `GET /api/connections/{id}/cloudformation`, với chính External ID đã gửi, giữ trust policy theo các role nền tảng hiện tại. Thiếu account nền tảng hợp lệ → `503 CONNECTION_SETUP_UNAVAILABLE`, message `Connection setup is temporarily unavailable`.
+Tạo template **trước khi lưu connection**, yêu cầu đăng nhập. Body `{ "external_id": "autoaws-..." }` là mã lấy từ `GET /api/connections/setup`; mã không phải server cấp cho người gọi → `400 EXTERNAL_ID_INVALID`. Trả cùng schema `CloudFormationOut` như `GET /api/connections/{id}/cloudformation`, với chính External ID đã gửi, giữ trust policy theo các role nền tảng hiện tại. Thiếu account nền tảng hợp lệ → `503 CONNECTION_SETUP_UNAVAILABLE`, message `Connection setup is temporarily unavailable`.
 
 ### `GET /api/connections/{id}`
 ```json

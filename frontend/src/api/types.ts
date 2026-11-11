@@ -16,6 +16,8 @@ export interface ApiErrorBody {
 }
 
 export type ApiErrorCode =
+  | 'EXTERNAL_ID_INVALID'
+  | 'EXTERNAL_ID_IN_USE'
   | 'UNAUTHORIZED'
   | 'VALIDATION_ERROR'
   | 'CONNECTION_NOT_FOUND'
@@ -67,6 +69,8 @@ export interface ConnectionSetup {
   account_id: string | null
   role_name: string
   trust_principals: string[]
+  /** Issued by the server for the signed-in user; the only value create accepts. */
+  external_id: string
 }
 
 export interface Connection {

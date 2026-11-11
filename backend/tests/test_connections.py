@@ -3,6 +3,11 @@ import pytest
 from tests.conftest import FAKE_KEY, FAKE_SECRET, REGION
 
 
+def issued_external_id(client, headers=None) -> str:
+    """An External ID the server issued to the caller (docs/API_CONTRACT.md §2)."""
+    return client.get("/api/connections/setup", headers=headers).json()["data"]["external_id"]
+
+
 def test_create_and_verify_access_key(client, aws):
     r = client.post(
         "/api/connections",
@@ -118,7 +123,7 @@ def test_assume_role_with_moto(client, aws):
             "name": "Prod",
             "region": REGION,
             "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly",
-            "external_id": "autoaws-test",
+            "external_id": issued_external_id(client),
         },
     )
     conn_id = r.json()["data"]["id"]
@@ -143,7 +148,7 @@ def test_preview_save_and_verify_keep_the_same_external_id(client, aws, monkeypa
     from app.config import get_settings
 
     monkeypatch.setattr(get_settings(), "platform_aws_account_id", "111122223333")
-    external_id = "autoaws-onboarding-test"
+    external_id = issued_external_id(client)
     preview = client.post(
         "/api/connections/cloudformation-preview", json={"external_id": external_id}
     )
@@ -221,13 +226,16 @@ def test_setup_and_preview_use_configured_platform_roles(client, monkeypatch):
     monkeypatch.setattr(settings, "platform_executor_role_arn", principals[1])
     setup = client.get("/api/connections/setup")
     assert setup.status_code == 200
-    assert setup.json()["data"] == {
+    data = setup.json()["data"]
+    assert data.pop("external_id").startswith("autoaws-")
+    assert data == {
         "account_id": "111122223333",
         "role_name": "AutoAWSReadOnly",
         "trust_principals": principals,
     }
     template = client.post(
-        "/api/connections/cloudformation-preview", json={"external_id": "autoaws-test"}
+        "/api/connections/cloudformation-preview",
+        json={"external_id": issued_external_id(client)},
     ).json()["data"]["template_yaml"]
     assert "role/autoaws-agent-worker" in template and "role/autoaws-action-executor" in template
 
@@ -238,7 +246,8 @@ def test_setup_unavailable_without_platform_account(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "platform_aws_account_id", "")
     assert client.get("/api/connections/setup").json()["data"]["account_id"] is None
     response = client.post(
-        "/api/connections/cloudformation-preview", json={"external_id": "autoaws-test"}
+        "/api/connections/cloudformation-preview",
+        json={"external_id": issued_external_id(client)},
     )
     assert response.status_code == 503
     assert response.json()["error"] == "CONNECTION_SETUP_UNAVAILABLE"

@@ -312,3 +312,18 @@ def test_proposals_round_trip_and_compare_and_set(store):
     assert (
         store.get_proposal(old.id) is None and store.list_proposals(conversation_id=conv.id) == []
     )
+
+
+def test_find_connection_by_external_id(store):
+    import uuid
+
+    from app.storage.models import Connection
+
+    ext = f"autoaws-{uuid.uuid4().hex[:16]}-{'a' * 24}"
+    assert store.find_connection_by_external_id(ext) is None
+    conn = store.create_connection(
+        Connection(user_id="u1", name="r", type="role", region="ap-southeast-1", external_id=ext)
+    )
+    found = store.find_connection_by_external_id(ext)
+    assert found is not None and found.id == conn.id
+    assert store.find_connection_by_external_id(ext + "x") is None

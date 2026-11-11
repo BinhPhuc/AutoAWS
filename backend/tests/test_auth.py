@@ -136,6 +136,7 @@ def owned_by_a(client, cognito, aws):
 
     a = f"user-a-{uuid.uuid4().hex[:8]}"  # the SQLite test DB is shared between tests
 
+    ext_id = client.get("/api/connections/setup", headers=bearer(a)).json()["data"]["external_id"]
     conn = client.post(
         "/api/connections",
         headers=bearer(a),
@@ -144,7 +145,7 @@ def owned_by_a(client, cognito, aws):
             "name": "prod",
             "region": "ap-southeast-1",
             "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly",
-            "external_id": "autoaws-chosen-by-the-client",
+            "external_id": ext_id,
         },
     ).json()["data"]
     with open_store() as store:
@@ -164,11 +165,11 @@ def owned_by_a(client, cognito, aws):
                 action="authorize_sg_ingress",
             )
         ).id
-    return {"user": a, "conn": conn, "conv": conv, "job": job, "prop": prop}
+    return {"user": a, "conn": conn, "conv": conv, "job": job, "prop": prop, "ext_id": ext_id}
 
 
 def test_the_external_id_matches_the_role_setup(owned_by_a):
-    assert owned_by_a["conn"]["external_id"] == "autoaws-chosen-by-the-client"
+    assert owned_by_a["conn"]["external_id"] == owned_by_a["ext_id"]
 
 
 def test_the_owner_sees_their_data(client, owned_by_a):

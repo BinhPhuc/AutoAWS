@@ -105,9 +105,9 @@ Mở http://localhost:5173 → **Diagnose** → hỏi, ví dụ: *"Tôi không S
 ### Kiểm thử tự động
 
 ```bash
-cd backend  && pytest && ruff check app tests            # 293 test; AWS giả lập bằng moto, không cần tài khoản
+cd backend  && pytest && ruff check app tests            # 305 test; AWS giả lập bằng moto, không cần tài khoản
 cd frontend && pnpm test && pnpm lint && pnpm build      # 20 test
-cd infra/cdk && .venv/bin/pytest                         # 13 test trên template CDK (cách cài: infra/cdk/README.md)
+cd infra/cdk && .venv/bin/pytest                         # 14 test trên template CDK (cách cài: infra/cdk/README.md)
 ```
 
 ## Chọn LLM
@@ -135,7 +135,7 @@ AutoAWS không nhận access key của người dùng. Người dùng tạo tron
 | `AutoAWSRemediation` | Chỉ khi chọn `EnableRemediation=true` | Đúng các API ghi của 6 hành động trong danh mục, giới hạn trong region của kết nối; luôn Deny IAM, Organizations, stop / terminate instance |
 
 Các bước trên web:
-1. **Connections → Add connection.** Form hiện sẵn **External ID** và hai cách tạo role: **CloudFormation** (khuyến nghị: xem trước hoặc tải template đã điền External ID và principal nền tảng) hoặc **Manual setup (IAM)**.
+1. **Connections → Add connection.** Form hiện sẵn **External ID** do server cấp riêng cho tài khoản của bạn (chỉ đọc, bấm Regenerate để xin mã mới) và hai cách tạo role: **CloudFormation** (khuyến nghị: xem trước hoặc tải template đã điền External ID và principal nền tảng) hoặc **Manual setup (IAM)**.
 2. Đăng nhập tài khoản cần chẩn đoán, tạo role theo cách đã chọn. Muốn cho phép sửa lỗi có duyệt: tạo stack với `EnableRemediation=true`.
 3. Quay lại form, nhập **Role ARN** (`arn:aws:iam::<account>:role/AutoAWSReadOnly`), chọn region → **Save & verify** → `Connected`.
 4. Nếu bật sửa lỗi: mở chi tiết kết nối, dán output `RemediationRoleArn` vào ô Remediation role.
@@ -336,7 +336,7 @@ Backend chạy trong một container trên EC2; giao diện build riêng rồi �
 | 4 | Đặt HTTPS trước backend (reverse proxy hoặc ALB) | như trên |
 | 5 | Build giao diện với `VITE_API_URL=https://<api>` và upload `dist/` lên S3 / CloudFront | [`frontend/README.md`](frontend/README.md#build-riêng-để-deploy-s3cloudfront) |
 
-Bắt buộc đặt `AUTH_MODE=cognito` trước khi mở cổng ra ngoài: mặc định là `none`, tức không có xác thực. File Compose mở cổng `8000` bằng HTTP trên mọi địa chỉ và đặt `CORS_ORIGINS=*`; hãy giới hạn Security Group của EC2.
+Bắt buộc đặt `AUTH_MODE=cognito` và `EXTERNAL_ID_SECRET` (chuỗi ngẫu nhiên dài, không đổi về sau) trước khi mở cổng ra ngoài: mặc định là `none`, tức không có xác thực. File Compose mở cổng `8000` bằng HTTP trên mọi địa chỉ và đặt `CORS_ORIGINS=*`; hãy giới hạn Security Group của EC2.
 
 ## Bảo mật
 
@@ -346,10 +346,10 @@ Ràng buộc thiết kế (đầy đủ ở [`AGENTS.md`](AGENTS.md), mục "Rà
 - **Không đọc dữ liệu nghiệp vụ.** Không đọc S3 object, Secrets Manager, Parameter Store; không `kms:Decrypt`.
 - **Dữ liệu AWS qua sanitizer** trước khi tới LLM và trước khi lưu; nội dung đọc về (log, tên tài nguyên) là dữ liệu, không phải chỉ thị.
 - **Không giữ secret của người dùng** với kết nối IAM role: chỉ có credentials tạm trong bộ nhớ.
+- **External ID do server cấp và gắn với người dùng** (chữ ký HMAC bằng `EXTERNAL_ID_SECRET`): người biết Role ARN và External ID của người khác cũng không tạo được kết nối trỏ vào role đó (chống confused deputy); mã tự đặt, sửa tay hoặc đã có kết nối dùng đều bị từ chối.
 - **Dữ liệu tách theo người dùng** khi `AUTH_MODE=cognito`; truy cập tài nguyên của người khác trả `404`.
 
 Hạn chế đã biết:
-- **External ID do trình duyệt sinh và backend nhận nguyên giá trị.** Người biết Role ARN và External ID của người khác có thể tạo kết nối trỏ vào role đó (confused deputy). Cần đổi sang server cấp và kiểm tra mã theo từng người dùng trước khi cho nhiều người dùng thật.
 - `AUTH_MODE=none` là mặc định và `CORS_ORIGINS` mặc định là `*`: chỉ phù hợp chạy trên máy. Bản mở ra mạng phải bật Cognito.
 - Kết nối kiểu Access Key (chỉ tạo qua API, dành cho LocalStack / dev) lưu secret dạng thô trong cơ sở dữ liệu.
 - Endpoint `/mcp/` (chỉ có khi `LLM_PROVIDER=mcp`) không có xác thực: chỉ dùng trên máy dev.
@@ -359,7 +359,7 @@ Hạn chế đã biết:
 ## Trạng thái và việc còn lại
 
 Đã kiểm chứng:
-- Kiểm thử tự động: 293 test backend, 20 test frontend, 13 test CDK; ruff, oxlint, prettier, build và cfn-lint sạch.
+- Kiểm thử tự động: 305 test backend, 20 test frontend, 14 test CDK; ruff, oxlint, prettier, build và cfn-lint sạch.
 - Chạy trọn luồng trên LocalStack với LLM thật (KB1, KB2): chẩn đoán đúng đáp án, đề xuất sửa được duyệt, thực thi và kiểm chứng đạt. Đã thử với Claude qua MCP client và với một gateway định dạng Anthropic.
 - Model local (Qwen qua Ollama): đã smoke test gọi tool và `submit_diagnosis`; chưa đánh giá độ chính xác chẩn đoán.
 
@@ -372,7 +372,6 @@ Chưa kiểm chứng trên AWS thật:
 Chưa làm:
 - Kiểm tra theo checklist.
 - CI (chưa có GitHub Actions chạy test và lint).
-- Sửa cách cấp External ID (mục Bảo mật).
 - Chọn LLM khác Bedrock cho bản serverless.
 
 Nhật ký chi tiết theo từng đợt: [`AGENTS.md`](AGENTS.md), mục "Trạng thái hiện tại".

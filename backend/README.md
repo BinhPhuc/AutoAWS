@@ -211,7 +211,9 @@ trước backend, ví dụ reverse proxy trên EC2 hoặc ALB, rồi build front
 dù CORS là `*` ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content)).
 File Compose không cấu hình TLS, DNS hay Security Group.
 Trước khi mở API cho người dùng, đặt `AUTH_MODE=cognito`, `COGNITO_USER_POOL_ID`,
-`COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` theo stack Auth hiện có (xem README gốc, mục
+`COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` và `EXTERNAL_ID_SECRET` (khoá ký External ID; thiếu thì
+backend không khởi động; giữ cố định, đổi khoá làm mọi External ID đã cấp mà chưa dùng mất hiệu lực)
+theo stack Auth hiện có (xem README gốc, mục
 chạy local với Cognito thật). Cơ chế auth và phân vùng người dùng giữ nguyên từ `main`.
 Với bản EC2 không dùng CDK, có thể tạo stack Cognito độc lập bằng
 [`cognito.yaml`](../infra/cloudformation/cognito.yaml); xem

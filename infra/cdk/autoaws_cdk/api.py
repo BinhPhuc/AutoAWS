@@ -6,7 +6,7 @@ Every route needs a Cognito access token (JWT authorizer, AutoAws-Auth) except t
 check and the sign-in settings the web app reads before signing in.
 """
 
-from aws_cdk import Duration, Stack
+from aws_cdk import Duration, RemovalPolicy, Stack
 from aws_cdk import aws_apigatewayv2 as apigw
 from aws_cdk import aws_apigatewayv2_authorizers as authorizers
 from aws_cdk import aws_apigatewayv2_integrations as integrations
@@ -15,6 +15,7 @@ from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from .agent import code, common_env, log_group
@@ -68,6 +69,20 @@ class ApiStack(Stack):
         key.grant_encrypt_decrypt(role)
         agent_worker.grant_invoke(role)
 
+        # Signs the External IDs issued to users (backend app/external_id.py). Generated once;
+        # it must never change, or IDs shown before the role was created stop verifying.
+        # Passed as a CloudFormation dynamic reference: resolved at deploy time, never in the
+        # template (it does show in the function's configuration to account admins).
+        external_id_key = secretsmanager.Secret(
+            self,
+            "ExternalIdKey",
+            secret_name=f"autoaws-{cfg.env_name}-external-id-key",
+            description="AutoAWS: HMAC key for the External IDs of role connections",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                password_length=64, exclude_punctuation=True
+            ),
+            removal_policy=RemovalPolicy.DESTROY if cfg.destroy_data else RemovalPolicy.RETAIN,
+        )
         self.handler = lambda_.Function(
             self,
             "ApiHandler",
@@ -90,6 +105,7 @@ class ApiStack(Stack):
                 "COGNITO_USER_POOL_ID": user_pool.user_pool_id,
                 "COGNITO_CLIENT_ID": web_client.user_pool_client_id,
                 "COGNITO_DOMAIN": hosted_ui_url,
+                "EXTERNAL_ID_SECRET": external_id_key.secret_value.unsafe_unwrap(),
             },
         )
         integration = integrations.HttpLambdaIntegration(

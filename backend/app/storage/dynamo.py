@@ -138,6 +138,17 @@ class DynamoStore:
         item = self._get(f"CONN#{conn_id}", "META")
         return Connection.model_validate(self._fields(item)) if item else None
 
+    def find_connection_by_external_id(self, external_id: str) -> Connection | None:
+        # Rare (creating a role connection) and demo-scale: a filtered scan
+        for page in self.client.get_paginator("scan").paginate(
+            TableName=self.table,
+            FilterExpression="entity = :e AND external_id = :x",
+            ExpressionAttributeValues={":e": {"S": "connection"}, ":x": {"S": external_id}},
+        ):
+            for item in page.get("Items", []):
+                return Connection.model_validate(self._fields(item))
+        return None
+
     def save_connection(self, conn: Connection) -> None:
         self._put(self._connection_item(conn))
 

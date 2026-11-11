@@ -20,6 +20,10 @@ class Store(Protocol):
 
     def get_connection(self, conn_id: str) -> Connection | None: ...
 
+    def find_connection_by_external_id(self, external_id: str) -> Connection | None:
+        """Any user's connection that uses this External ID (uniqueness check)."""
+        ...
+
     def save_connection(self, conn: Connection) -> None: ...
 
     def delete_connection(self, conn: Connection) -> None:

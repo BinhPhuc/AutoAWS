@@ -1,8 +1,8 @@
 import re
-import secrets
 
 from fastapi import APIRouter, Depends
 
+from app import external_id as external_ids
 from app.api.schemas import (
     CloudFormationOut,
     CloudFormationPreviewIn,
@@ -43,12 +43,24 @@ def connection_setup(user: User = Depends(current_user)):
             "role_name": cloudformation.ROLE_NAME,
             "trust_principals": principals
             or ([f"arn:aws:iam::{account}:root"] if valid_account else []),
+            # Fresh on every call; only this user can attach it to a connection
+            "external_id": external_ids.issue(user.id),
         }
     )
 
 
+def _check_issued(external_id: str, user: User) -> None:
+    if not external_ids.issued_to(external_id, user.id):
+        raise AppError(
+            "EXTERNAL_ID_INVALID",
+            400,
+            "External ID was not issued for this account; get a new one from the setup step",
+        )
+
+
 @router.post("/cloudformation-preview")
 def preview_cloudformation(body: CloudFormationPreviewIn, user: User = Depends(current_user)):
+    _check_issued(body.external_id, user)
     settings = get_settings()
     account = settings.platform_aws_account_id.strip()
     if not re.fullmatch(r"[0-9]{12}", account):
@@ -92,14 +104,21 @@ def create_connection(
             secret_access_key=body.secret_access_key,
         )
     else:
+        # The ID the role's trust policy was created with: it must be one the server
+        # issued to this user (app/external_id.py); none given = issue one now.
+        ext_id = body.external_id or external_ids.issue(user.id)
+        _check_issued(ext_id, user)
+        if store.find_connection_by_external_id(ext_id) is not None:
+            raise AppError(
+                "EXTERNAL_ID_IN_USE", 409, "External ID is already used by another connection"
+            )
         conn = Connection(
             user_id=user.id,
             name=body.name,
             type="role",
             region=body.region,
             role_arn=body.role_arn,
-            # Preserve the value used to create the role's trust policy during setup.
-            external_id=body.external_id or f"autoaws-{secrets.token_hex(12)}",
+            external_id=ext_id,
             remediation_role_arn=body.remediation_role_arn,
         )
     store.create_connection(conn)

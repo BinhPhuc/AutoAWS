@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     cognito_user_pool_id: str = ""  # e.g. ap-southeast-1_AbCdEf (the region is its prefix)
     cognito_client_id: str = ""  # public app client (PKCE, no secret)
     cognito_domain: str = ""  # Hosted UI base URL, e.g. https://x.auth.<region>.amazoncognito.com
+    # Signs the External IDs the server issues for role connections (app/external_id.py).
+    # Required with AUTH_MODE=cognito or RUNTIME=lambda; the same value on every instance.
+    external_id_secret: SecretStr = SecretStr("")
 
     # Human-in-the-loop remediation (docs/API_CONTRACT.md §7)
     # Dev only: let access-key connections execute approved proposals (LocalStack, test

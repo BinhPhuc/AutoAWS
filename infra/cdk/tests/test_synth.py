@@ -302,3 +302,18 @@ def test_stacks_form_a_straight_line(default_stacks):
     # the API object lives in Frontend; its stage, routes and authorizer in Api
     assert default_stacks["frontend"].find_resources("AWS::ApiGatewayV2::Route") == {}
     assert len(default_stacks["api"].find_resources("AWS::ApiGatewayV2::Route")) == 3
+
+
+def test_the_api_signs_external_ids_with_a_generated_key(stacks):
+    api = stacks["api"]
+    api.has_resource_properties(
+        "AWS::SecretsManager::Secret",
+        {"GenerateSecretString": Match.object_like({"PasswordLength": 64})},
+    )
+    fn = next(
+        f
+        for f in api.find_resources("AWS::Lambda::Function").values()
+        if f["Properties"]["Handler"] == "app.handlers.api.handler"
+    )
+    value = json.dumps(fn["Properties"]["Environment"]["Variables"]["EXTERNAL_ID_SECRET"])
+    assert "resolve:secretsmanager" in value  # a dynamic reference, not the key itself

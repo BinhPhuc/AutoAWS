@@ -18,6 +18,15 @@ import type {
 import { db, nextId, seed, tools } from './db'
 import { pickScenario, scenarioEvents } from './scenarios'
 
+/** Same shape as a server-issued External ID: autoaws-<nonce>-<signature> */
+function mockExternalId(): string {
+  const hex = (n: number) =>
+    Array.from(crypto.getRandomValues(new Uint8Array(n / 2)), (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('')
+  return `autoaws-${hex(16)}-${hex(24)}`
+}
+
 const STOPPED_NOTE = 'Lượt chẩn đoán đã bị dừng trước khi có kết luận.'
 
 seed()
@@ -52,6 +61,7 @@ export const handlers = [
       account_id: '111122223333',
       role_name: 'AutoAWSReadOnly',
       trust_principals: ['arn:aws:iam::111122223333:root'],
+      external_id: mockExternalId(), // the real server signs it for the caller
     }),
   ),
   http.post('/api/connections/cloudformation-preview', async ({ request }) => {
@@ -90,8 +100,7 @@ export const handlers = [
       status: 'pending',
       account_id: null,
       role_arn: body.type === 'role' ? body.role_arn : null,
-      external_id:
-        body.type === 'role' ? (body.external_id ?? `autoaws-${nextId('x').slice(2)}`) : null,
+      external_id: body.type === 'role' ? (body.external_id ?? mockExternalId()) : null,
       access_key_id_masked:
         body.type === 'access_key'
           ? `${body.access_key_id.slice(0, 4)}****${body.access_key_id.slice(-4)}`

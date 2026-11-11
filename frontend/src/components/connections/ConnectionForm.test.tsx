@@ -16,6 +16,16 @@ vi.mock('@/hooks/useTools', () => ({
 }))
 
 const roleArn = 'arn:aws:iam::123456789012:role/AutoAWSReadOnly'
+const ISSUED = /^autoaws-[0-9a-f]{16}-[0-9a-f]{24}$/
+let issued = 0
+const nextIssuedId = () => `autoaws-${String(++issued).padStart(16, '0')}-${'a'.repeat(24)}`
+
+/** The External ID the server issued, once the setup request has resolved. */
+async function shownExternalId(): Promise<string> {
+  const input = screen.getByLabelText('External ID') as HTMLInputElement
+  await waitFor(() => expect(input.value).toMatch(ISSUED))
+  return input.value
+}
 const conn: Connection = {
   id: 'conn_setup',
   name: 'Lab',
@@ -58,13 +68,14 @@ describe('ConnectionForm role onboarding from dev', () => {
   afterEach(cleanup)
   beforeEach(() => {
     vi.clearAllMocks()
-    api.setup.mockResolvedValue({
+    api.setup.mockImplementation(async () => ({
       data: {
         account_id: '111122223333',
         role_name: 'AutoAWSReadOnly',
         trust_principals: ['arn:aws:iam::111122223333:role/autoaws-agent-worker'],
+        external_id: nextIssuedId(),
       },
-    })
+    }))
     api.cloudformationPreview.mockImplementation(async (externalId: string) => ({
       data: {
         stack_name: 'AutoAWSReadOnlyRole',
@@ -84,7 +95,7 @@ describe('ConnectionForm role onboarding from dev', () => {
     const user = userEvent.setup()
     renderForm(vi.fn(), true)
     await user.type(screen.getByLabelText('Name'), 'Keep this form')
-    const externalId = (screen.getByLabelText('External ID') as HTMLInputElement).value
+    const externalId = await shownExternalId()
     await user.click(screen.getByRole('tab', { name: S.connections.form.manualSetup }))
     await user.click(screen.getByRole('button', { name: S.connections.form.roleHelpButton }))
     expect(screen.getByRole('dialog', { name: S.connections.guide.roleTitle })).toBeInTheDocument()
@@ -102,8 +113,7 @@ describe('ConnectionForm role onboarding from dev', () => {
 
   it('uses the displayed External ID in the manual trust policy and create request', async () => {
     const done = renderForm()
-    const externalId = (screen.getByLabelText('External ID') as HTMLInputElement).value
-    expect(externalId).toMatch(/^autoaws-[a-f0-9]{24}$/)
+    const externalId = await shownExternalId()
     fireEvent.click(screen.getByRole('tab', { name: S.connections.form.manualSetup }))
     fireEvent.click(screen.getByRole('button', { name: S.connections.form.roleHelpButton }))
     const trust = await screen.findByLabelText(S.connections.guide.trustTitle)
@@ -136,15 +146,18 @@ describe('ConnectionForm role onboarding from dev', () => {
       'aria-selected',
       'true',
     )
-    fireEvent.change(screen.getByLabelText('External ID'), {
-      target: { value: 'autoaws-role-policy-id' },
-    })
+    const issuedId = await shownExternalId()
+    // Server-issued: the user cannot type their own (or someone else's) External ID
+    expect(screen.getByLabelText('External ID')).toHaveAttribute('readonly')
     await screen.findByRole('button', { name: 'Download template' })
-    expect(api.cloudformationPreview).toHaveBeenCalledWith('autoaws-role-policy-id')
+    expect(api.cloudformationPreview).toHaveBeenCalledWith(issuedId)
     expect(api.create).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
-    const newId = (screen.getByLabelText('External ID') as HTMLInputElement).value
-    expect(newId).not.toBe('autoaws-role-policy-id')
+    await waitFor(() =>
+      expect((screen.getByLabelText('External ID') as HTMLInputElement).value).not.toBe(issuedId),
+    )
+    const newId = await shownExternalId()
+    expect(api.setup).toHaveBeenCalledTimes(2) // a new ID comes from the server
     await waitFor(() => expect(api.cloudformationPreview).toHaveBeenCalledWith(newId))
   })
 
@@ -153,6 +166,7 @@ describe('ConnectionForm role onboarding from dev', () => {
       data: { status: 'failed', error: 'External ID does not match trust policy' },
     })
     const done = renderForm()
+    await shownExternalId()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Lab' } })
     fireEvent.change(screen.getByLabelText('Role ARN'), { target: { value: roleArn } })
     fireEvent.click(screen.getByRole('button', { name: 'Save & verify' }))

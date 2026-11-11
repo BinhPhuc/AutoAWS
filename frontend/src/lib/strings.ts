@@ -130,7 +130,7 @@ export const S = {
         'Upload a prepared template to CloudFormation. AWS creates the role and its read-only policy for you.',
       externalId: 'External ID',
       externalIdHint:
-        'Use this exact value in the role trust policy. Changing it requires updating the policy in AWS.',
+        'Issued by AutoAWS for your account. Use this exact value in the role trust policy; a new one requires updating the policy in AWS.',
       regenerate: 'Regenerate',
       roleReady:
         'Your connection has been saved. Verify it to confirm AutoAWS can access your resources.',
@@ -152,8 +152,7 @@ export const S = {
         nameRequired: 'Name is required',
         regionRequired: 'Region is required',
         roleArnInvalid: 'Role ARN must look like arn:aws:iam::<account>:role/<name>',
-        externalIdInvalid:
-          'External ID must contain 2–1224 letters, digits or _+=,.@:/- characters',
+        externalIdMissing: 'External ID is not available yet — check the connection to AutoAWS',
       },
     },
     guide: {
