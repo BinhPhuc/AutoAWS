@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AutoAWS platform sign-in for the existing React PKCE client and FastAPI backend.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, demo, staging, prod]
+    Description: Environment label for the user pool, web client and default domain prefix.
+  FrontendUrl:
+    Type: String
+    Default: "http://localhost:5173"
+    AllowedPattern: '^(?:https://[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?(?::[0-9]{1,5})?|http://localhost(?::[0-9]{1,5})?)$'
+    ConstraintDescription: Use an HTTPS origin or http://localhost with an optional port, without a path, query or trailing slash.
+    Description: Frontend origin; defaults to http://localhost:5173 for local testing. Use HTTPS for a deployed frontend.
+  DomainPrefix:
+    Type: String
+    Default: ""
+    MaxLength: 63
+    AllowedPattern: '^$|^(?!.*(?:aws|amazon|cognito))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+    ConstraintDescription: Use lowercase letters, digits and internal hyphens; aws, amazon and cognito are reserved.
+    Description: Optional unique Cognito domain prefix; empty uses autodiag-<environment>-<account>.
+  AllowLocalhost:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Also allow http://localhost:5173 when FrontendUrl uses another origin; not needed for the default local frontend.
+  SelfSignUp:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Allow users to register with a verified email; false requires administrator invitations.
+
+Conditions:
+  HasDomainPrefix: !Not [!Equals [!Ref DomainPrefix, ""]]
+  LocalhostEnabled: !And
+    - !Equals [!Ref AllowLocalhost, "true"]
+    - !Not [!Equals [!Ref FrontendUrl, "http://localhost:5173"]]
+  SelfSignUpEnabled: !Equals [!Ref SelfSignUp, "true"]
+
+Resources:
+  Users:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Sub "autoaws-${EnvironmentName}"
+      UserPoolTier: LITE
+      DeletionProtection: ACTIVE
+      UsernameAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      AutoVerifiedAttributes: [email]
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: !If [SelfSignUpEnabled, false, true]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+      MfaConfiguration: OPTIONAL
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      UserPoolTags:
+        Project: AutoAWS
+        Environment: !Ref EnvironmentName
+
+  HostedUi:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref Users
+      Domain: !If
+        - HasDomainPrefix
+        - !Ref DomainPrefix
+        - !Sub "autodiag-${EnvironmentName}-${AWS::AccountId}"
+      # Classic Hosted UI works with the Lite plan and needs no branding resource.
+      ManagedLoginVersion: 1
+
+  WebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref Users
+      ClientName: !Sub "autoaws-${EnvironmentName}-web"
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      # The React client supplies the S256 PKCE challenge and code verifier.
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub "${FrontendUrl}/auth/callback"
+        - !If
+          - LocalhostEnabled
+          - "http://localhost:5173/auth/callback"
+          - !Ref AWS::NoValue
+      LogoutURLs:
+        - !Sub "${FrontendUrl}/"
+        - !If
+          - LocalhostEnabled
+          - "http://localhost:5173/"
+          - !Ref AWS::NoValue
+      DefaultRedirectURI: !Sub "${FrontendUrl}/auth/callback"
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 7
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+Outputs:
+  UserPoolId:
+    Description: Set COGNITO_USER_POOL_ID to this value.
+    Value: !Ref Users
+  WebClientId:
+    Description: Set COGNITO_CLIENT_ID to this public client ID (no secret).
+    Value: !Ref WebClient
+  HostedUiUrl:
+    Description: Set COGNITO_DOMAIN to this base URL (no trailing slash).
+    Value: !Sub "https://${HostedUi}.auth.${AWS::Region}.amazoncognito.com"
+  IssuerUrl:
+    Description: JWT issuer; the backend derives this from COGNITO_USER_POOL_ID.
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${Users}"
+  CallbackUrl:
+    Description: The frontend must serve the React app at this path and preserve its query string.
+    Value: !Sub "${FrontendUrl}/auth/callback"
+  LogoutUrl:
+    Description: Post-logout redirect URL (the trailing slash is required by the React client).
+    Value: !Sub "${FrontendUrl}/"
+  Region:
+    Description: Region hosting this Cognito user pool.
+    Value: !Ref AWS::Region

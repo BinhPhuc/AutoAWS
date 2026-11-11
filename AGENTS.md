@@ -31,7 +31,15 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Khắc phục có phê duyệt (2026-11-08, nhánh `feat/remediation`): danh mục 6 hành động (`app/aws/remediation/catalog.py`), session ghi khoá theo hành động, luồng duyệt / từ chối / góp ý / hết hạn / STALE / kiểm chứng / đề xuất hoàn tác (`app/remediation/service.py`), API `/api/proposals*`, role `AutoAWSRemediation` trong CloudFormation (`EnableRemediation`), UI duyệt trong chat + trang Proposals. Ràng buộc #1 đã đổi tương ứng. 174 test BE, 12 test FE; chạy thật trên LocalStack (KB1).
 - [x] Serverless đúng báo cáo (2026-11-09, nhánh `feat/serverless`): bỏ SSE → job + hỏi lại (`/api/jobs/{id}`, huỷ, phát hiện worker mất); `RUNTIME=local|lambda` (`app/platform/dispatch.py`); handler `app/handlers/{api,agent_worker,action_executor}.py`; luồng duyệt tách 3 bước cho Step Functions (task token); trust policy template khách thu hẹp vào role `autoaws-agent-worker` / `autoaws-action-executor`; CDK `infra/cdk/` 6 stack (Data, Agent, Workflow, Api, Frontend, Ops) synth + cfn-lint sạch — **chưa deploy** (không có tài khoản AWS). 190 test BE, 7 test FE, 7 test CDK.
 - [x] Hoàn thiện khắc phục có phê duyệt (2026-11-10, nhánh `feat/remediation-complete`): DryRun trước khi ghi cho 4 hành động EC2 (chỉ trên AWS thật — moto/LocalStack bỏ qua DryRun và ghi thật; endpoint không trả `DryRunOperation` thì dừng), khôi phục đề xuất bị ngắt khi backend local khởi động lại, số đề xuất chờ duyệt trên thanh điều hướng. 200 test BE.
-- [x] Đăng nhập + phân vùng dữ liệu theo người dùng (2026-11-10, nhánh `feat/auth`): `AUTH_MODE=none|cognito` (`app/auth.py`), `user_id` trên connection / conversation / job / proposal, tài nguyên người khác → 404, lịch sử đề xuất ghi `by`; ExternalId luôn do server sinh; `GET /api/auth/config`, `GET /api/me`; CDK stack `Auth` (Cognito Lite, Hosted UI, client PKCE) + JWT authorizer cho mọi route trừ health / auth config, deploy **một lần** (HTTP API rỗng tạo ở stack Frontend để cắt vòng CloudFront ↔ Cognito ↔ authorizer); CloudFront bỏ error response toàn cục (đổi sang CloudFront Function cho SPA); FE: PKCE tự viết (`src/lib/auth.ts`), `AuthGate`, `/auth/callback`, nút Sign out. 223 test BE, 16 test FE, 11 test CDK — **chưa chạy với Cognito thật**.
+- [x] Đăng nhập + phân vùng dữ liệu theo người dùng (2026-11-10, nhánh `feat/auth`): `AUTH_MODE=none|cognito` (`app/auth.py`), `user_id` trên connection / conversation / job / proposal, tài nguyên người khác → 404, lịch sử đề xuất ghi `by`; ExternalId luôn do server sinh; `GET /api/auth/config`, `GET /api/me`; CDK stack `Auth` (Cognito Lite, Hosted UI, client PKCE) + JWT authorizer cho mọi route trừ health / auth config; CloudFront bỏ error response toàn cục (đổi sang CloudFront Function cho SPA); FE: PKCE tự viết (`src/lib/auth.ts`), `AuthGate`, `/auth/callback`, nút Sign out. 223 test BE, 16 test FE, 11 test CDK — **chưa chạy với Cognito thật**.
+- [x] Cấu hình demo EC2 + CloudFront + DynamoDB (2026-11-10): `docker-compose.backend.yml` chỉ chạy backend, mặc định dùng DynamoDB và không tự tạo bảng; template `infra/cloudformation/dynamodb.yaml` tạo bảng/index/TTL/KMS, table/region/endpoint điền qua `.env`; sửa thứ tự user/assistant khi timestamp trùng, bổ sung `tzdata` cho Windows/image tối giản. 209 test BE, ruff + cfn-lint sạch. **Chưa deploy AWS thật.**
+- [x] Hợp nhất DynamoDB với auth của `main` (2026-11-10): giữ triển khai Cognito/phân vùng người dùng từ `feat/auth`; giữ template DynamoDB, Compose EC2, mặc định DynamoDB và kiểm tra bảng lúc startup từ `feat/cognito-auth-user-isolation`; thêm 3 test auth trên DynamoDB. 235 test BE, 16 test FE, 11 test CDK; lint/build đạt. **Chưa deploy AWS thật.**
+- [x] Cognito độc lập cho EC2 + CloudFront (2026-11-10): template `infra/cloudformation/cognito.yaml` (Lite, Hosted UI classic, public client cho PKCE, callback/logout khớp FE), Outputs cấu hình backend và hướng dẫn `infra/cloudformation/COGNITO.md`; cfn-lint sạch. **Chưa deploy AWS thật.**
+- [x] Cognito trên localhost (2026-11-10): template mặc định `FrontendUrl=http://localhost:5173`, cho phép HTTP chỉ với hostname localhost, tránh callback/logout trùng khi bật `AllowLocalhost`; bổ sung hướng dẫn chạy backend/frontend local. cfn-lint và kiểm tra các tổ hợp URL đạt; **chưa thử đăng nhập Cognito thật**.
+- [x] Sửa credentials khi chạy uvicorn local (2026-11-10): nạp `.env` vào môi trường trước khi tạo Settings để SDK AWS nhận access key/session token; giữ ưu tiên biến môi trường có sẵn. Đã khởi động backend với DynamoDB thật và health trả 200; chưa kiểm tra đăng nhập Cognito/Bedrock thật.
+- [x] Đồng bộ `/connect` theo nhánh `dev` (2026-11-10): form sinh/hiển thị External ID trước khi tạo role, hướng dẫn IAM thủ công và preview/tải CloudFormation, backend giữ đúng ID đã dùng trong trust policy thay vì sinh lại; verify ngay khi lưu, thử lại trên cùng connection. Giữ bố cục bảng/hộp thoại; form chỉ có IAM thủ công hoặc CloudFormation (mặc định, Recommended), bỏ Access Key khỏi form. Policy dùng đúng principal nền tảng và endpoint vẫn yêu cầu auth. 247 test BE, 20 test FE; lint/build đạt; kiểm tra Chrome desktop/mobile bằng MSW và STS qua moto, **chưa verify với AWS thật**. Luồng External ID này thay thế cách luôn sinh tại server ở mốc auth trước đó.
+- [x] Model local qua Ollama (2026-11-10): chuyển OpenAI-compatible provider từ `dev`, `LLM_PROVIDER=openai`, cấu hình URL/model/key/timeout/token; dùng lại job, sanitizer, registry và `submit_diagnosis`, đếm token theo giới hạn agent. 289 test BE, ruff sạch; smoke test Ollama thật `qwen2.5:latest` chọn `describe_instances`, nhận dữ liệu mô phỏng và gọi `submit_diagnosis` đúng schema. **Chưa đánh giá chẩn đoán AWS thật bằng Qwen.**
+- [x] Trả lời gọn theo `dev` (2026-11-11): prompt chỉ điều tra trong phạm vi câu hỏi, dừng khi có nguyên nhân chặn đủ để trả lời; tóm tắt 1–2 câu, lời chào/cảm ơn hoặc hỏi lại không gọi AWS. Giữ job, `submit_diagnosis`, kiểm chứng bằng chứng và phê duyệt khắc phục. Thêm `infra/ollama/Modelfile` cho Qwen context 16.384, temperature 0.2; context 4.096 trên máy dev không đủ giữ prompt và bộ tool. 289 test BE và ruff đạt; smoke test Qwen thật qua agent loop: “hi”, “cảm ơn”, “giúp tôi với” đều trả lời ngắn bằng tiếng Việt, không gọi AWS. Chưa đánh giá lại chẩn đoán AWS thật.
 - [ ] **Tiếp theo**: deploy CDK lên tài khoản thật; chạy `run_eval.py --runs 5` với Bedrock thật; KB3 + CloudTrail trên AWS; checklist runner
 
 ## Bố cục repo
@@ -48,8 +56,9 @@ AutoAWS/
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
 ├── frontend/                # Vite + React + TS — src/{api,hooks,pages,components,lib,mocks} (xem frontend/README.md)
-├── infra/                   # localstack/ (seed), aws-scenarios/ (KB1–KB7), demo-apps/, eval/, cdk/ (hạ tầng nền tảng)
+├── infra/                   # cloudformation/ (DynamoDB EC2), localstack/, aws-scenarios/, demo-apps/, eval/, cdk/
 ├── docker-compose.yml
+├── docker-compose.backend.yml  # backend EC2 + DynamoDB; frontend build riêng lên CloudFront
 └── .claude/ .agents/ .gemini/   # skills của AI tool — gitignore, mỗi người tự cài
 ```
 
@@ -58,7 +67,7 @@ AutoAWS/
 ```bash
 # Backend (port 8000)
 cd backend && python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]" && cp .env.example .env     # LLM_PROVIDER=mock mặc định
+pip install -e ".[dev]" && cp .env.example .env     # điền DYNAMODB_TABLE/REGION hoặc STORAGE_BACKEND=sqlite cho local
 uvicorn app.main:app --reload                       # docs: http://localhost:8000/docs
 
 # Frontend (port 5173, proxy /api → 8000)
@@ -79,7 +88,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 | # | Quyết định | Lý do |
 |---|---|---|
-| 1 | Backend **Python + FastAPI**, boto3, SQLite (SQLModel) mặc định; DynamoDB chọn bằng `STORAGE_BACKEND` | Khớp tài liệu (Lambda Python); dễ nhất cho REST + SSE; DynamoDB là lưu trữ đích |
+| 1 | Backend **Python + FastAPI**, boto3, **DynamoDB mặc định** (bảng tạo bằng IaC); SQLite chỉ bật tường minh cho local/test | Khớp lưu trữ đích; EC2 không cần database volume |
 | 2 | **LLM provider là placeholder**: interface `app/llm/base.py` + `MockProvider`; Anthropic/Bedrock là file stub | Chưa chọn model; pipeline phải chạy end-to-end không cần key |
 | 3 | Kết nối AWS hỗ trợ **cả Access Key (dev) và Role ARN + ExternalId (đúng thiết kế)** | Test nhanh ngay, vẫn giữ đường bảo mật chuẩn |
 | 4 | **Auth: `AUTH_MODE=none`** (dev, 1 người dùng `local`) **hoặc `cognito`** (bản triển khai: Cognito + JWT authorizer, dữ liệu tách theo `user_id`) | Dev/test không cần Cognito; bản AWS luôn bật đăng nhập |

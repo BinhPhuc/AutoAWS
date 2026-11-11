@@ -19,6 +19,7 @@ export type ApiErrorCode =
   | 'UNAUTHORIZED'
   | 'VALIDATION_ERROR'
   | 'CONNECTION_NOT_FOUND'
+  | 'CONNECTION_SETUP_UNAVAILABLE'
   | 'CONVERSATION_NOT_FOUND'
   | 'CONNECTION_NOT_VERIFIED'
   | 'AWS_AUTH_FAILED'
@@ -62,6 +63,12 @@ export interface Me {
 export type ConnectionType = 'access_key' | 'role'
 export type ConnectionStatus = 'pending' | 'connected' | 'failed'
 
+export interface ConnectionSetup {
+  account_id: string | null
+  role_name: string
+  trust_principals: string[]
+}
+
 export interface Connection {
   id: string
   name: string
@@ -93,6 +100,7 @@ export interface CreateRoleConnection {
   name: string
   region: string
   role_arn: string
+  external_id?: string
   remediation_role_arn?: string
 }
 

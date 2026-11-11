@@ -17,6 +17,27 @@ VITE_USE_MOCK=true pnpm dev
 
 Mở http://localhost:5173.
 
+## Build riêng để deploy S3/CloudFront
+
+Backend chạy độc lập trên EC2 bằng `../docker-compose.backend.yml`. Trong thư mục
+`frontend/`, build với URL HTTPS thực tế của backend:
+
+```bash
+pnpm install --frozen-lockfile
+VITE_API_URL=https://api.example.com VITE_USE_MOCK=false pnpm build
+```
+
+`VITE_API_URL` là origin của API, không thêm `/api` vì client đã thêm đường dẫn này.
+Biến được nhúng vào bundle khi build; đổi URL cần build và upload lại.
+Không đặt secret trong biến `VITE_*`.
+
+Upload nội dung `dist/` lên S3 origin của CloudFront, đặt default root object là
+`index.html`, và cấu hình SPA fallback về `index.html` cho đường dẫn React Router.
+Khi cập nhật bản build, invalidate cache CloudFront để nhận bản mới.
+Không cần chạy container frontend/nginx trên EC2.
+
+Nếu frontend phục vụ qua HTTPS, API cũng phải có URL HTTPS để tránh mixed content.
+
 ## Lệnh khác
 
 ```bash

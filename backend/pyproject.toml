@@ -8,10 +8,13 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",  # expose local .env credentials to AWS SDKs
+    "tzdata>=2024.1",  # IANA time zones on Windows and minimal container images
     "sqlmodel>=0.0.21",
     "boto3>=1.34",
     "dnspython>=2.6",
     "anthropic[bedrock]>=2.6,<3",  # Claude on Bedrock (Mantle client) / Claude API
+    "httpx>=0.27",  # OpenAI-compatible / Ollama provider
     "jsonschema>=4.20",  # tool input validation
     "mangum>=0.19",  # api-handler on Lambda (RUNTIME=lambda)
     "mcp>=2.3,<3",  # MCP bridge (LLM_PROVIDER=mcp): an MCP client plays the LLM
@@ -22,7 +25,6 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
-    "httpx>=0.27",
     "moto[ec2,sts,ssm,route53,elbv2,iam,dynamodb]>=5.0",
     "ruff>=0.5",
 ]

@@ -1,6 +1,8 @@
 from functools import lru_cache
 from typing import Literal
 
+from dotenv import load_dotenv
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,21 +10,28 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_env: str = "dev"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "*"
 
-    # Storage: sqlite (default, DB_PATH) | dynamodb (target storage, platform account)
-    storage_backend: Literal["sqlite", "dynamodb"] = "sqlite"
+    # DynamoDB is provisioned by CloudFormation; SQLite is an explicit local/test option.
+    storage_backend: Literal["sqlite", "dynamodb"] = "dynamodb"
     db_path: str = "./autoaws.db"
-    dynamodb_table: str = "autoaws"
+    dynamodb_table: str = ""
     dynamodb_region: str = ""
     # Dev only: LocalStack, e.g. http://localhost:4566 (independent of AWS_ENDPOINT_URL)
     dynamodb_endpoint_url: str = ""
-    # Create the table on startup if it does not exist (dev / LocalStack)
-    dynamodb_create_table: bool = True
+    # Opt in only for dev / LocalStack; deployed tables are managed by infrastructure.
+    dynamodb_create_table: bool = False
     # Customer managed KMS key for table encryption; empty = AWS managed key
     dynamodb_kms_key_id: str = ""
 
-    llm_provider: Literal["mock", "anthropic", "bedrock", "mcp"] = "mock"
+    llm_provider: Literal["mock", "openai", "anthropic", "bedrock", "mcp"] = "mock"
+    # OpenAI-compatible Chat Completions, including a local Ollama server.
+    openai_base_url: str = "http://localhost:11434/v1"
+    openai_model: str = ""
+    openai_api_key: SecretStr = SecretStr("")
+    openai_timeout_seconds: float = Field(default=120, gt=0)
+    openai_max_tokens: int = Field(default=4096, ge=1)
+    openai_token_limit_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-5-5"
     # Claude on Bedrock (Mantle client): model ids carry the `anthropic.` prefix
@@ -108,4 +117,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    # AWS SDKs read os.environ, while BaseSettings only reads .env into its model.
+    # Keep injected credentials (Docker, Lambda, shell) ahead of local file values.
+    load_dotenv(dotenv_path=".env", override=False)
     return Settings()

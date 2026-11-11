@@ -8,9 +8,166 @@ FastAPI + boto3. Thiết kế chi tiết: `../docs/BACKEND_PLAN.md`; hợp đồ
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env          # LLM_PROVIDER=mock chạy được ngay, không cần key
+cp .env.example .env          # Điền DYNAMODB_TABLE, DYNAMODB_REGION và credentials nền tảng
 uvicorn app.main:app --reload # http://localhost:8000/docs
 ```
+
+### Windows / PowerShell
+
+Dùng Python của `.venv` trực tiếp để tránh cài nhầm vào Python hệ thống:
+
+```powershell
+cd backend
+py -m venv .venv              # Chỉ cần khi chưa có .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+Nếu Python 3.15 báo `Failed building wheel for PyYAML` và yêu cầu Microsoft Visual C++,
+pip đang biên dịch extension C vì không tìm được wheel phù hợp. Có thể dùng bản Python
+thuần bằng biến build [PyYAML hỗ trợ](https://github.com/yaml/pyyaml/blob/6.0.3/setup.py):
+
+```powershell
+$env:PYYAML_FORCE_LIBYAML = '0'
+try {
+    .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+} finally {
+    Remove-Item Env:PYYAML_FORCE_LIBYAML
+}
+.\.venv\Scripts\python.exe -c "import yaml; print(yaml.__version__, yaml.__with_libyaml__)"
+```
+
+`__with_libyaml__ = False` nghĩa là đang dùng bản Python thuần; vẫn đọc/ghi YAML bình thường.
+Các cảnh báo `License classifiers` / `bdist_wheel` không phải nguyên nhân gây lỗi này.
+
+## Chat với model local qua Ollama
+
+Provider `openai` dùng Chat Completions và function calling qua HTTP async, tương thích
+[Ollama](https://docs.ollama.com/api/openai-compatibility). Model cần hỗ trợ tool calling;
+[Qwen2.5](https://ollama.com/library/qwen2.5) có hỗ trợ. Provider này gọi endpoint đã cấu
+hình; tên `openai` không có nghĩa request được gửi tới dịch vụ OpenAI.
+
+Kiểm tra Ollama đang chạy và lấy đúng tên model:
+
+```bash
+ollama list
+curl http://localhost:11434/v1/models
+```
+
+Với Qwen local, tạo biến thể context 16.384 token từ thư mục gốc repo:
+
+```bash
+ollama create autoaws-qwen2.5:16k -f infra/ollama/Modelfile
+```
+
+Biến thể dùng lại trọng số `qwen2.5:latest`, đặt temperature 0.2. Khi thử trên máy dev,
+context 4.096 không giữ được đầy đủ prompt và bộ tool (khoảng 5–6 nghìn token trước khi có lịch sử), khiến
+model bỏ qua chỉ thị ngay cả với lời chào. Tăng `OPENAI_MAX_TOKENS` chỉ tăng giới hạn
+đầu ra; context đầu vào được đặt bằng `num_ctx` trong Modelfile. Context 16.384 vẫn
+cần đủ chỗ cho lịch sử, kết quả tool và đầu ra; đây không phải bảo đảm chất lượng mọi lượt.
+
+Sửa hoặc thêm các dòng sau trong **`backend/.env` hiện có**:
+
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=autoaws-qwen2.5:16k
+OPENAI_API_KEY=
+OPENAI_TIMEOUT_SECONDS=120
+OPENAI_MAX_TOKENS=4096
+OPENAI_TOKEN_LIMIT_FIELD=max_tokens
+```
+
+`OPENAI_MODEL` phải khớp tên trong `ollama list`; đổi hostname nếu Ollama nằm trên máy
+khác. URL gồm `/v1`, provider tự nối `/chat/completions`. Local Ollama không cần API key;
+server có xác thực dùng `OPENAI_API_KEY`. Một số server yêu cầu trường giới hạn token
+`max_completion_tokens`: đặt `OPENAI_TOKEN_LIMIT_FIELD=max_completion_tokens`.
+
+Khởi động lại backend sau khi sửa `.env`, kể cả khi dùng `--reload`:
+
+```bash
+cd backend
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m uvicorn app.main:app --reload
+```
+
+Chạy frontend với `VITE_USE_MOCK=false` (hoặc bỏ biến này), mở Chat trên kết nối AWS đã
+verify và hỏi bằng tiếng Việt. Timeline hiển thị các tool đọc AWS; model trả kết luận
+qua `submit_diagnosis`, server kiểm bằng chứng và lưu lịch sử như các provider khác.
+Đây là chat chẩn đoán AWS: vẫn cần kết nối AWS đã verify. Ollama thay phần suy luận LLM,
+không thay DynamoDB, Cognito hay quyền AWS của backend. Không cần quyền Bedrock để gọi Ollama.
+
+Backend trong Docker truy cập Ollama trên host bằng
+`OPENAI_BASE_URL=http://host.docker.internal:11434/v1`. Trên Linux, thêm vào service
+`backend` trong file Compose đang dùng:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+Ollama phải lắng nghe trên địa chỉ mà Docker truy cập được; cấu hình `OLLAMA_HOST` cho
+tiến trình/dịch vụ Ollama nếu cần. `localhost` trong container là container đó.
+
+Timeout: kiểm tra tài nguyên máy và tăng `OPENAI_TIMEOUT_SECONDS` nếu model tải chậm.
+`MAX_AGENT_SECONDS` mặc định 240 giây áp dụng cho toàn lượt chẩn đoán; tăng riêng nếu
+model local cần nhiều thời gian qua nhiều vòng. Phản hồi bị cắt hoặc tool arguments sai
+JSON sẽ bị từ chối; có thể tăng `OPENAI_MAX_TOKENS` nếu thiếu token. Model nhỏ có thể
+bỏ sót lớp kiểm tra hoặc gọi lặp tool: tích hợp thành công chưa xác nhận độ chính xác
+chẩn đoán. Backend không tự đổi sang provider khác khi endpoint lỗi.
+
+Đã smoke test Ollama thật với `qwen2.5:latest` (2026-11-10): model chọn đúng
+`describe_instances` từ registry, nhận kết quả mô phỏng rồi gọi `submit_diagnosis` với
+arguments hợp lệ theo `DiagnosisAnswer`. Test không gọi AWS thật. Bộ test HTTP giả lập
+kiểm tra thêm luồng job, che secret, kiểm bằng chứng, từ chối tool không đăng ký và giới
+hạn vòng lặp; chưa đánh giá độ chính xác Qwen trên các kịch bản AWS thật.
+
+## Deploy backend trên EC2
+
+Frontend build riêng và phục vụ từ S3 qua CloudFront. Trên EC2 đã cài Docker Engine
+và Compose plugin, tạo bảng bằng [`infra/cloudformation/dynamodb.yaml`](../infra/cloudformation/dynamodb.yaml)
+và điền cấu hình theo [hướng dẫn DynamoDB](../infra/cloudformation/README.md), rồi chạy từ thư mục gốc repo:
+
+```bash
+# Chỉ copy nếu chưa có backend/.env; sau đó chỉnh provider, region và cấu hình AWS.
+cp -n backend/.env.example backend/.env
+nano backend/.env
+
+docker compose -f docker-compose.backend.yml up -d --build
+docker compose -f docker-compose.backend.yml ps
+docker compose -f docker-compose.backend.yml logs -f backend
+curl http://localhost:8000/api/health
+```
+
+`docker-compose.backend.yml` chỉ chạy backend, không build hay chạy frontend. File này
+truyền `backend/.env` vào container, đặt `RUNTIME=local`, `CORS_ORIGINS=*`,
+`STORAGE_BACKEND=dynamodb`, `DYNAMODB_CREATE_TABLE=false` (ghi đè các biến tương ứng
+trong `.env`). Backend tự khởi
+động lại khi tiến trình thoát hoặc Docker khởi động lại, có healthcheck và giới hạn
+log Docker. Healthcheck chỉ kiểm tra API còn phản hồi, không kiểm tra AWS/LLM và
+không tự restart container chỉ vì trạng thái `unhealthy`.
+
+Dữ liệu nằm trong DynamoDB của tài khoản nền tảng; không cần volume database trên EC2.
+`.env` nằm ngoài image và không được commit.
+
+File Compose này không mount `~/.aws` từ máy host. Nếu dùng named profile, cần tự
+mount thư mục credentials chỉ đọc; nếu dùng IAM role của EC2, để trống
+`PLATFORM_AWS_PROFILE` và bảo đảm container truy cập được instance metadata.
+
+Cổng `8000` phục vụ HTTP. Để frontend CloudFront gọi API trực tiếp, cần đặt HTTPS
+trước backend, ví dụ reverse proxy trên EC2 hoặc ALB, rồi build frontend với
+`VITE_API_URL=https://api.example.com` (xem `../frontend/README.md`). Không dùng
+`http://<EC2-IP>:8000` làm API URL cho trang HTTPS: trình duyệt chặn mixed content
+dù CORS là `*` ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content)).
+File Compose không cấu hình TLS, DNS hay Security Group.
+Trước khi mở API cho người dùng, đặt `AUTH_MODE=cognito`, `COGNITO_USER_POOL_ID`,
+`COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` theo stack Auth hiện có (xem README gốc, mục
+chạy local với Cognito thật). Cơ chế auth và phân vùng người dùng giữ nguyên từ `main`.
+Với bản EC2 không dùng CDK, có thể tạo stack Cognito độc lập bằng
+[`cognito.yaml`](../infra/cloudformation/cognito.yaml); xem
+[`hướng dẫn cấu hình và kiểm tra đăng nhập`](../infra/cloudformation/COGNITO.md).
+
+`docker-compose.yml` ở thư mục gốc vẫn dùng cho phát triển local cả backend và frontend.
 
 ## Test / lint
 
@@ -44,7 +201,7 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 | `app/aws/tools/` | 19 công cụ **đọc** (registry chỉ nhận action đọc, guard botocore chặn ghi lúc chạy) |
 | `app/aws/remediation/` | **Nơi duy nhất ghi**: danh mục 6 hành động + session ghi khoá theo hành động |
 | `app/remediation/` | Vòng đời đề xuất: duyệt / từ chối / góp ý / hết hạn / kiểm tra lại / thực thi / kiểm chứng |
-| `app/llm/` | Provider: mock, bedrock + anthropic (`claude.py`), mcp (MCP client đóng vai LLM) |
+| `app/llm/` | Provider: mock, openai (Ollama/Chat Completions), bedrock + anthropic (`claude.py`), mcp (MCP client đóng vai LLM) |
 | `app/worker.py`, `app/handlers/`, `app/platform/` | Việc chạy nền (job chẩn đoán, verify), Lambda handler, điều phối `RUNTIME=local\|lambda` |
 | `app/storage/` | `Store`: SQLite hoặc DynamoDB (một bảng) |
 
@@ -60,24 +217,35 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 - Xác thực (`docs/API_CONTRACT.md` §0.1): `AUTH_MODE=none` (mặc định) = một người dùng `local`, **đừng mở API ra mạng ngoài**; `AUTH_MODE=cognito` = mọi route trừ `/api/health`, `/api/auth/config` cần access token Cognito (`app/auth.py`: trên Lambda đọc claims JWT authorizer đã kiểm, ngoài Lambda tự kiểm chữ ký qua JWKS; luôn kiểm issuer / `token_use=access` / `client_id`). Connection, conversation, job, proposal có `user_id`; tài nguyên của người khác trả 404. ExternalId do server sinh.
 - Dữ liệu AWS đi qua `app/sanitizer.py` trước khi tới LLM và trước khi lưu `output_summary`.
 
-## Lưu trữ: SQLite hoặc DynamoDB
+## Lưu trữ: DynamoDB
 
-`STORAGE_BACKEND=sqlite` (mặc định, file `DB_PATH`) hoặc `dynamodb` (bảng `DYNAMODB_TABLE` trong tài khoản nền tảng, mã hoá KMS). Router và agent loop chỉ dùng interface `app/storage/base.py::Store`; hai bản cài đặt `sql.py` và `dynamo.py` qua cùng bộ test `tests/test_store.py`.
+`STORAGE_BACKEND=dynamodb` là mặc định. Bảng `DYNAMODB_TABLE` trong tài khoản nền tảng
+được tạo trước bằng [CloudFormation](../infra/cloudformation/README.md).
+Điền `DYNAMODB_REGION`, để trống `DYNAMODB_ENDPOINT_URL` khi dùng endpoint AWS chuẩn
+hoặc điền URL tuỳ chọn; giữ `DYNAMODB_CREATE_TABLE=false` khi dùng bảng đã tạo.
+Backend kiểm tra bảng bằng `DescribeTable` khi khởi động, không tự fallback sang SQLite.
+Khi chạy uvicorn từ `backend/`, app nạp `.env` vào môi trường để boto3 cũng đọc được
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` và `AWS_SESSION_TOKEN` (nếu dùng credentials
+tạm thời). Biến đã có trong môi trường tiến trình được ưu tiên hơn `.env`.
+Router và agent loop dùng interface `app/storage/base.py::Store`.
+SQLite còn là tuỳ chọn tường minh cho test/local (`STORAGE_BACKEND=sqlite`, `DB_PATH`),
+không được dùng trong hai file Compose. Không có bước tự chuyển dữ liệu SQLite cũ.
 
 Thiết kế bảng DynamoDB (một bảng):
 
 | Item | PK / SK | GSI1 |
 |---|---|---|
-| Kết nối | `CONN#<id>` / `META` | `CONNECTIONS` / `<created_at>#<id>` |
+| Kết nối | `CONN#<id>` / `META` | `CONNECTIONS#<user_id>` / `<created_at>#<id>` |
 | Hội thoại | `CONV#<id>` / `META` | `CONVS#<connection_id>` / `<updated_at>#<id>` |
 | Tin nhắn | `CONV#<conversation_id>` / `MSG#<created_at>#<id>` (tool call nhúng trong item) | — |
-| Đề xuất khắc phục | `PROP#<id>` / `META` | `PROPOSALS` / `<created_at>#<id>` |
+| Đề xuất khắc phục | `PROP#<id>` / `META` | `PROPOSALS#<user_id>` / `<created_at>#<id>` |
 | Job chẩn đoán | `JOB#<id>` / `META` (thuộc tính `ttl`) | `JOBS#<conversation_id>` / `<created_at>#<id>` |
 
 Index `ById` (theo `id`) để lấy tool call của một tin nhắn. Chạy thử với LocalStack:
 
 ```bash
-STORAGE_BACKEND=dynamodb DYNAMODB_ENDPOINT_URL=http://localhost:4566 uvicorn app.main:app
+DYNAMODB_TABLE=autoaws DYNAMODB_REGION=ap-southeast-1 \
+DYNAMODB_CREATE_TABLE=true DYNAMODB_ENDPOINT_URL=http://localhost:4566 uvicorn app.main:app
 ```
 
 Lưu ý: GSI nhất quán sau (eventually consistent) — danh sách ngay sau khi ghi có thể trễ vài ms; secret của kết nối access key vẫn nằm trong item (bảng đã mã hoá KMS, nhưng ai đọc được bảng là đọc được secret — cần mã hoá cấp trường trước khi có nhiều người dùng).

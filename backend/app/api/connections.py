@@ -1,9 +1,11 @@
+import re
 import secrets
 
 from fastapi import APIRouter, Depends
 
 from app.api.schemas import (
     CloudFormationOut,
+    CloudFormationPreviewIn,
     ConnectionIn,
     ConnectionOut,
     ConnectionPatch,
@@ -21,6 +23,52 @@ from app.storage.models import Connection
 from app.storage.store import get_store
 
 router = APIRouter(prefix="/connections", tags=["connections"])
+
+
+@router.get("/setup")
+def connection_setup(user: User = Depends(current_user)):
+    settings = get_settings()
+    account = settings.platform_aws_account_id.strip()
+    valid_account = bool(re.fullmatch(r"[0-9]{12}", account))
+    principals = list(
+        dict.fromkeys(
+            arn
+            for arn in (settings.platform_agent_role_arn, settings.platform_executor_role_arn)
+            if arn
+        )
+    )
+    return ok(
+        {
+            "account_id": account if valid_account else None,
+            "role_name": cloudformation.ROLE_NAME,
+            "trust_principals": principals
+            or ([f"arn:aws:iam::{account}:root"] if valid_account else []),
+        }
+    )
+
+
+@router.post("/cloudformation-preview")
+def preview_cloudformation(body: CloudFormationPreviewIn, user: User = Depends(current_user)):
+    settings = get_settings()
+    account = settings.platform_aws_account_id.strip()
+    if not re.fullmatch(r"[0-9]{12}", account):
+        raise AppError(
+            "CONNECTION_SETUP_UNAVAILABLE", 503, "Connection setup is temporarily unavailable"
+        )
+    return ok(
+        CloudFormationOut(
+            stack_name=cloudformation.STACK_NAME,
+            role_name=cloudformation.ROLE_NAME,
+            external_id=body.external_id,
+            platform_account_id=account,
+            template_yaml=cloudformation.render_template(
+                account,
+                body.external_id,
+                agent_role_arn=settings.platform_agent_role_arn,
+                executor_role_arn=settings.platform_executor_role_arn,
+            ),
+        )
+    )
 
 
 def _get(store: Store, conn_id: str, user: User) -> Connection:
@@ -50,9 +98,8 @@ def create_connection(
             type="role",
             region=body.region,
             role_arn=body.role_arn,
-            # Always chosen by AutoAWS, never by the client (confused deputy: a caller must
-            # not be able to reuse another customer's ExternalId)
-            external_id=f"autoaws-{secrets.token_hex(12)}",
+            # Preserve the value used to create the role's trust policy during setup.
+            external_id=body.external_id or f"autoaws-{secrets.token_hex(12)}",
             remediation_role_arn=body.remediation_role_arn,
         )
     store.create_connection(conn)

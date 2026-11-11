@@ -167,10 +167,8 @@ def owned_by_a(client, cognito, aws):
     return {"user": a, "conn": conn, "conv": conv, "job": job, "prop": prop}
 
 
-def test_the_server_picks_the_external_id(owned_by_a):
-    ext = owned_by_a["conn"]["external_id"]
-    assert ext != "autoaws-chosen-by-the-client"
-    assert ext.startswith("autoaws-") and len(ext) == len("autoaws-") + 24
+def test_the_external_id_matches_the_role_setup(owned_by_a):
+    assert owned_by_a["conn"]["external_id"] == "autoaws-chosen-by-the-client"
 
 
 def test_the_owner_sees_their_data(client, owned_by_a):

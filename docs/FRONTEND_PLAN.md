@@ -136,7 +136,8 @@ export async function streamSSE(path: string, body: unknown, onEvent: (e: AgentE
 ### `ConnectionForm`
 - Validation: ARN regex `^arn:aws:iam::\d{12}:role/.+`, access key `^AKIA[0-9A-Z]{16}$`, region bắt buộc.
 - Không bao giờ hiển thị lại secret sau khi lưu (contract chỉ trả `access_key_id_masked`).
-- Tab IAM Role được đánh dấu **"Recommended"**; tab Access Key có ghi chú "For learning/dev environments only".
+- Form chỉ hỗ trợ IAM role với hai cách thiết lập: **CloudFormation** (mặc định, **"Recommended"**) hoặc tạo thủ công trong IAM. Không còn tab / trường Access Key; chuyển cách thiết lập vẫn giữ Name, Region, Role ARN và External ID, kể cả khi thử lại verify.
+- Luồng role theo nhánh `dev` (2026-11-10): sinh/hiển thị External ID trước khi tạo role; hướng dẫn IAM thủ công hoặc tải template CloudFormation từ preview; lưu đúng ID rồi verify ngay. Khi thất bại, hiện lỗi và thử lại cùng connection. Giữ bố cục bảng/hộp thoại hiện tại; policy thủ công dùng đúng principal nền tảng từ `/api/connections/setup`.
 
 ## 6. Lộ trình thực hiện (tick khi xong)
 
