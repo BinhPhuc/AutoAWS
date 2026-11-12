@@ -161,10 +161,25 @@ def up(ctx: Ctx, kb: str) -> None:
         print(f"{kb}: the incident is built in, ready to diagnose.")
 
 
+def _release_kb1_subnet(ctx: Ctx) -> None:
+    """`fault`/`fix` replace the subnet's route table association, which gives it a new id
+    that CloudFormation does not know: deleting the stack would then fail on the route table
+    ("has dependencies"). Drop that association; the stack's own one is left to CloudFormation."""
+    out = ctx.outputs("kb1")
+    own = ctx.cfn.describe_stack_resource(StackName=ctx.stack("kb1"), LogicalResourceId="SubnetRt")
+    assoc = _subnet_rt_association(ctx, out["SubnetId"])
+    if assoc != own["StackResourceDetail"].get("PhysicalResourceId"):
+        ctx.ec2.disassociate_route_table(AssociationId=assoc)
+        print(f"kb1: removed association {assoc} (not the stack's)")
+
+
 def down(ctx: Ctx, kb: str) -> None:
     try:
-        fix(ctx, kb, quiet=True)  # e.g. a custom NACL cannot be deleted while associated
-    except (ClientError, WaiterError, KeyError, IndexError) as e:
+        if kb == "kb1":
+            _release_kb1_subnet(ctx)
+        else:
+            fix(ctx, kb, quiet=True)  # e.g. a custom NACL cannot be deleted while associated
+    except (ClientError, WaiterError, KeyError, IndexError, StopIteration) as e:
         print(f"{kb}: fix before delete skipped ({e})")
     print(f"Deleting stack {ctx.stack(kb)}…")
     ctx.cfn.delete_stack(StackName=ctx.stack(kb))
