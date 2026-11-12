@@ -19,6 +19,7 @@ defaults to ``medium``, so the effort is always sent). Requests stream and are c
 with ``get_final_message()`` because tool results can make inputs long.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -28,6 +29,11 @@ from app.aws.registry import ToolSpec
 from app.llm.base import LLMError, LLMMessage, LLMResponse, ToolCallRequest
 
 log = logging.getLogger(__name__)
+
+# The SDK retries failed HTTP responses itself, but not an `error` event that arrives inside
+# a stream which started with 200 (gateways relay upstream failures this way). One such
+# blip would otherwise throw away every tool call of the turn.
+STREAM_ATTEMPTS = 3
 
 
 def to_messages(messages: list[LLMMessage]) -> tuple[str, list[dict]]:
@@ -179,13 +185,32 @@ class ClaudeMessagesProvider:
             **self.extra,
         }
 
+    async def _stream(self, api: Any, params: dict) -> Any:
+        for attempt in range(1, STREAM_ATTEMPTS + 1):
+            try:
+                async with api.stream(**params) as stream:
+                    return await stream.get_final_message()
+            except anthropic.APIStatusError as e:
+                transient = e.status_code == 200 or e.status_code >= 500
+                if not transient or attempt == STREAM_ATTEMPTS:
+                    raise
+                log.warning(
+                    "%s: error in the response (%s %s), retry %d/%d",
+                    self.name,
+                    e.status_code,
+                    e.message,
+                    attempt,
+                    STREAM_ATTEMPTS - 1,
+                )
+                await asyncio.sleep(2 * attempt)
+        raise AssertionError("unreachable")
+
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
         params = self.request(messages, tools)
         try:
             # Gateways get the plain endpoint (the beta one adds ?beta=true)
             api = self.client.beta.messages if self.claude_features else self.client.messages
-            async with api.stream(**params) as stream:
-                message = await stream.get_final_message()
+            message = await self._stream(api, params)
         except anthropic.AuthenticationError as e:
             raise LLMError(f"{self.name}: authentication failed ({e.message})") from e
         except anthropic.PermissionDeniedError as e:
@@ -198,7 +223,8 @@ class ClaudeMessagesProvider:
             log.error("Bad request to %s: %s", self.name, e.message)
             raise LLMError(f"{self.name}: request rejected ({e.message})") from e
         except anthropic.APIStatusError as e:
-            raise LLMError(f"{self.name}: API error {e.status_code}") from e
+            log.error("%s: API error %s: %s", self.name, e.status_code, e.message)
+            raise LLMError(f"{self.name}: API error {e.status_code} ({e.message})") from e
         except anthropic.APIConnectionError as e:
             raise LLMError(f"{self.name}: cannot reach the API") from e
         response = from_message(message)
