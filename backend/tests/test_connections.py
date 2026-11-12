@@ -232,6 +232,7 @@ def test_setup_and_preview_use_configured_platform_roles(client, monkeypatch):
         "account_id": "111122223333",
         "role_name": "AutoAWSReadOnly",
         "trust_principals": principals,
+        "default_region": "ap-southeast-1",
     }
     template = client.post(
         "/api/connections/cloudformation-preview",

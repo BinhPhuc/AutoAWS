@@ -40,7 +40,16 @@ class RoleConnectionIn(BaseModel):
 
 
 class ConnectionPatch(BaseModel):
-    remediation_role_arn: str | None = Field(pattern=r"^arn:aws:iam::\d{12}:role/.+")
+    """Every field optional: only the fields sent are changed (model_fields_set)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    region: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[a-z]+)+-\d+$")
+    role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/.+")
+    remediation_role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/.+")
+
+
+class ProposalReviseIn(BaseModel):
+    params: dict
 
 
 ConnectionIn = Annotated[AccessKeyConnectionIn | RoleConnectionIn, Field(discriminator="type")]

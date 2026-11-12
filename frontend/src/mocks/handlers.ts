@@ -4,6 +4,7 @@ import type {
   ApiErrorBody,
   CloudFormationInfo,
   Connection,
+  ConnectionPatch,
   Conversation,
   CreateConnectionInput,
   CreateConversationInput,
@@ -62,6 +63,7 @@ export const handlers = [
       role_name: 'AutoAWSReadOnly',
       trust_principals: ['arn:aws:iam::111122223333:root'],
       external_id: mockExternalId(), // the real server signs it for the caller
+      default_region: 'ap-southeast-1',
     }),
   ),
   http.post('/api/connections/cloudformation-preview', async ({ request }) => {
@@ -283,9 +285,25 @@ export const handlers = [
   http.patch('/api/connections/:id', async ({ params, request }) => {
     const c = db.connections.find((x) => x.id === params.id)
     if (!c) return fail(404, 'CONNECTION_NOT_FOUND', 'Connection not found', pathOf(request))
-    const body = (await request.json()) as { remediation_role_arn: string | null }
-    c.remediation_role_arn = body.remediation_role_arn
-    c.remediation_enabled = !!body.remediation_role_arn
+    const body = (await request.json()) as ConnectionPatch
+    if (('role_arn' in body || 'remediation_role_arn' in body) && c.type !== 'role')
+      return fail(
+        400,
+        'VALIDATION_ERROR',
+        'Role ARNs can only be set on role connections',
+        pathOf(request),
+      )
+    if (body.name !== undefined) c.name = body.name
+    const reconnect =
+      (body.region !== undefined && body.region !== c.region) ||
+      (body.role_arn !== undefined && body.role_arn !== c.role_arn)
+    if (body.region !== undefined) c.region = body.region
+    if (body.role_arn !== undefined) c.role_arn = body.role_arn
+    if ('remediation_role_arn' in body) {
+      c.remediation_role_arn = body.remediation_role_arn ?? null
+      c.remediation_enabled = !!body.remediation_role_arn
+    }
+    if (reconnect) Object.assign(c, { status: 'pending', last_error: null })
     return ok(c, 'Connection updated')
   }),
 

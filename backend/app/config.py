@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     mcp_bridge_timeout_seconds: int = 900
 
     platform_aws_account_id: str = ""
+    # Region the "Add connection" form preselects (GET /api/connections/setup)
+    default_region: str = "ap-southeast-1"
     platform_aws_profile: str = ""
     # Dev only: send every AWS call to an emulator such as LocalStack (http://localhost:4566)
     aws_endpoint_url: str = ""

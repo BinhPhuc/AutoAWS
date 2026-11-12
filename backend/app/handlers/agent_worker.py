@@ -6,11 +6,14 @@ Modes (event["mode"]):
   recheck           {"proposal_id"}   remediation-flow: compare with the preview snapshot
   verify_proposal   {"proposal_id"}   remediation-flow: post-change verification
   expire            {"proposal_id"}   remediation-flow: the approval wait timed out
+  revise            {"proposal_id", "params", "by"}  user-edited parameters -> new proposal
+                                    (sync invoke from api-handler; errors come back as data)
 """
 
 import asyncio
 import logging
 
+from app.errors import AppError
 from app.remediation import service
 from app.storage.store import open_store
 from app.worker import run_job, verify_connection
@@ -32,4 +35,10 @@ def handler(event: dict, context=None) -> dict:
             return service.verify_step(store, event["proposal_id"])
         if mode == "expire":
             return service.expire_step(store, event["proposal_id"])
+        if mode == "revise":
+            try:
+                new = service.revise(store, event["proposal_id"], event["params"], by=event["by"])
+            except AppError as e:
+                return {"ok": False, "error": e.error, "status": e.status, "message": e.message}
+            return {"ok": True, "proposal_id": new.id}
     raise ValueError(f"Unknown agent-worker mode {mode!r}")

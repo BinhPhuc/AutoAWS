@@ -29,7 +29,7 @@ from app.aws.remediation.sessions import (
     remediation_session,
 )
 from app.config import get_settings
-from app.errors import AppError
+from app.errors import AppError, NotFound
 from app.platform import dispatch
 from app.storage.base import Store
 from app.storage.models import Connection, Conversation, Proposal, new_id, utcnow
@@ -49,6 +49,8 @@ VERIFY_FAILED = "VERIFY_FAILED"
 ROLLED_BACK = "ROLLED_BACK"
 
 MAX_PROPOSALS_PER_ANSWER = 5
+# A user may revise a fix proposal only while nothing was written for it
+EDITABLE = {PENDING, REJECTED, EXPIRED, STALE, SUPERSEDED}
 
 
 def snapshot_hash(snapshot: dict) -> str:
@@ -144,7 +146,6 @@ def attach_proposals(
     answer: DiagnosisAnswer,
 ) -> None:
     """Turn the answer's proposals into stored PENDING proposals (sets proposal_id / error)."""
-    settings = get_settings()
     for i, ref in enumerate(answer.proposals):
         if conn is None:
             ref.error = "Connection not found"
@@ -161,26 +162,103 @@ def attach_proposals(
         if prepared is None:
             ref.error = error
             continue
-        proposal = Proposal(
-            id=new_id("prop"),
+        proposal = _new_proposal(
             user_id=conversation.user_id,
             conversation_id=conversation.id,
             message_id=message_id,
             connection_id=conn.id,
             action=ref.action,
-            params_json=json.dumps(ref.params, ensure_ascii=False),
+            params=ref.params,
             reason=ref.reason,
-            preview_json=json.dumps(prepared.preview, ensure_ascii=False, default=str),
-            snapshot_json=json.dumps(prepared.snapshot, ensure_ascii=False, default=str),
-            snapshot_hash=snapshot_hash(prepared.snapshot),
-            expires_at=utcnow() + timedelta(hours=settings.proposal_ttl_hours),
-            history_json=json.dumps(
-                [{"status": PENDING, "at": utcnow().isoformat(), "note": "proposed by the agent"}]
-            ),
+            prepared=prepared,
+            note="proposed by the agent",
         )
         store.create_proposal(proposal)
         dispatch.start_remediation_flow(proposal)
         ref.proposal_id = proposal.id
+
+
+def _new_proposal(
+    *,
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    connection_id: str,
+    action: str,
+    params: dict,
+    reason: str,
+    prepared: Prepared,
+    note: str,
+    by: str | None = None,
+    parent_id: str | None = None,
+) -> Proposal:
+    """A PENDING fix proposal from a prepared (validated, previewed, snapshotted) action."""
+    return Proposal(
+        id=new_id("prop"),
+        user_id=user_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        connection_id=connection_id,
+        parent_id=parent_id,
+        action=action,
+        params_json=json.dumps(params, ensure_ascii=False),
+        reason=reason,
+        preview_json=json.dumps(prepared.preview, ensure_ascii=False, default=str),
+        snapshot_json=json.dumps(prepared.snapshot, ensure_ascii=False, default=str),
+        snapshot_hash=snapshot_hash(prepared.snapshot),
+        expires_at=utcnow() + timedelta(hours=get_settings().proposal_ttl_hours),
+        history_json=json.dumps(
+            [{"status": PENDING, "at": utcnow().isoformat(), "note": note, "by": by}]
+        ),
+    )
+
+
+def revise(store: Store, proposal_id: str, params: dict, by: str | None = None) -> Proposal:
+    """The user's edited parameters become a NEW proposal, checked exactly like the agent's
+    (schema, prechecks, fresh preview and snapshot), so only what was previewed can run.
+    A PENDING original is superseded. Runs where the read-only role can be assumed."""
+    p = store.get_proposal(proposal_id)
+    if p is None:
+        raise NotFound("PROPOSAL_NOT_FOUND", "Proposal not found")
+    expire_due(store, p)
+    if p.kind != "fix" or p.status not in EDITABLE:
+        raise AppError(
+            "PROPOSAL_NOT_EDITABLE", 409, "Only proposals that were not applied can be edited"
+        )
+    conn = store.get_connection(p.connection_id)
+    if conn is None or not remediation_enabled(conn):
+        raise AppError(
+            "REMEDIATION_DISABLED", 400, "Remediation is not enabled for this connection"
+        )
+    try:
+        read = resolve_session(conn)
+    except CredentialError as e:
+        raise AppError("AWS_AUTH_FAILED", 400, f"AWS authentication failed: {e}") from e
+    prepared, error = prepare(read, p.action, params)
+    if prepared is None:
+        raise AppError("VALIDATION_ERROR", 422, f"Invalid request: {error}")
+    if p.status == PENDING:
+        if not transition(store, p, SUPERSEDED, "edited by the user", expected=PENDING, by=by):
+            raise AppError(
+                "PROPOSAL_NOT_EDITABLE", 409, "Only proposals that were not applied can be edited"
+            )
+        dispatch.send_decision(store.get_proposal(p.id))  # ends its remediation-flow wait
+    new = _new_proposal(
+        user_id=p.user_id,
+        conversation_id=p.conversation_id,
+        message_id=p.message_id,
+        connection_id=p.connection_id,
+        action=p.action,
+        params=params,
+        reason=p.reason,
+        prepared=prepared,
+        note=f"revised by the user from {p.id}",
+        by=by,
+        parent_id=p.id,
+    )
+    store.create_proposal(new)
+    dispatch.start_remediation_flow(new)
+    return new
 
 
 # ---- decisions ----------------------------------------------------------------------

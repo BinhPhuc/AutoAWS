@@ -71,6 +71,8 @@ export interface ConnectionSetup {
   trust_principals: string[]
   /** Issued by the server for the signed-in user; the only value create accepts. */
   external_id: string
+  /** Region the connection form starts with (server DEFAULT_REGION). */
+  default_region: string
 }
 
 export interface Connection {
@@ -109,6 +111,17 @@ export interface CreateRoleConnection {
 }
 
 export type CreateConnectionInput = CreateAccessKeyConnection | CreateRoleConnection
+
+/** PATCH /api/connections/{id}: only the fields sent change. `type` and `external_id` are
+ * fixed; a new region or role ARN puts the connection back to `pending` (verify again). */
+export interface ConnectionPatch {
+  name?: string
+  region?: string
+  /** Role connections only. */
+  role_arn?: string
+  /** Role connections only; null turns remediation off. */
+  remediation_role_arn?: string | null
+}
 
 export interface VerifyResult {
   status: 'connected' | 'failed'

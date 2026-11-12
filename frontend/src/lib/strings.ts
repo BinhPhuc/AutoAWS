@@ -112,6 +112,17 @@ export const S = {
     details: 'Details',
     typeAccessKey: 'Access key',
     typeRole: 'IAM role',
+    edit: {
+      button: 'Edit',
+      title: 'Edit connection',
+      description:
+        'The connection type and External ID cannot change. A new region or role ARN is verified again.',
+      reverifyNote:
+        'Changing the region or role ARN puts the connection back to Pending until it is verified.',
+      externalIdNote: (id: string) => `The new role must trust the same External ID: ${id}`,
+      save: 'Save',
+      saving: 'Saving…',
+    },
     form: {
       roleOnlyHint:
         'Connect with an IAM role. Choose how you want to create the read-only role in your AWS account.',

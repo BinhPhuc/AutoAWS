@@ -6,7 +6,13 @@ background task with its own Store, and the client polls GET /proposals/{id}.
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 
-from app.api.schemas import DecisionIn, DecisionOut, ProposalOut, RemediationActionOut
+from app.api.schemas import (
+    DecisionIn,
+    DecisionOut,
+    ProposalOut,
+    ProposalReviseIn,
+    RemediationActionOut,
+)
 from app.auth import User, current_user
 from app.aws.remediation.catalog import CATALOG
 from app.errors import AppError, NotFound
@@ -76,6 +82,22 @@ def decide_proposal(
         background.add_task(_run, proposal.id)  # on AWS remediation-flow runs the steps
     out = DecisionOut(proposal=ProposalOut.from_model(proposal), followup_question=followup)
     return ok(out, _MESSAGES[body.decision])
+
+
+@router.post("/proposals/{proposal_id}/revise")
+def revise_proposal(
+    proposal_id: str,
+    body: ProposalReviseIn,
+    store: Store = Depends(get_store),
+    user: User = Depends(current_user),
+):
+    """Edited parameters -> a new proposal to review (docs/API_CONTRACT.md §7)."""
+    _get(store, proposal_id, user)  # someone else's: 404
+    try:
+        new_id = dispatch.revise_proposal(proposal_id, body.params, by=user.id)
+    except dispatch.DispatchError as e:
+        raise AppError("INTERNAL", 500, "Could not revise the proposal") from e
+    return ok(ProposalOut.from_model(store.get_proposal(new_id)), "Proposal revised", 201)
 
 
 @router.get("/remediation/actions")

@@ -45,6 +45,7 @@ def connection_setup(user: User = Depends(current_user)):
             or ([f"arn:aws:iam::{account}:root"] if valid_account else []),
             # Fresh on every call; only this user can attach it to a connection
             "external_id": external_ids.issue(user.id),
+            "default_region": settings.default_region,
         }
     )
 
@@ -145,11 +146,24 @@ def update_connection(
     user: User = Depends(current_user),
 ):
     conn = _get(store, conn_id, user)
-    if conn.type != "role":
-        raise AppError(
-            "VALIDATION_ERROR", 400, "A remediation role can only be set on role connections"
-        )
-    conn.remediation_role_arn = body.remediation_role_arn
+    sent = body.model_fields_set
+    for field in ("name", "region", "role_arn"):
+        if field in sent and getattr(body, field) is None:
+            raise AppError("VALIDATION_ERROR", 422, f"Invalid request: {field} cannot be null")
+    if sent & {"role_arn", "remediation_role_arn"} and conn.type != "role":
+        raise AppError("VALIDATION_ERROR", 400, "Role ARNs can only be set on role connections")
+    reconnect = False  # where / how AutoAWS assumes the role changed: verify again
+    if "name" in sent:
+        conn.name = body.name
+    if "region" in sent and body.region != conn.region:
+        conn.region, reconnect = body.region, True
+    if "role_arn" in sent and body.role_arn != conn.role_arn:
+        conn.role_arn, reconnect = body.role_arn, True
+    if "remediation_role_arn" in sent:
+        conn.remediation_role_arn = body.remediation_role_arn
+    if reconnect:
+        conn.status, conn.last_error = "pending", None
+        forget_session(conn.id)
     store.save_connection(conn)
     return ok(ConnectionOut.from_model(conn), "Connection updated")
 

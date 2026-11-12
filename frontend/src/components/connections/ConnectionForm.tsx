@@ -32,7 +32,9 @@ export function ConnectionForm({ onCreated }: Props) {
 
   const [setupMethod, setSetupMethod] = useState<RoleSetupMethod>('cloudformation')
   const [name, setName] = useState('')
-  const [region, setRegion] = useState(DEFAULT_REGION)
+  // Untouched: follow the server's default region (DEFAULT_REGION in backend/.env)
+  const [pickedRegion, setRegion] = useState<string | null>(null)
+  const region = pickedRegion ?? setup.data?.default_region ?? DEFAULT_REGION
   const [roleArn, setRoleArn] = useState('')
   // Issued by the server for this user (docs/API_CONTRACT.md §2); read-only in the form
   const externalId = setup.data?.external_id ?? ''

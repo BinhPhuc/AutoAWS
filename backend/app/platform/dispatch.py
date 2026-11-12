@@ -78,6 +78,36 @@ def verify_connection(conn_id: str) -> dict:
     return payload
 
 
+def revise_proposal(proposal_id: str, params: dict, by: str | None) -> str:
+    """Create the revised proposal where the read-only AssumeRole is allowed (agent-worker on
+    Lambda: api-handler cannot reach users' accounts). Returns the new proposal id; the
+    service's AppError comes back as the same AppError."""
+    if not is_lambda():
+        from app.remediation.service import revise  # noqa: PLC0415
+        from app.storage.store import open_store  # noqa: PLC0415
+
+        with open_store() as store:
+            return revise(store, proposal_id, params, by=by).id
+    try:
+        resp = _client("lambda").invoke(
+            FunctionName=get_settings().agent_worker_function,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(
+                {"mode": "revise", "proposal_id": proposal_id, "params": params, "by": by}
+            ).encode(),
+        )
+    except (ClientError, BotoCoreError) as e:
+        raise DispatchError(f"Could not reach agent-worker: {e}") from e
+    payload = json.loads(resp["Payload"].read() or b"{}")
+    if resp.get("FunctionError"):
+        raise DispatchError(f"agent-worker failed: {payload.get('errorMessage', 'unknown')}")
+    if not payload.get("ok"):
+        from app.errors import AppError  # noqa: PLC0415
+
+        raise AppError(payload["error"], payload["status"], payload["message"])
+    return payload["proposal_id"]
+
+
 # ---- remediation-flow --------------------------------------------------------------------
 
 

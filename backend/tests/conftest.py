@@ -15,6 +15,10 @@ os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 # moto ignores DryRun on some EC2 writes (it would apply the change): tested separately
 os.environ.setdefault("REMEDIATION_DRY_RUN", "false")
+# A developer's backend/.env (platform SSO profile, platform account) must not reach moto
+os.environ["PLATFORM_AWS_PROFILE"] = ""
+os.environ.pop("AWS_PROFILE", None)
+os.environ["DEFAULT_REGION"] = "ap-southeast-1"
 
 REGION = "ap-southeast-1"
 FAKE_KEY = "AKIAIOSFODNN7EXAMPLE"

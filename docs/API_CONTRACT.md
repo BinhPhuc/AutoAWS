@@ -51,6 +51,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `JOB_NOT_FOUND` | 404 | `"Job not found"` | |
 | `JOB_IN_PROGRESS` | 409 | `"A diagnosis is already running in this conversation"` | Gửi câu hỏi khi job trước của hội thoại chưa xong |
 | `PROPOSAL_NOT_FOUND` | 404 | `"Proposal not found"` | |
+| `PROPOSAL_NOT_EDITABLE` | 409 | `"Only proposals that were not applied can be edited"` | Sửa đề xuất đã / đang thực thi hoặc đề xuất hoàn tác (mục 7) |
 | `PROPOSAL_NOT_PENDING` | 409 | `"Proposal is not waiting for a decision (status SUCCEEDED)"` | Quyết định cho đề xuất đã duyệt / từ chối / hết hạn (mục 7) |
 | `REMEDIATION_DISABLED` | 400 | `"Remediation is not enabled for this connection"` | Duyệt đề xuất trên connection không có quyền sửa (mục 7) |
 | `NOT_FOUND` | 404 | `"Not Found"` | Route không tồn tại |
@@ -157,7 +158,8 @@ Thông tin chuẩn bị tạo role, yêu cầu đăng nhập như các route con
   "account_id": "111122223333" | null,
   "role_name": "AutoAWSReadOnly",
   "trust_principals": ["arn:aws:iam::111122223333:role/autoaws-agent-worker", "arn:aws:iam::111122223333:role/autoaws-action-executor"],
-  "external_id": "autoaws-3f9c1a2b4d5e6f70-9a8b7c6d5e4f3a2b1c0d9e8f"   // mới mỗi lần gọi, chỉ hợp lệ với người gọi
+  "external_id": "autoaws-3f9c1a2b4d5e6f70-9a8b7c6d5e4f3a2b1c0d9e8f",   // mới mỗi lần gọi, chỉ hợp lệ với người gọi
+  "default_region": "ap-southeast-2"     // region form chọn sẵn (DEFAULT_REGION của backend)
 } }
 ```
 `account_id=null` nếu nền tảng chưa cấu hình account hợp lệ. `trust_principals` dùng các role nền tảng đã cấu hình (giống template CloudFormation); khi không cấu hình role cụ thể, dùng ARN root của account nền tảng. UI không dựng policy khi thiếu account hợp lệ.
@@ -170,10 +172,16 @@ Tạo template **trước khi lưu connection**, yêu cầu đăng nhập. Body 
 200 { "status_code": 200, "message": "OK", "data": Connection }
 ```
 ### `PATCH /api/connections/{id}`
-Bật / tắt quyền sửa sau khi đã tạo stack với `EnableRemediation=true`: `{ "remediation_role_arn": "arn:...:role/AutoAWSRemediation" | null }` (chỉ `type=role`).
+Sửa kết nối đã tạo. Mọi trường đều tuỳ chọn, chỉ trường có gửi lên mới bị đổi:
 ```json
+{ "name": "Lab", "region": "ap-southeast-2",
+  "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly",          // chỉ type=role
+  "remediation_role_arn": "arn:...:role/AutoAWSRemediation" | null }     // chỉ type=role; null = tắt quyền sửa
 200 { "status_code": 200, "message": "Connection updated", "data": Connection }
 ```
+- Không sửa được `type` và `external_id` (External ID do server cấp, đã nằm trong trust policy; muốn mã khác thì tạo kết nối mới).
+- Đổi `region` hoặc `role_arn` → `status` về `pending`, xoá `last_error`, bỏ phiên AssumeRole đang giữ; client gọi lại `POST …/verify`. Đổi `name` / `remediation_role_arn` không ảnh hưởng trạng thái.
+- `role_arn` / `remediation_role_arn` trên kết nối `access_key` → `400 VALIDATION_ERROR`.
 ### `DELETE /api/connections/{id}`
 ```json
 200 { "status_code": 200, "message": "Connection deleted", "data": null }
@@ -431,6 +439,17 @@ Query tuỳ chọn `?conversation_id=…`, `?status=PENDING_APPROVAL`. Mới nh�
 ```
 `followup_question` (chỉ khi góp ý): câu hỏi tiếng Việt client gửi tiếp vào hội thoại để agent đề xuất lại.
 Lỗi: `PROPOSAL_NOT_PENDING` (409), `REMEDIATION_DISABLED` (400, khi duyệt).
+
+### `POST /api/proposals/{id}/revise`
+Người dùng sửa tham số của một đề xuất (ví dụ CIDR, port). Không sửa tại chỗ: server tạo **đề xuất mới** từ cùng hành động với tham số mới, kiểm lại đủ như đề xuất của agent (schema của hành động, luật cứng như không mở 22/3389 cho `0.0.0.0/0`, đọc lại tài nguyên, xem trước + snapshot mới), rồi người dùng duyệt đề xuất mới. Nhờ vậy chỉ thực thi đúng thứ đã xem trước.
+```json
+{ "params": { "group_id": "sg-0abc", "port": 8080, "cidr": "203.0.113.0/24" } }   // đầy đủ tham số của hành động
+201 { "status_code": 201, "message": "Proposal revised", "data": Proposal }     // đề xuất mới: PENDING_APPROVAL, parent_id = id cũ
+```
+- Sửa được đề xuất `kind = fix` ở trạng thái chưa ghi gì: `PENDING_APPROVAL`, `REJECTED`, `EXPIRED`, `STALE`, `SUPERSEDED`. Đề xuất cũ đang `PENDING_APPROVAL` → `SUPERSEDED` (ghi chú `edited by the user`, `by` = người sửa); trạng thái khác giữ nguyên.
+- Lịch sử đề xuất mới: `PENDING_APPROVAL` với ghi chú `revised by the user from prop_…`, `by` = người sửa.
+- Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_EDITABLE` (409: đã thực thi / đang thực thi / là rollback), `REMEDIATION_DISABLED` (400), `VALIDATION_ERROR` (422: tham số sai schema hoặc vi phạm kiểm tra trước, `message` nêu lý do).
+- Trên AWS (`RUNTIME=lambda`), bước kiểm tra chạy trong agent-worker (api-handler không có quyền vào tài khoản người dùng), giống verify kết nối.
 
 ### `GET /api/remediation/actions`
 Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp.
