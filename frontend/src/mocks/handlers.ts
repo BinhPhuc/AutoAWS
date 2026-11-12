@@ -366,7 +366,51 @@ export const handlers = [
     )
   }),
 
-  http.get('/api/remediation/actions', async () => ok([])),
+  http.post('/api/proposals/:id/revise', async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === params.id)
+    if (!p) return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found', pathOf(request))
+    const editable = ['PENDING_APPROVAL', 'REJECTED', 'EXPIRED', 'STALE', 'SUPERSEDED']
+    if (p.kind !== 'fix' || !editable.includes(p.status))
+      return fail(
+        409,
+        'PROPOSAL_NOT_EDITABLE',
+        'Only proposals that were not applied can be edited',
+        pathOf(request),
+      )
+    const body = (await request.json()) as { params: Record<string, unknown> }
+    // The real server re-runs the pre-checks; the mock refuses the private route table
+    if (String(body.params.route_table_id ?? '').includes('private'))
+      return fail(
+        422,
+        'VALIDATION_ERROR',
+        `Invalid request: Pre-check failed: ${String(body.params.route_table_id)} has no active 0.0.0.0/0 route to an Internet gateway`,
+        pathOf(request),
+      )
+    if (p.status === 'PENDING_APPROVAL') {
+      p.status = 'SUPERSEDED'
+      p.history = [...p.history, { status: 'SUPERSEDED', at: now(), note: 'edited by the user' }]
+    }
+    const next: Proposal = {
+      ...structuredClone(p),
+      id: nextId('prop'),
+      parent_id: p.id,
+      params: body.params,
+      status: 'PENDING_APPROVAL',
+      result: null,
+      verification: null,
+      error: null,
+      history: [
+        { status: 'PENDING_APPROVAL', at: now(), note: `revised by the user from ${p.id}` },
+      ],
+      created_at: now(),
+      updated_at: now(),
+      expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    }
+    db.proposals.unshift(next)
+    return ok(next, 'Proposal revised', 201)
+  }),
+
+  http.get('/api/remediation/actions', async () => ok(remediationActions)),
 
   // ---------- tools ----------
   http.get('/api/tools', async () => {
@@ -466,6 +510,41 @@ function withMockProposals(answer: DiagnosisAnswer, conversationId: string, mess
     ],
   }
 }
+
+/** Two catalogue actions with the server's input schemas (backend catalog.py). */
+const remediationActions = [
+  {
+    name: 'associate_route_table',
+    label: 'Associate route table',
+    description: 'Make a subnet use another route table of its VPC.',
+    aws_actions: ['ec2:AssociateRouteTable', 'ec2:ReplaceRouteTableAssociation'],
+    input_schema: {
+      type: 'object',
+      properties: {
+        subnet_id: { type: 'string', pattern: '^subnet-[0-9a-f]+$' },
+        route_table_id: { type: 'string', pattern: '^rtb-[0-9a-z]+$' },
+      },
+      required: ['subnet_id', 'route_table_id'],
+    },
+  },
+  {
+    name: 'authorize_sg_ingress',
+    label: 'Allow inbound port',
+    description: 'Add ONE inbound rule (one port, one CIDR) to a security group.',
+    aws_actions: ['ec2:AuthorizeSecurityGroupIngress'],
+    input_schema: {
+      type: 'object',
+      properties: {
+        group_id: { type: 'string', pattern: '^sg-[0-9a-f]+$' },
+        protocol: { type: 'string', enum: ['tcp', 'udp'] },
+        port: { type: 'integer', minimum: 1, maximum: 65535 },
+        cidr: { type: 'string', description: 'e.g. 0.0.0.0/0 or 203.0.113.7/32' },
+        description: { type: 'string', maxLength: 255 },
+      },
+      required: ['group_id', 'port', 'cidr'],
+    },
+  },
+]
 
 /** Plays a scripted scenario into the job, like the agent-worker would. */
 async function runMockJob(job: Job, conv: Conversation, list: Message[], question: string) {

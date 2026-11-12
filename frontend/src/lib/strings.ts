@@ -363,6 +363,22 @@ export const S = {
     feedbackPlaceholder: 'e.g. only open 8080 for our office IP 203.0.113.7',
     send: 'Send feedback',
     notProposed: 'Not proposed',
+    edit: 'Edit',
+    editTitle: 'Edit proposal',
+    editHint:
+      'Change the parameters. AutoAWS checks them again and creates a new proposal for you to approve. Nothing changes in your account until you approve it.',
+    editSubmit: 'Create revised proposal',
+    editSubmitting: 'Checking…',
+    editUnavailable: 'The parameters of this action cannot be edited here.',
+    revised: 'Revised',
+    fieldRequired: 'Required',
+    fieldPattern: 'Invalid format',
+    fieldInteger: (min?: number, max?: number) =>
+      min !== undefined && max !== undefined
+        ? `Whole number from ${min} to ${max}`
+        : 'Whole number',
+    fieldTooLong: (n: number) => `At most ${n} characters`,
+    optional: 'optional',
     rollback: 'Rollback',
     rollbackOf: (id: string) => `Rollback of ${id}`,
     change: 'Change',
