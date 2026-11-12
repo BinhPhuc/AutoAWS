@@ -52,6 +52,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `JOB_IN_PROGRESS` | 409 | `"A diagnosis is already running in this conversation"` | Gửi câu hỏi khi job trước của hội thoại chưa xong |
 | `PROPOSAL_NOT_FOUND` | 404 | `"Proposal not found"` | |
 | `PROPOSAL_NOT_EDITABLE` | 409 | `"Only proposals that were not applied can be edited"` | Sửa đề xuất đã / đang thực thi hoặc đề xuất hoàn tác (mục 7) |
+| `PROPOSAL_NOT_ROLLBACKABLE` | 409 | `"Only applied fixes can be rolled back"` / `"A rollback of this proposal is already waiting or running"` / `"The resource can no longer be read: <reason>"` | Yêu cầu hoàn tác đề xuất chưa `SUCCEEDED`, là rollback, đã có rollback đang chờ / chạy, hoặc tài nguyên không còn đọc được (mục 7) |
 | `PROPOSAL_NOT_PENDING` | 409 | `"Proposal is not waiting for a decision (status SUCCEEDED)"` | Quyết định cho đề xuất đã duyệt / từ chối / hết hạn (mục 7) |
 | `REMEDIATION_DISABLED` | 400 | `"Remediation is not enabled for this connection"` | Duyệt đề xuất trên connection không có quyền sửa (mục 7) |
 | `NOT_FOUND` | 404 | `"Not Found"` | Route không tồn tại |
@@ -419,7 +420,7 @@ Văn bản trong `preview` là tiếng Anh do server sinh (nhãn) + ID tài nguy
 - Trước khi ghi, các hành động EC2 chạy thử với `DryRun=True` (chỉ trên AWS thật, `REMEDIATION_DRY_RUN=true`): AWS trả `DryRunOperation` thì mới ghi thật (lịch sử có ghi chú `dry run passed`); bị từ chối quyền → `FAILED` (`error` bắt đầu bằng `Permission:`); endpoint không trả `DryRunOperation` (trình giả lập) → `FAILED`, không ghi tiếp. Route 53 và ELB không có DryRun.
 - Lỗi khi gọi API ghi → `FAILED` (kèm `error`).
 - `RUNTIME=local`, backend khởi động lại giữa chừng: `APPROVED` (chưa ghi) được chạy tiếp; `EXECUTING` đã có `result` được kiểm chứng; `EXECUTING` chưa có `result` → `FAILED` với `error` `"Interrupted: …"` (không ghi lại lần hai — người dùng kiểm tra tài nguyên rồi hỏi lại).
-- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
+- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Người dùng cũng tự yêu cầu hoàn tác một đề xuất đã `SUCCEEDED` (`POST /api/proposals/{id}/rollback`). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
 - Thực thi chạy nền: response của quyết định trả `APPROVED`; client hỏi lại `GET /api/proposals/{id}` tới khi hết `APPROVED` / `EXECUTING`.
 - Trên AWS (`RUNTIME=lambda`, mục 9): mỗi đề xuất là một lượt chạy state machine `remediation-flow` (Step Functions): gửi email SNS → chờ duyệt `.waitForTaskToken` (24 giờ, hết hạn → `EXPIRED`) → agent-worker kiểm tra lại (role chỉ đọc) → action-executor thực thi (role `AutoAWSRemediation`) → agent-worker kiểm chứng → email kết quả. Quyết định của người dùng được chuyển vào state machine bằng `SendTaskSuccess` / `SendTaskFailure`. Chạy local (`RUNTIME=local`) thì các bước này chạy nền trong backend, cùng trạng thái và API.
 
@@ -450,6 +451,17 @@ Người dùng sửa tham số của một đề xuất (ví dụ CIDR, port). K
 - Lịch sử đề xuất mới: `PENDING_APPROVAL` với ghi chú `revised by the user from prop_…`, `by` = người sửa.
 - Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_EDITABLE` (409: đã thực thi / đang thực thi / là rollback), `REMEDIATION_DISABLED` (400), `VALIDATION_ERROR` (422: tham số sai schema hoặc vi phạm kiểm tra trước, `message` nêu lý do).
 - Trên AWS (`RUNTIME=lambda`), bước kiểm tra chạy trong agent-worker (api-handler không có quyền vào tài khoản người dùng), giống verify kết nối.
+
+### `POST /api/proposals/{id}/rollback`
+Người dùng muốn quay lại một thay đổi đã áp dụng (đề xuất `kind = fix`, `SUCCEEDED`). Server đọc trạng thái hiện tại của tài nguyên (snapshot) và tạo **đề xuất `kind: "rollback"`**, `parent_id` = đề xuất gốc; đề xuất này cũng phải được duyệt mới chạy. Không có body.
+```json
+201 { "status_code": 201, "message": "Rollback proposed", "data": Proposal }   // PENDING_APPROVAL, kind "rollback"
+```
+- Lúc duyệt, nếu tài nguyên đã đổi khác snapshot (ai đó sửa tiếp sau thay đổi của AutoAWS) → `STALE`, không ghi đè.
+- Hoàn tác chỉ đưa tài nguyên về trạng thái trước thay đổi của chính đề xuất đó (`preview.summary` = `Undo prop_…: …`); kiểm chứng: tài nguyên khớp snapshot trước khi sửa. Xong → đề xuất gốc `ROLLED_BACK`.
+- Lịch sử: `PENDING_APPROVAL` với ghi chú `rollback requested by the user`, `by` = người yêu cầu.
+- Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_ROLLBACKABLE` (409: chưa áp dụng / là rollback / đã có rollback đang chờ hoặc chạy / tài nguyên đã bị xoá, không đọc được), `REMEDIATION_DISABLED` (400), `AWS_AUTH_FAILED` (400: không assume được role).
+- Trên AWS (`RUNTIME=lambda`), bước đọc chạy trong agent-worker, giống `revise`.
 
 ### `GET /api/remediation/actions`
 Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp.

@@ -14,5 +14,7 @@ export const proposalsApi = {
   /** Edited parameters -> a NEW proposal to review (the old one, if pending, is superseded). */
   revise: (id: string, params: Record<string, unknown>) =>
     api.post<Proposal>(`/api/proposals/${id}/revise`, { params }),
+  /** Undo an applied fix: a rollback proposal that must be approved too. */
+  rollback: (id: string) => api.post<Proposal>(`/api/proposals/${id}/rollback`),
   actions: () => api.get<RemediationAction[]>('/api/remediation/actions'),
 }

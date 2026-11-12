@@ -99,3 +99,16 @@ export function useReviseProposal() {
     },
   })
 }
+
+export function useRequestRollback() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => proposalsApi.rollback(id),
+    onSuccess: ({ data, message }) => {
+      toast.success(message)
+      qc.setQueryData(proposalKeys.detail(data.id), data)
+      void qc.invalidateQueries({ queryKey: proposalKeys.all })
+    },
+    onError: (e) => toastApiError(e),
+  })
+}

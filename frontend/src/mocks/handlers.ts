@@ -348,7 +348,15 @@ export const handlers = [
           ok: true,
           details: 'subnet-0a1b uses rtb-public: 0.0.0.0/0 -> igw-0f3c (active)',
         }
-        mark('SUCCEEDED', 'verified')
+        mark('SUCCEEDED', p.kind === 'rollback' ? 'rolled back and verified' : 'verified')
+        const parent = db.proposals.find((x) => x.id === p.parent_id)
+        if (p.kind === 'rollback' && parent) {
+          parent.status = 'ROLLED_BACK'
+          parent.history = [
+            ...parent.history,
+            { status: 'ROLLED_BACK', at: now(), note: `rolled back by ${p.id}` },
+          ]
+        }
       }, 2000)
       return ok({ proposal: p, followup_question: null }, 'Proposal approved')
     }
@@ -408,6 +416,56 @@ export const handlers = [
     }
     db.proposals.unshift(next)
     return ok(next, 'Proposal revised', 201)
+  }),
+
+  http.post('/api/proposals/:id/rollback', async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === params.id)
+    if (!p) return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found', pathOf(request))
+    if (p.kind !== 'fix' || p.status !== 'SUCCEEDED')
+      return fail(
+        409,
+        'PROPOSAL_NOT_ROLLBACKABLE',
+        'Only applied fixes can be rolled back',
+        pathOf(request),
+      )
+    const active = db.proposals.some(
+      (x) =>
+        x.parent_id === p.id &&
+        x.kind === 'rollback' &&
+        ['PENDING_APPROVAL', 'APPROVED', 'EXECUTING'].includes(x.status),
+    )
+    if (active)
+      return fail(
+        409,
+        'PROPOSAL_NOT_ROLLBACKABLE',
+        'A rollback of this proposal is already waiting or running',
+        pathOf(request),
+      )
+    const rb: Proposal = {
+      ...structuredClone(p),
+      id: nextId('prop'),
+      kind: 'rollback',
+      parent_id: p.id,
+      status: 'PENDING_APPROVAL',
+      reason: 'Người dùng yêu cầu hoàn tác thay đổi đã áp dụng.',
+      preview: {
+        summary: `Undo ${p.id}: ${p.preview.rollback}`,
+        changes: [],
+        impact: 'Restores the state captured before the approved change.',
+        risk: 'low',
+        rollback: '-',
+        verify: 'The resource matches the state before the change.',
+      },
+      result: null,
+      verification: null,
+      error: null,
+      history: [{ status: 'PENDING_APPROVAL', at: now(), note: 'rollback requested by the user' }],
+      created_at: now(),
+      updated_at: now(),
+      expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    }
+    db.proposals.unshift(rb)
+    return ok(rb, 'Rollback proposed', 201)
   }),
 
   http.get('/api/remediation/actions', async () => ok(remediationActions)),

@@ -88,13 +88,29 @@ def revise_proposal(proposal_id: str, params: dict, by: str | None) -> str:
 
         with open_store() as store:
             return revise(store, proposal_id, params, by=by).id
+    return _new_proposal_in_worker(
+        {"mode": "revise", "proposal_id": proposal_id, "params": params, "by": by}
+    )
+
+
+def rollback_proposal(proposal_id: str, by: str | None) -> str:
+    """The user's rollback request (reads the resource, so agent-worker on Lambda)."""
+    if not is_lambda():
+        from app.remediation.service import request_rollback  # noqa: PLC0415
+        from app.storage.store import open_store  # noqa: PLC0415
+
+        with open_store() as store:
+            return request_rollback(store, proposal_id, by=by).id
+    return _new_proposal_in_worker({"mode": "rollback", "proposal_id": proposal_id, "by": by})
+
+
+def _new_proposal_in_worker(event: dict) -> str:
+    """Sync agent-worker call that creates a proposal: its id, or the service's AppError."""
     try:
         resp = _client("lambda").invoke(
             FunctionName=get_settings().agent_worker_function,
             InvocationType="RequestResponse",
-            Payload=json.dumps(
-                {"mode": "revise", "proposal_id": proposal_id, "params": params, "by": by}
-            ).encode(),
+            Payload=json.dumps(event).encode(),
         )
     except (ClientError, BotoCoreError) as e:
         raise DispatchError(f"Could not reach agent-worker: {e}") from e

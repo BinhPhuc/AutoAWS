@@ -7,7 +7,8 @@ Modes (event["mode"]):
   verify_proposal   {"proposal_id"}   remediation-flow: post-change verification
   expire            {"proposal_id"}   remediation-flow: the approval wait timed out
   revise            {"proposal_id", "params", "by"}  user-edited parameters -> new proposal
-                                    (sync invoke from api-handler; errors come back as data)
+  rollback          {"proposal_id", "by"}  the user asks to undo an applied fix
+                                    (both: sync invoke from api-handler; errors come back as data)
 """
 
 import asyncio
@@ -35,9 +36,14 @@ def handler(event: dict, context=None) -> dict:
             return service.verify_step(store, event["proposal_id"])
         if mode == "expire":
             return service.expire_step(store, event["proposal_id"])
-        if mode == "revise":
+        if mode in ("revise", "rollback"):
             try:
-                new = service.revise(store, event["proposal_id"], event["params"], by=event["by"])
+                if mode == "revise":
+                    new = service.revise(
+                        store, event["proposal_id"], event["params"], by=event["by"]
+                    )
+                else:
+                    new = service.request_rollback(store, event["proposal_id"], by=event["by"])
             except AppError as e:
                 return {"ok": False, "error": e.error, "status": e.status, "message": e.message}
             return {"ok": True, "proposal_id": new.id}

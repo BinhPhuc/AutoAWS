@@ -14,7 +14,14 @@ import { Label } from '@/components/ui/label'
 import { StatusTag } from '@/components/ui/status-tag'
 import { Mono } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { EDITABLE, useDecide, useProposal, useProposals } from '@/hooks/useProposals'
+import {
+  EDITABLE,
+  RUNNING,
+  useDecide,
+  useProposal,
+  useProposals,
+  useRequestRollback,
+} from '@/hooks/useProposals'
 import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { EditProposalDialog } from './EditProposalDialog'
@@ -65,7 +72,14 @@ export function ProposalCard({
   if (!p) return null
   return (
     <div className="space-y-3">
-      <ProposalBody proposal={p} onFollowup={onFollowup} revised={revisions.length > 0} />
+      <ProposalBody
+        proposal={p}
+        onFollowup={onFollowup}
+        revised={revisions.length > 0}
+        rollbackActive={rollbacks.some(
+          (r) => r.status === 'PENDING_APPROVAL' || RUNNING.includes(r.status),
+        )}
+      />
       {rollbacks.map((r) => (
         <div key={r.id} className="border-l-2 border-warning-border pl-3">
           <ProposalBody proposal={r} onFollowup={onFollowup} />
@@ -84,17 +98,22 @@ function ProposalBody({
   proposal: p,
   onFollowup,
   revised = false,
+  rollbackActive = false,
 }: {
   proposal: Proposal
   onFollowup?: (question: string) => void
   /** Already edited into a newer proposal: edit that one instead */
   revised?: boolean
+  /** A rollback of this proposal is waiting or running */
+  rollbackActive?: boolean
 }) {
   const t = S.remediation
   const decide = useDecide()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const requestRollback = useRequestRollback()
   const editable = p.kind === 'fix' && EDITABLE.includes(p.status) && !revised
+  const undoable = p.kind === 'fix' && p.status === 'SUCCEEDED' && !rollbackActive
   const [feedback, setFeedback] = useState('')
   const pending = p.status === 'PENDING_APPROVAL'
 
@@ -140,6 +159,23 @@ function ProposalBody({
             <Pencil />
             {t.edit}
           </Button>
+        </footer>
+      )}
+      {undoable && (
+        <footer className="flex flex-wrap items-center gap-2 border-t bg-muted/40 px-3 py-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => requestRollback.mutate(p.id)}
+            disabled={requestRollback.isPending}
+            aria-describedby={`undo-hint-${p.id}`}
+          >
+            <Undo2 />
+            {t.requestRollback}
+          </Button>
+          <span id={`undo-hint-${p.id}`} className="text-xs text-muted-foreground">
+            {t.requestRollbackHint}
+          </span>
         </footer>
       )}
       {pending && (

@@ -371,6 +371,9 @@ export const S = {
     editSubmitting: 'Checking…',
     editUnavailable: 'The parameters of this action cannot be edited here.',
     revised: 'Revised',
+    requestRollback: 'Undo change',
+    requestRollbackHint:
+      'Proposes a rollback to the state before this change. It runs only after you approve it.',
     fieldRequired: 'Required',
     fieldPattern: 'Invalid format',
     fieldInteger: (min?: number, max?: number) =>

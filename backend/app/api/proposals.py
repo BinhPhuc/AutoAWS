@@ -100,6 +100,21 @@ def revise_proposal(
     return ok(ProposalOut.from_model(store.get_proposal(new_id)), "Proposal revised", 201)
 
 
+@router.post("/proposals/{proposal_id}/rollback")
+def rollback_proposal(
+    proposal_id: str,
+    store: Store = Depends(get_store),
+    user: User = Depends(current_user),
+):
+    """Undo an applied fix: a rollback proposal to approve (docs/API_CONTRACT.md §7)."""
+    _get(store, proposal_id, user)  # someone else's: 404
+    try:
+        new_id = dispatch.rollback_proposal(proposal_id, by=user.id)
+    except dispatch.DispatchError as e:
+        raise AppError("INTERNAL", 500, "Could not propose the rollback") from e
+    return ok(ProposalOut.from_model(store.get_proposal(new_id)), "Rollback proposed", 201)
+
+
 @router.get("/remediation/actions")
 def list_actions():
     return ok(

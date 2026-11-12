@@ -215,6 +215,8 @@ def test_other_users_see_nothing_and_cannot_touch_it(client, owned_by_a):
     assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
     r = client.post(f"/api/proposals/{prop}/revise", headers=h, json={"params": {}})
     assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
+    r = client.post(f"/api/proposals/{prop}/rollback", headers=h)
+    assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
     r = client.patch(f"/api/connections/{conn}", headers=h, json={"name": "mine now"})
     assert r.json()["error"] == "CONNECTION_NOT_FOUND"
     # and nothing of A's changed
