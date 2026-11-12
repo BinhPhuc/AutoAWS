@@ -19,6 +19,8 @@ infra/eval/run_eval.py reads (--answers infra/aws-scenarios/answers.aws.json).
 """
 
 import argparse
+import contextlib
+import fcntl
 import json
 import re
 import sys
@@ -99,18 +101,28 @@ def _expect(kb: str, out: dict, extra: dict) -> list:
     }[kb]
 
 
+@contextlib.contextmanager
+def _answers():
+    """Read-modify-write of answers.aws.json under a lock: several scenarios may run
+    `up` / `down` at the same time, and each must keep the others' entries."""
+    with open(ANSWERS.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        answers = json.loads(ANSWERS.read_text()) if ANSWERS.exists() else {}
+        yield answers
+        ANSWERS.write_text(json.dumps(answers, indent=2, ensure_ascii=False))
+
+
 def write_answer(ctx: Ctx, kb: str, **extra) -> None:
-    answers = json.loads(ANSWERS.read_text()) if ANSWERS.exists() else {}
     out = ctx.outputs(kb)
-    previous = answers.get(kb, {})
-    extra = {**{k: v for k, v in previous.items() if k == "stale_ip"}, **extra}
-    answers[kb] = {
-        **out,
-        **extra,
-        "ask": ASK[kb].format(record=out.get("RecordName", "app.example.com")),
-        "expect": _expect(kb, out, extra),
-    }
-    ANSWERS.write_text(json.dumps(answers, indent=2, ensure_ascii=False))
+    with _answers() as answers:
+        previous = answers.get(kb, {})
+        extra = {**{k: v for k, v in previous.items() if k == "stale_ip"}, **extra}
+        answers[kb] = {
+            **out,
+            **extra,
+            "ask": ASK[kb].format(record=out.get("RecordName", "app.example.com")),
+            "expect": _expect(kb, out, extra),
+        }
 
 
 # ---- stack lifecycle ---------------------------------------------------------------------
@@ -186,10 +198,8 @@ def down(ctx: Ctx, kb: str) -> None:
     ctx.cfn.get_waiter("stack_delete_complete").wait(
         StackName=ctx.stack(kb), WaiterConfig={"Delay": 15, "MaxAttempts": 80}
     )
-    if ANSWERS.exists():
-        answers = json.loads(ANSWERS.read_text())
+    with _answers() as answers:
         answers.pop(kb, None)
-        ANSWERS.write_text(json.dumps(answers, indent=2, ensure_ascii=False))
     print(f"{kb}: deleted")
 
 
