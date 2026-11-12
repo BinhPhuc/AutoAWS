@@ -125,7 +125,9 @@ class AgentStack(Stack):
             role=agent_role,
             memory_size=1024,
             timeout=Duration.minutes(5),  # a turn is capped at MAX_AGENT_SECONDS=240
-            reserved_concurrent_executions=cfg.agent_concurrency,
+            # 0 = no reservation. New accounts often have a total of 5–10 concurrent executions
+            # and Lambda must keep 10 unreserved, so any reservation fails there.
+            reserved_concurrent_executions=cfg.agent_concurrency or None,
             tracing=lambda_.Tracing.ACTIVE,
             log_group=log_group(self, "AgentWorkerLogs"),
             environment={

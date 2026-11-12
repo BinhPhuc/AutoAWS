@@ -247,16 +247,20 @@ Ghi vào `cdk.json` thay vì truyền `-c` mỗi lần: một lần `deploy` qu�
 
 #### 2. Build mã nguồn
 
+Chạy **từng lệnh một**, và tắt bớt thứ nặng đang chạy (container Docker, LocalStack…) trước khi build.
 ```bash
 cd infra/cdk
 python3 -m venv .venv && .venv/bin/pip install "aws-cdk-lib>=2.200,<3" "constructs>=10" pytest
-./build_lambda.sh                                  # backend/app + thư viện → build/lambda (cần mạng)
+./build_lambda.sh             # backend/app + thư viện → build/lambda (cần mạng)
+                              # lần đầu cài hàng nghìn file thư viện; các lần sau chỉ chép lại app/
 
 cd ../../frontend && pnpm install
-VITE_USE_MOCK=false VITE_API_URL= pnpm build       # → frontend/dist; KHÔNG để mock lọt vào bản build
+VITE_USE_MOCK=false VITE_API_URL= NODE_OPTIONS=--max-old-space-size=1024 nice -n 19 pnpm build
 cd ../infra/cdk
 ```
-`frontend/dist` phải có **trước** khi deploy, nếu không stack Frontend chỉ dựng CloudFront mà không có giao diện. `VITE_API_URL` để trống: giao diện gọi `/api` cùng domain CloudFront.
+- `build_lambda.sh` chạy pip ở độ ưu tiên thấp (`nice`/`ionice`), không biên dịch `.pyc`, và chỉ cài lại thư viện khi danh sách thư viện của backend đổi; `./build_lambda.sh --clean` để cài lại từ đầu.
+- Máy yếu: giới hạn RAM cho lệnh build, vượt thì chỉ lệnh đó bị dừng chứ máy không treo: `systemd-run --user --scope -p MemoryMax=2G ./build_lambda.sh`.
+- `frontend/dist` phải có **trước** khi deploy, nếu không stack Frontend chỉ dựng CloudFront mà không có giao diện. `VITE_API_URL` để trống: giao diện gọi `/api` cùng domain CloudFront; `VITE_USE_MOCK=false` để dữ liệu giả không lọt vào bản build.
 
 #### 3. Bootstrap và deploy
 
@@ -309,7 +313,7 @@ npx aws-cdk@2 destroy --all
 
 #### Chi phí
 
-Budget cảnh báo ở `budgetUsd` (mặc định 20 USD/tháng, gửi `alarmEmail`). Ở quy mô bài tập lớn, gần như mọi thứ nằm trong free tier: Lambda, API Gateway, DynamoDB on-demand, Step Functions, SNS email, Cognito Lite. Phần trả phí đáng kể duy nhất là **token LLM**: một câu hỏi thường gồm 4–8 vòng gọi model, mỗi vòng gửi lại prompt, bộ công cụ và hội thoại, tổng khoảng 150–300 nghìn token đầu vào (đo khi chạy qua gateway; chưa đo trên Bedrock). Giảm bằng `llmEffort` (`medium`) hoặc giới hạn `agentConcurrency`. Tài khoản nền tảng không có NAT Gateway, Route 53 hay EC2. Các kịch bản trong `infra/aws-scenarios/` tạo EC2 / ALB / NAT ở **tài khoản test**: nhớ xoá sau khi thử.
+Budget cảnh báo ở `budgetUsd` (mặc định 20 USD/tháng, gửi `alarmEmail`). Ở quy mô bài tập lớn, gần như mọi thứ nằm trong free tier: Lambda, API Gateway, DynamoDB on-demand, Step Functions, SNS email, Cognito Lite. Phần trả phí đáng kể duy nhất là **token LLM**: một câu hỏi thường gồm 4–8 vòng gọi model, mỗi vòng gửi lại prompt, bộ công cụ và hội thoại, tổng khoảng 150–300 nghìn token đầu vào (đo khi chạy qua gateway; chưa đo trên Bedrock). Giảm bằng `llmEffort` (`medium`), hoặc đặt `agentConcurrency` (số lượt chẩn đoán chạy song song tối đa) khi tài khoản đã được nâng hạn mức Lambda. Tài khoản nền tảng không có NAT Gateway, Route 53 hay EC2. Các kịch bản trong `infra/aws-scenarios/` tạo EC2 / ALB / NAT ở **tài khoản test**: nhớ xoá sau khi thử.
 
 #### Lỗi hay gặp
 
@@ -317,6 +321,7 @@ Budget cảnh báo ở `budgetUsd` (mặc định 20 USD/tháng, gửi `alarmEma
 |---|---|
 | `Lambda asset … not found: run infra/cdk/build_lambda.sh first` | Chưa build Lambda → chạy `./build_lambda.sh` |
 | `Set the target Region` | Thiếu `AWS_REGION`, hoặc profile không có region |
+| `…decreases account's UnreservedConcurrentExecution below its minimum value of [10]` | Tài khoản mới chỉ có 5–10 suất Lambda đồng thời (`aws lambda get-account-settings`) → để `"agentConcurrency": 0`, hoặc xin tăng quota *Concurrent executions* trong Service Quotas |
 | `Domain already exists` khi tạo `AutoAws-dev-Auth` | Tiền tố domain Cognito đã có người dùng → đặt `authDomainPrefix` khác |
 | Trang Cognito báo `redirect_mismatch` | Mở web bằng địa chỉ khác `Frontend.Url` (ví dụ URL API Gateway), hoặc đã điền `frontendUrl` nhưng tên miền đó chưa trỏ vào CloudFront / có `/` cuối → để trống `frontendUrl` và deploy lại |
 | Web hiện dữ liệu giả, không gọi backend | Build với `VITE_USE_MOCK=true` (file `frontend/.env`) → build lại với `VITE_USE_MOCK=false` |

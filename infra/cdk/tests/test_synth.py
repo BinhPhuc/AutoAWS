@@ -21,6 +21,7 @@ def stacks(tmp_path_factory):
         context={
             "lambdaAsset": str(asset),
             "notificationEmail": "team@example.com",
+            "agentConcurrency": 5,
             "frontendUrl": "https://d111.cloudfront.net",
             "alarmEmail": "ops@example.com",
         },
@@ -317,3 +318,10 @@ def test_the_api_signs_external_ids_with_a_generated_key(stacks):
     )
     value = json.dumps(fn["Properties"]["Environment"]["Variables"]["EXTERNAL_ID_SECRET"])
     assert "resolve:secretsmanager" in value  # a dynamic reference, not the key itself
+
+
+def test_no_reserved_concurrency_by_default(default_stacks):
+    """New accounts often have only 5–10 concurrent executions in total and Lambda keeps 10
+    unreserved, so reserving any would fail the deploy: off unless agentConcurrency is set."""
+    for fn in default_stacks["agent"].find_resources("AWS::Lambda::Function").values():
+        assert "ReservedConcurrentExecutions" not in fn["Properties"]

@@ -21,7 +21,7 @@ Trình duyệt ─► CloudFront ─┬─► S3 (giao diện React, OAC)
 |---|---|
 | `Data` | Bảng DynamoDB (single-table như `backend/app/storage/dynamo.py`), KMS key xoay vòng, PITR, TTL `ttl` |
 | `Auth` | Cognito User Pool (gói **Lite**, email đăng nhập, tự đăng ký `selfSignUp`, MFA TOTP tuỳ chọn), domain Hosted UI (`autodiag-<env>-<account>`, đổi bằng `authDomainPrefix` — tiền tố không được chứa `aws` / `amazon` / `cognito`), app client public (code + PKCE, không secret) |
-| `Agent` | Lambda `agent-worker` (role `autoaws-agent-worker`: AssumeRole chỉ `AutoAWSReadOnly`, `bedrock-mantle:CreateInference` giới hạn model, reserved concurrency 5, async retry 0), Lambda `action-executor` (role `autoaws-action-executor`: AssumeRole `AutoAWSRemediation` + `AutoAWSReadOnly`, Deny Bedrock) |
+| `Agent` | Lambda `agent-worker` (role `autoaws-agent-worker`: AssumeRole chỉ `AutoAWSReadOnly`, `bedrock-mantle:CreateInference` giới hạn model, reserved concurrency tuỳ chọn (`agentConcurrency`, mặc định 0 = không giữ riêng), async retry 0), Lambda `action-executor` (role `autoaws-action-executor`: AssumeRole `AutoAWSRemediation` + `AutoAWSReadOnly`, Deny Bedrock) |
 | `Workflow` | State machine `autoaws-remediation-flow` (Standard), SNS topic + email |
 | `Api` | HTTP API (throttle 20 rps / burst 40) → Lambda `api-handler` (Deny `sts:AssumeRole`: không chạm tài khoản khách) |
 | `Frontend` | S3 riêng tư + CloudFront (OAC, SPA fallback bằng CloudFront Function chỉ cho phần giao diện — lỗi 403/404 của API giữ nguyên, `/api/*` → HTTP API cùng origin) |
@@ -52,7 +52,7 @@ Trước khi chạy thật:
 - **Bedrock**: bật quyền dùng model Claude trong region (biểu mẫu Anthropic lần đầu); model mặc định `anthropic.claude-opus-5-5`, dự phòng khi bị từ chối `anthropic.claude-opus-4-8` (`-c bedrockModelId=… -c bedrockFallbackModel=…`).
 - **Template của khách**: api-handler sinh template với trust chỉ tới `autoaws-agent-worker` / `autoaws-action-executor` của tài khoản này (`PLATFORM_*_ROLE_ARN`).
 - **SNS**: người nhận phải bấm xác nhận email đăng ký.
-- Context khác (`cdk.json`): `envName` (dev / demo), `agentConcurrency`, `budgetUsd`, `llmEffort`, `destroyData` (dev mặc định xoá bảng khi xoá stack).
+- Context khác (`cdk.json`): `envName` (dev / demo), `agentConcurrency` (số suất Lambda giữ riêng cho agent-worker để chặn chi phí; để 0 nếu tài khoản mới chỉ có 5–10 suất đồng thời, vì Lambda luôn phải chừa 10 suất không giữ riêng), `budgetUsd`, `llmEffort`, `destroyData` (dev mặc định xoá bảng khi xoá stack).
 
 ## Kiểm tra trên máy (không cần AWS)
 
