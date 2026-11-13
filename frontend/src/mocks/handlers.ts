@@ -5,6 +5,8 @@ import type {
   CloudFormationInfo,
   Connection,
   ConnectionPatch,
+  LlmConfig,
+  LlmConfigInput,
   Conversation,
   CreateConnectionInput,
   CreateConversationInput,
@@ -54,7 +56,9 @@ export const handlers = [
   http.get('/api/auth/config', () =>
     ok({ mode: 'none', domain: null, client_id: null, scopes: [] }),
   ),
-  http.get('/api/me', () => ok({ user_id: 'local', username: 'local', auth_mode: 'none' })),
+  http.get('/api/me', () =>
+    ok({ user_id: 'local', username: 'local', auth_mode: 'none', is_admin: true }),
+  ),
 
   // ---------- connections ----------
   http.get('/api/connections/setup', () =>
@@ -470,6 +474,74 @@ export const handlers = [
 
   http.get('/api/remediation/actions', async () => ok(remediationActions)),
 
+  // ---------- admin: LLM settings (keys are never returned) ----------
+  http.get('/api/admin/llm', () => ok(llm)),
+  http.put('/api/admin/llm', async ({ request }) => {
+    const body = (await request.json()) as LlmConfigInput
+    const at = now()
+    const hint = (v: string) => (v.length >= 12 ? `…${v.slice(-4)}` : '…')
+    const apply = (
+      cur: LlmConfig['bedrock']['secrets']['api_key'],
+      v: string | null | undefined,
+    ) =>
+      v === undefined
+        ? cur
+        : v === null
+          ? { set: false, hint: null, updated_at: null }
+          : { set: true, hint: hint(v), updated_at: at }
+    const sec = body.secrets
+    llm = {
+      ...llm,
+      provider: body.provider,
+      source: 'admin',
+      updated_at: at,
+      updated_by: 'local',
+      bedrock: {
+        ...body.bedrock,
+        access_key_id: body.bedrock.access_key_id.includes('****')
+          ? llm.bedrock.access_key_id
+          : body.bedrock.access_key_id.replace(/^(.{4}).*(.{4})$/, '$1****$2'),
+        secrets: {
+          api_key: apply(llm.bedrock.secrets.api_key, sec['bedrock.api_key']),
+          secret_access_key: apply(
+            llm.bedrock.secrets.secret_access_key,
+            sec['bedrock.secret_access_key'],
+          ),
+        },
+      },
+      anthropic: {
+        ...body.anthropic,
+        secrets: { api_key: apply(llm.anthropic.secrets.api_key, sec['anthropic.api_key']) },
+      },
+      openai: {
+        ...body.openai,
+        secrets: { api_key: apply(llm.openai.secrets.api_key, sec['openai.api_key']) },
+      },
+    }
+    return ok(llm, 'LLM settings saved')
+  }),
+  http.delete('/api/admin/llm', () => {
+    llm = structuredClone(LLM_ENV)
+    return ok(llm, 'LLM settings reset')
+  }),
+  http.post('/api/admin/llm/test', async () => {
+    await delay(500)
+    const model = {
+      bedrock: llm.bedrock.model,
+      anthropic: llm.anthropic.model,
+      openai: llm.openai.model,
+      mock: '',
+    }[llm.provider]
+    return ok({
+      ok: true,
+      provider: llm.provider,
+      model,
+      latency_ms: 480,
+      reply: 'OK',
+      error: null,
+    })
+  }),
+
   // ---------- tools ----------
   http.get('/api/tools', async () => {
     await delay(100)
@@ -568,6 +640,29 @@ function withMockProposals(answer: DiagnosisAnswer, conversationId: string, mess
     ],
   }
 }
+
+const NO_KEY = { set: false, hint: null, updated_at: null }
+/** The environment's LLM settings (what DELETE /api/admin/llm goes back to). */
+const LLM_ENV: LlmConfig = {
+  provider: 'mock',
+  source: 'env',
+  storage: 'file',
+  updated_at: null,
+  updated_by: null,
+  bedrock: {
+    model: 'anthropic.claude-opus-5-5',
+    fallback_model: 'anthropic.claude-opus-4-8',
+    region: 'ap-southeast-2',
+    auth: 'iam',
+    access_key_id: '',
+    role_arn: '',
+    external_id: '',
+    secrets: { api_key: NO_KEY, secret_access_key: NO_KEY },
+  },
+  anthropic: { model: 'claude-opus-5-5', base_url: '', secrets: { api_key: NO_KEY } },
+  openai: { model: '', base_url: 'http://localhost:11434/v1', secrets: { api_key: NO_KEY } },
+}
+let llm: LlmConfig = structuredClone(LLM_ENV)
 
 /** Two catalogue actions with the server's input schemas (backend catalog.py). */
 const remediationActions = [

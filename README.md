@@ -259,7 +259,8 @@ VITE_USE_MOCK=false VITE_API_URL= NODE_OPTIONS=--max-old-space-size=1024 nice -n
 cd ../infra/cdk
 ```
 - `build_lambda.sh` chạy pip ở độ ưu tiên thấp (`nice`/`ionice`), không biên dịch `.pyc`, và chỉ cài lại thư viện khi danh sách thư viện của backend đổi; `./build_lambda.sh --clean` để cài lại từ đầu.
-- Máy yếu: giới hạn RAM cho lệnh build, vượt thì chỉ lệnh đó bị dừng chứ máy không treo: `systemd-run --user --scope -p MemoryMax=2G ./build_lambda.sh`.
+- Máy yếu: giới hạn RAM cho lệnh build, vượt thì chỉ lệnh đó bị dừng chứ máy không treo: `systemd-run --user --scope -p MemoryMax=2G -p MemorySwapMax=0 ./build_lambda.sh`. Cần `MemorySwapMax=0` vì với swap kiểu zram (Fedora) phần bị đẩy ra swap vẫn nằm trong RAM.
+- **Đừng để editor theo dõi `infra/cdk/build/` và `infra/cdk/cdk.out/`** (mỗi lần build / synth ghi hàng chục nghìn file). Máy dev từng hết RAM vì hơn 1.400 tiến trình `rg` do editor / extension mở ra để quét lại hai thư mục này, không phải vì bản thân lệnh build. Thêm chúng vào `files.watcherExclude` và `search.exclude` của VS Code / VSCodium (`.vscode/settings.json`). Xoá asset cũ: `rm -rf infra/cdk/cdk.out` (mỗi lần synth thêm một bản ~130 MB).
 - `frontend/dist` phải có **trước** khi deploy, nếu không stack Frontend chỉ dựng CloudFront mà không có giao diện. `VITE_API_URL` để trống: giao diện gọi `/api` cùng domain CloudFront; `VITE_USE_MOCK=false` để dữ liệu giả không lọt vào bản build.
 
 #### 3. Bootstrap và deploy

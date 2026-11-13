@@ -7,7 +7,9 @@
 #
 # Kept light on the machine: low CPU/IO priority, no .pyc compilation (Lambda does not need
 # it), and the thousands of dependency files are written once, not on every build. To cap
-# memory as well: systemd-run --user --scope -p MemoryMax=2G ./build_lambda.sh
+# memory as well: systemd-run --user --scope -p MemoryMax=2G -p MemorySwapMax=0 ./build_lambda.sh
+# (MemorySwapMax=0: with zram swap, as on Fedora, the swapped pages still live in RAM).
+# The editor must not watch build/ and cdk.out/ (tens of thousands of files): see README.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."

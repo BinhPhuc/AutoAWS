@@ -20,6 +20,8 @@ class Config:
     table_name: str
     bedrock_model_id: str
     bedrock_fallback_model: str
+    # Bedrock auth = assume_role (admin page): the ONE role agent-worker may assume for it
+    bedrock_role_arn: str
     llm_effort: str
     notification_email: str  # proposals waiting / results (SNS email)
     alarm_email: str  # operational alarms and the budget
@@ -43,6 +45,7 @@ class Config:
             table_name=ctx("tableName", f"autoaws-{env_name}"),
             bedrock_model_id=ctx("bedrockModelId", "anthropic.claude-opus-5-5"),
             bedrock_fallback_model=ctx("bedrockFallbackModel", "anthropic.claude-opus-4-8"),
+            bedrock_role_arn=ctx("bedrockRoleArn", ""),
             llm_effort=ctx("llmEffort", "high"),
             notification_email=ctx("notificationEmail", ""),
             alarm_email=ctx("alarmEmail", ctx("notificationEmail", "")),

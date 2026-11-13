@@ -28,4 +28,11 @@ def auth_config():
 
 @router.get("/me")
 def me(user: User = Depends(current_user)):
-    return ok(MeOut(user_id=user.id, username=user.username, auth_mode=get_settings().auth_mode))
+    return ok(
+        MeOut(
+            user_id=user.id,
+            username=user.username,
+            auth_mode=get_settings().auth_mode,
+            is_admin=user.is_admin,
+        )
+    )

@@ -22,9 +22,11 @@ from app.storage.models import LOCAL_USER_ID
 class User:
     id: str
     username: str
+    # Member of the Cognito admin group (ADMIN_GROUP); the local dev user always is
+    is_admin: bool = False
 
 
-LOCAL_USER = User(id=LOCAL_USER_ID, username=LOCAL_USER_ID)
+LOCAL_USER = User(id=LOCAL_USER_ID, username=LOCAL_USER_ID, is_admin=True)
 
 
 class Unauthorized(AppError):
@@ -99,4 +101,25 @@ def _user_from_claims(claims: dict, settings: Settings) -> User:
     ):
         raise Unauthorized()
     sub = str(claims["sub"])
-    return User(id=sub, username=str(claims.get("username") or sub))
+    return User(
+        id=sub,
+        username=str(claims.get("username") or sub),
+        is_admin=settings.admin_group in _groups(claims),
+    )
+
+
+def _groups(claims: dict) -> set[str]:
+    """``cognito:groups``: a list in a verified token; behind the API Gateway authorizer
+    array claims arrive as one string, e.g. ``"[admin users]"``."""
+    raw = claims.get("cognito:groups") or []
+    if isinstance(raw, str):
+        raw = raw.strip("[]").replace(",", " ").split()
+    return {str(g) for g in raw}
+
+
+def require_admin(request: Request) -> User:
+    """FastAPI dependency: an admin, else 403 (docs/API_CONTRACT.md §10)."""
+    user = current_user(request)
+    if not user.is_admin:
+        raise AppError("FORBIDDEN", 403, "Admin only")
+    return user
