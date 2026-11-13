@@ -58,6 +58,7 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `NOT_FOUND` | 404 | `"Not Found"` | Route không tồn tại |
 | `METHOD_NOT_ALLOWED` | 405 | `"Method Not Allowed"` | Sai HTTP method |
 | `NOT_IMPLEMENTED` | 501 | `"Checklist runs are not available yet"` | Tính năng chưa có (checklist) |
+| `FORBIDDEN` | 403 | `"Admin only"` | Gọi `/api/admin/*` khi không phải admin (mục 10) |
 | `INTERNAL` | 500 | `"Internal server error"` | Lỗi không lường trước |
 
 Không còn endpoint SSE: lỗi xảy ra **trong lúc** agent chạy nằm trong `events` của job (mục 8), event `error`.
@@ -87,8 +88,10 @@ FE dùng để dựng URL `/oauth2/authorize`, đổi code ở `/oauth2/token`, 
 ### `GET /api/me`
 ```json
 200 { "status_code": 200, "message": "OK",
-      "data": { "user_id": "local" | "<cognito sub>", "username": "local" | "<cognito username>", "auth_mode": "none" | "cognito" } }
+      "data": { "user_id": "local" | "<cognito sub>", "username": "local" | "<cognito username>", "auth_mode": "none" | "cognito",
+                "is_admin": true | false } }
 ```
+`is_admin`: `AUTH_MODE=none` → luôn `true` (người dùng `local`); `AUTH_MODE=cognito` → người dùng thuộc group Cognito `admin` (claim `cognito:groups` của access token). Mục 10.
 
 ---
 
@@ -515,6 +518,75 @@ Yêu cầu dừng: agent-worker kiểm tra cờ giữa các bước và kết th
 - `POST /api/connections/{id}/verify` chạy trong agent-worker (gọi đồng bộ): api-handler không có quyền vào tài khoản người dùng.
 - Đăng nhập: stack `Auth` (Cognito User Pool, Hosted UI, app client public + PKCE). HTTP API gắn JWT authorizer cho mọi route trừ
   `GET /api/health` và `GET /api/auth/config`. Callback / logout URL của app client = URL CloudFront (hoặc `frontendUrl` khi gắn tên miền riêng) + `http://localhost:5173` (chỉ `envName=dev`); một lần `cdk deploy` là đủ.
+
+---
+
+## 10. Admin — cấu hình LLM
+
+Chỉ admin (`is_admin`, mục 0.1). Người khác → `403 FORBIDDEN`. Cấu hình ở đây **ghi đè** biến môi trường `LLM_PROVIDER` / `BEDROCK_*` / `ANTHROPIC_*` / `OPENAI_*`; chưa lưu gì thì dùng env (`source: "env"`). Mọi backend đọc lại sau tối đa 30 giây.
+
+**Lưu ở đâu:** một tài liệu cấu hình (kể cả key) — `LLM_CONFIG_BACKEND=secretsmanager` (bản AWS: một secret Secrets Manager, mã hoá KMS, `LLM_CONFIG_SECRET_ID`) hoặc `file` (local: file mã hoá Fernet `LLM_CONFIG_FILE`, khoá `LLM_CONFIG_KEY`, mặc định dẫn xuất từ `EXTERNAL_ID_SECRET`). **Key không bao giờ được trả về**: response chỉ có `set`, 4 ký tự cuối (`hint`) và thời điểm đổi.
+
+### Schema `LlmConfig`
+```json
+{
+  "provider": "bedrock" | "anthropic" | "openai" | "mock",
+  "source": "admin" | "env",
+  "storage": "secretsmanager" | "file",
+  "updated_at": "2026-11-13T10:00:00Z" | null, "updated_by": "user id" | null,
+  "bedrock": {
+    "model": "anthropic.claude-opus-5-5", "fallback_model": "anthropic.claude-opus-4-8" | "",
+    "region": "ap-southeast-2",
+    "auth": "iam" | "api_key" | "access_key" | "assume_role",
+    "access_key_id": "AKIA****MPLE" | "",                       // auth = access_key (che bớt)
+    "role_arn": "arn:aws:iam::487450071041:role/AutoAWSBedrockInvoke" | "",  // auth = assume_role
+    "external_id": "…" | "",
+    "secrets": { "api_key": Secret, "secret_access_key": Secret }
+  },
+  "anthropic": { "model": "claude-opus-5-5", "base_url": "" | "https://gateway…", "secrets": { "api_key": Secret } },
+  "openai":    { "model": "qwen2.5:latest", "base_url": "http://localhost:11434/v1", "secrets": { "api_key": Secret } }
+}
+// Secret = { "set": true, "hint": "…abcd", "updated_at": "…" } | { "set": false, "hint": null, "updated_at": null }
+```
+Cách xác thực Bedrock:
+- `iam`: role / credentials của chính nền tảng (role Lambda, profile `PLATFORM_AWS_PROFILE`) — không cần key, khuyên dùng.
+- `api_key`: Bedrock API key (`secrets.api_key`, gửi `Authorization: Bearer`).
+- `access_key`: access key của một IAM user có quyền Bedrock (`access_key_id` + `secrets.secret_access_key`).
+- `assume_role`: assume một role (thường ở tài khoản khác có Bedrock) bằng credentials của nền tảng — `role_arn`, tuỳ chọn `external_id`. Trên bản CDK, agent-worker chỉ được assume đúng role khai trong context `bedrockRoleArn` (mặc định không có), để nó vẫn không assume được role nào khác của người dùng.
+
+`anthropic`: `base_url` trống = Claude API (`api_key` là `x-api-key`); có `base_url` = gateway định dạng Anthropic (key gửi `Authorization: Bearer`, chế độ tương thích). `openai`: Chat Completions tương thích OpenAI (Ollama, …), `api_key` tuỳ chọn.
+
+### `GET /api/admin/llm`
+```json
+200 { "status_code": 200, "message": "OK", "data": LlmConfig }
+```
+
+### `PUT /api/admin/llm`
+Lưu cấu hình (cả tài liệu, trừ key). Key gửi trong `secrets`: chuỗi = đặt / thay, `null` = xoá, không gửi = giữ nguyên.
+```json
+{
+  "provider": "bedrock",
+  "bedrock": { "model": "…", "fallback_model": "", "region": "ap-southeast-2", "auth": "api_key", "access_key_id": "", "role_arn": "", "external_id": "" },
+  "anthropic": { "model": "…", "base_url": "" },
+  "openai": { "model": "…", "base_url": "…" },
+  "secrets": { "bedrock.api_key": "ABSK…", "anthropic.api_key": null }
+}
+200 { "status_code": 200, "message": "LLM settings saved", "data": LlmConfig }
+```
+- Khoá trong `secrets`: `bedrock.api_key`, `bedrock.secret_access_key`, `anthropic.api_key`, `openai.api_key`.
+- Kiểm tra: provider được chọn phải đủ thông tin (model; Bedrock: region + thông tin của `auth`; `access_key_id` dạng `AKIA…`/`ASIA…`; `role_arn` dạng ARN role; `base_url` http(s)) → không thì `422 VALIDATION_ERROR`.
+- Gửi `access_key_id` đã che (`AKIA****…`) = giữ nguyên giá trị đang lưu.
+
+### `DELETE /api/admin/llm`
+Xoá cấu hình admin (kể cả key), quay về biến môi trường. `200 "LLM settings reset"`, `data: LlmConfig` (`source: "env"`).
+
+### `POST /api/admin/llm/test`
+Gửi một câu ngắn tới provider đang dùng (cấu hình đã lưu), không có tool, không đụng AWS của người dùng.
+```json
+200 { "status_code": 200, "message": "OK",
+      "data": { "ok": true | false, "provider": "bedrock", "model": "…", "latency_ms": 840, "reply": "OK" | null, "error": null | "bedrock: no access to model …" } }
+```
+Trên AWS (`RUNTIME=lambda`) chạy trong agent-worker (chỉ nó có quyền gọi LLM).
 
 ---
 

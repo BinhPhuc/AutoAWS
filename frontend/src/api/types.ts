@@ -59,6 +59,61 @@ export interface Me {
   user_id: string
   username: string
   auth_mode: 'none' | 'cognito'
+  /** Local dev user, or a member of the Cognito `admin` group (§10). */
+  is_admin: boolean
+}
+
+// ---------- Admin: LLM settings (§10) ----------
+export type LlmProviderName = 'bedrock' | 'anthropic' | 'openai' | 'mock'
+export type BedrockAuth = 'iam' | 'api_key' | 'access_key' | 'assume_role'
+
+/** A provider key as the API shows it: never the value. */
+export interface LlmSecret {
+  set: boolean
+  hint: string | null
+  updated_at: string | null
+}
+
+export interface LlmConfig {
+  provider: LlmProviderName
+  source: 'admin' | 'env'
+  storage: 'secretsmanager' | 'file'
+  updated_at: string | null
+  updated_by: string | null
+  bedrock: {
+    model: string
+    fallback_model: string
+    region: string
+    auth: BedrockAuth
+    /** Masked (AKIA****MPLE); sending it back unchanged keeps the stored id. */
+    access_key_id: string
+    role_arn: string
+    external_id: string
+    secrets: { api_key: LlmSecret; secret_access_key: LlmSecret }
+  }
+  anthropic: { model: string; base_url: string; secrets: { api_key: LlmSecret } }
+  openai: { model: string; base_url: string; secrets: { api_key: LlmSecret } }
+}
+
+export type LlmSecretKey =
+  'bedrock.api_key' | 'bedrock.secret_access_key' | 'anthropic.api_key' | 'openai.api_key'
+
+export interface LlmConfigInput {
+  provider: LlmProviderName
+  bedrock: Omit<LlmConfig['bedrock'], 'secrets'>
+  anthropic: { model: string; base_url: string }
+  openai: { model: string; base_url: string }
+  /** string = set / replace, null = remove; absent = keep */
+  secrets: Partial<Record<LlmSecretKey, string | null>>
+}
+
+export interface LlmTestResult {
+  ok: boolean
+  provider: string
+  model: string
+  latency_ms: number | null
+  reply: string | null
+  error: string | null
 }
 
 // ---------- Connections ----------

@@ -8,6 +8,7 @@ Modes (event["mode"]):
   expire            {"proposal_id"}   remediation-flow: the approval wait timed out
   revise            {"proposal_id", "params", "by"}  user-edited parameters -> new proposal
   rollback          {"proposal_id", "by"}  the user asks to undo an applied fix
+  llm_test          {}                one short request to the saved LLM (admin page)
                                     (both: sync invoke from api-handler; errors come back as data)
 """
 
@@ -36,6 +37,12 @@ def handler(event: dict, context=None) -> dict:
             return service.verify_step(store, event["proposal_id"])
         if mode == "expire":
             return service.expire_step(store, event["proposal_id"])
+        if mode == "llm_test":
+            from app.llm.check import test_llm  # noqa: PLC0415
+            from app.llm.config_store import effective_settings, forget_cache  # noqa: PLC0415
+
+            forget_cache()  # the admin just saved: read the latest settings
+            return asyncio.run(test_llm(effective_settings()))
         if mode in ("revise", "rollback"):
             try:
                 if mode == "revise":

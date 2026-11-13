@@ -47,11 +47,30 @@ class Settings(BaseSettings):
     bedrock_region: str = ""
     # Retry a refused request on this model (client-side middleware); empty = off
     bedrock_fallback_model: str = "anthropic.claude-opus-4-8"
+    # How AutoAWS signs Bedrock calls: iam = the platform's own role / profile (default);
+    # api_key = a Bedrock API key; access_key = an IAM user's key pair; assume_role = a role
+    # (often in another account that has Bedrock) assumed with the platform's credentials
+    bedrock_auth: Literal["iam", "api_key", "access_key", "assume_role"] = "iam"
+    bedrock_api_key: SecretStr = SecretStr("")
+    bedrock_access_key_id: str = ""
+    bedrock_secret_access_key: SecretStr = SecretStr("")
+    bedrock_role_arn: str = ""
+    bedrock_external_id: str = ""
     # Both Claude providers: thinking depth (low|medium|high|xhigh|max) and output cap
     llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
     llm_max_tokens: int = 16000
     # LLM_PROVIDER=mcp: how long one agent turn waits for an MCP client to answer
     mcp_bridge_timeout_seconds: int = 900
+    # LLM settings an admin saved in the web app (docs/API_CONTRACT.md §10) override the
+    # LLM_* / BEDROCK_* / ANTHROPIC_* / OPENAI_* variables. Where they are kept, keys
+    # included: an encrypted local file (dev) or one Secrets Manager secret (AWS).
+    llm_config_backend: Literal["file", "secretsmanager"] = "file"
+    llm_config_file: str = ".llm-config.enc"
+    llm_config_secret_id: str = ""
+    # Fernet key material for the file backend; empty = derived from EXTERNAL_ID_SECRET
+    llm_config_key: SecretStr = SecretStr("")
+    # Cognito group whose members are admins (AUTH_MODE=none: the local user is admin)
+    admin_group: str = "admin"
 
     platform_aws_account_id: str = ""
     # Region the "Add connection" form preselects (GET /api/connections/setup)

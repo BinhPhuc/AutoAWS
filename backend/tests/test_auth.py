@@ -58,7 +58,7 @@ def cognito(monkeypatch):
 def test_without_sign_in_everyone_is_the_local_user(client):
     assert client.get("/api/auth/config").json()["data"]["mode"] == "none"
     me = client.get("/api/me").json()["data"]
-    assert me == {"user_id": "local", "username": "local", "auth_mode": "none"}
+    assert me == {"user_id": "local", "username": "local", "auth_mode": "none", "is_admin": True}
 
 
 # ---- AUTH_MODE=cognito -------------------------------------------------------------------
@@ -86,7 +86,12 @@ def test_every_other_route_needs_a_token(client, cognito, path):
 
 def test_a_valid_access_token_identifies_the_user(client, cognito):
     me = client.get("/api/me", headers=bearer("user-a")).json()["data"]
-    assert me == {"user_id": "user-a", "username": "user-a", "auth_mode": "cognito"}
+    assert me == {
+        "user_id": "user-a",
+        "username": "user-a",
+        "auth_mode": "cognito",
+        "is_admin": False,
+    }
 
 
 @pytest.mark.parametrize(

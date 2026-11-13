@@ -339,3 +339,30 @@ def test_cache_breakpoints_do_not_change_the_original_request():
         "tools": [],
         "messages": [],
     }
+
+
+async def test_a_gateway_bot_challenge_is_reported_plainly():
+    """A Cloudflare "Just a moment..." page (cloud IPs blocked) is not "no access to model"."""
+    import anthropic
+    import httpx2
+
+    page = "<!DOCTYPE html><html><head><title>Just a moment...</title>" + "x" * 5000
+
+    class Blocked(_FakeClient):
+        def __init__(self):
+            super().__init__(None)
+            request = httpx2.Request("POST", "https://gw.example/v1/messages")
+            response = httpx2.Response(403, request=request)
+
+            class _Messages:
+                def stream(self, **params):
+                    raise anthropic.PermissionDeniedError(page, response=response, body=None)
+
+            self.messages = _Messages()
+
+    provider = ClaudeMessagesProvider(
+        "anthropic", Blocked(), "m", "high", 100, claude_features=False
+    )
+    with pytest.raises(LLMError) as err:
+        await provider.chat([LLMMessage(role="system", content="S")], [])
+    assert "Cloudflare challenge" in str(err.value) and "<html" not in str(err.value)

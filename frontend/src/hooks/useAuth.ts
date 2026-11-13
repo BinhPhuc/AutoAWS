@@ -31,3 +31,13 @@ export function useSession() {
   const signedIn = useSyncExternalStore(subscribe, isSignedIn, () => false)
   return { signedIn, user: signedIn ? currentUser() : null }
 }
+
+/** The caller (GET /api/me): who they are and whether they are an admin. */
+export function useMe() {
+  return useQuery({
+    queryKey: ['me'],
+    queryFn: async () => (await authApi.me()).data,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}

@@ -104,6 +104,31 @@ def rollback_proposal(proposal_id: str, by: str | None) -> str:
     return _new_proposal_in_worker({"mode": "rollback", "proposal_id": proposal_id, "by": by})
 
 
+def test_llm() -> dict:
+    """POST /api/admin/llm/test: one short request to the saved LLM, where LLM calls are
+    allowed (agent-worker on Lambda)."""
+    if not is_lambda():
+        import asyncio  # noqa: PLC0415
+
+        from app.llm.check import test_llm as run  # noqa: PLC0415
+        from app.llm.config_store import effective_settings, forget_cache  # noqa: PLC0415
+
+        forget_cache()
+        return asyncio.run(run(effective_settings()))
+    try:
+        resp = _client("lambda").invoke(
+            FunctionName=get_settings().agent_worker_function,
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"mode": "llm_test"}).encode(),
+        )
+    except (ClientError, BotoCoreError) as e:
+        raise DispatchError(f"Could not reach agent-worker: {e}") from e
+    payload = json.loads(resp["Payload"].read() or b"{}")
+    if resp.get("FunctionError"):
+        raise DispatchError(f"agent-worker failed: {payload.get('errorMessage', 'unknown')}")
+    return payload
+
+
 def _new_proposal_in_worker(event: dict) -> str:
     """Sync agent-worker call that creates a proposal: its id, or the service's AppError."""
     try:

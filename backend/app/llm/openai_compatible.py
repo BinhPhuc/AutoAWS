@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from app.aws.registry import ToolSpec
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMMessage, LLMResponse, ToolCallRequest
 
 
@@ -18,11 +18,17 @@ class OpenAICompatibleProvider:
     name = "openai"
     enforce_time_limit = True
 
-    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
         self._transport = transport
 
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
-        settings = get_settings()
+        settings = self._settings or get_settings()
         if not settings.openai_model.strip():
             raise LLMError("Set OPENAI_MODEL to a model served by your OpenAI-compatible endpoint")
         try:

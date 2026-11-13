@@ -12,14 +12,14 @@ Two uses:
 
 from anthropic import AsyncAnthropic
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.llm.base import LLMError
 from app.llm.claude import ClaudeMessagesProvider
 
 
 class AnthropicProvider(ClaudeMessagesProvider):
-    def __init__(self) -> None:
-        s = get_settings()
+    def __init__(self, settings: Settings | None = None) -> None:
+        s = settings or get_settings()
         if not s.anthropic_model:
             raise LLMError("ANTHROPIC_MODEL is not set")
         gateway = bool(s.anthropic_base_url)

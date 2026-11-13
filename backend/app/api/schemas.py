@@ -315,3 +315,4 @@ class MeOut(BaseModel):
     user_id: str
     username: str
     auth_mode: Literal["none", "cognito"]
+    is_admin: bool = False

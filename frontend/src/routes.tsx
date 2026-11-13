@@ -6,6 +6,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { ChecklistPage } from '@/pages/ChecklistPage'
 import { ConnectPage } from '@/pages/ConnectPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
+import { AdminPage } from '@/pages/AdminPage'
 import { ProposalsPage } from '@/pages/ProposalsPage'
 import { ToolsPage } from '@/pages/ToolsPage'
 
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
       { path: 'proposals', element: <ProposalsPage /> },
       { path: 'tools', element: <ToolsPage /> },
       { path: 'checklist', element: <ChecklistPage /> },
+      { path: 'admin', element: <AdminPage /> },
     ],
   },
 ])

@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { PanelLeftClose, PanelLeftOpen, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingProposals } from '@/hooks/useProposals'
+import { useMe } from '@/hooks/useAuth'
 import { navItems } from '@/lib/nav'
 import { S } from '@/lib/strings'
 
@@ -16,6 +17,7 @@ export function Sidebar({
   onNavigate?: () => void
 }) {
   const pending = usePendingProposals()
+  const me = useMe()
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div
@@ -38,47 +40,49 @@ export function Sidebar({
       </div>
 
       <nav aria-label="Main" className="flex-1 space-y-0.5 overflow-y-auto py-3">
-        {navItems.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            onClick={onNavigate}
-            title={collapsed ? label : undefined}
-            className={({ isActive }) =>
-              cn(
-                'mx-2 flex h-10 items-center gap-3 rounded-sm px-3 text-sm transition-colors',
-                'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                'focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none',
-                collapsed && 'justify-center px-0',
-                isActive &&
-                  'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary',
-              )
-            }
-          >
-            <span className="relative shrink-0">
-              <Icon className="size-4" aria-hidden />
-              {collapsed && to === '/proposals' && pending > 0 && (
-                <span
-                  aria-hidden
-                  className="absolute -top-1 -right-1 size-2 rounded-full bg-warning-border"
-                />
-              )}
-            </span>
-            {collapsed ? <span className="sr-only">{label}</span> : <span>{label}</span>}
-            {to === '/proposals' && pending > 0 && (
-              <span
-                className={cn(
-                  'tabular ml-auto rounded-sm bg-warning-bg px-1.5 text-xs font-semibold text-warning',
-                  collapsed && 'sr-only',
+        {navItems
+          .filter((item) => !item.admin || me.data?.is_admin)
+          .map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              onClick={onNavigate}
+              title={collapsed ? label : undefined}
+              className={({ isActive }) =>
+                cn(
+                  'mx-2 flex h-10 items-center gap-3 rounded-sm px-3 text-sm transition-colors',
+                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                  'focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none',
+                  collapsed && 'justify-center px-0',
+                  isActive &&
+                    'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary',
+                )
+              }
+            >
+              <span className="relative shrink-0">
+                <Icon className="size-4" aria-hidden />
+                {collapsed && to === '/proposals' && pending > 0 && (
+                  <span
+                    aria-hidden
+                    className="absolute -top-1 -right-1 size-2 rounded-full bg-warning-border"
+                  />
                 )}
-              >
-                {pending}
-                <span className="sr-only"> {S.remediation.waiting}</span>
               </span>
-            )}
-          </NavLink>
-        ))}
+              {collapsed ? <span className="sr-only">{label}</span> : <span>{label}</span>}
+              {to === '/proposals' && pending > 0 && (
+                <span
+                  className={cn(
+                    'tabular ml-auto rounded-sm bg-warning-bg px-1.5 text-xs font-semibold text-warning',
+                    collapsed && 'sr-only',
+                  )}
+                >
+                  {pending}
+                  <span className="sr-only"> {S.remediation.waiting}</span>
+                </span>
+              )}
+            </NavLink>
+          ))}
       </nav>
 
       <div className="shrink-0 border-t border-sidebar-border p-2">
