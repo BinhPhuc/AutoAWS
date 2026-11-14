@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from app.aws.registry import list_tools
 from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMMessage
+from app.llm.deepseek import DeepSeekProvider
 from app.llm.factory import get_provider
 from app.llm.openai_compatible import OpenAICompatibleProvider
 
@@ -241,13 +242,17 @@ async def test_token_usage_reported(configured, with_tools):
 
 
 @pytest.mark.parametrize("mode", ["answer", "limit", "unknown", "unavailable"])
-def test_agent_job(client, connection, configured, monkeypatch, mode):
+@pytest.mark.parametrize("provider_class", [OpenAICompatibleProvider, DeepSeekProvider])
+def test_agent_job(client, connection, configured, monkeypatch, mode, provider_class):
     from dataclasses import replace
 
     from app.aws.registry import REGISTRY
     from tests.conftest import ask
 
     monkeypatch.setattr(configured, "max_agent_iterations", 2)
+    monkeypatch.setattr(configured, "llm_provider", provider_class.name)
+    monkeypatch.setattr(configured, "deepseek_api_key", SecretStr("deepseek-test-key"))
+    monkeypatch.setattr(configured, "deepseek_thinking", False)
     requests = []
     executions = []
     spec = REGISTRY["get_caller_identity"]
@@ -311,8 +316,8 @@ def test_agent_job(client, connection, configured, monkeypatch, mode):
             ),
         )
 
-    provider = OpenAICompatibleProvider(transport=httpx.MockTransport(handle))
-    assert isinstance(get_provider(), OpenAICompatibleProvider)
+    provider = provider_class(transport=httpx.MockTransport(handle))
+    assert isinstance(get_provider(), provider_class)
     monkeypatch.setattr("app.worker.get_provider", lambda: provider)
     conv_id = client.post("/api/conversations", json={"connection_id": connection["id"]}).json()[
         "data"

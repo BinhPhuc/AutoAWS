@@ -43,7 +43,7 @@ export type ApiErrorCode =
 export interface Health {
   status: 'ok'
   version: string
-  llm_provider: 'mock' | 'anthropic' | 'bedrock' | 'mcp'
+  llm_provider: 'mock' | 'openai' | 'deepseek' | 'anthropic' | 'bedrock' | 'mcp'
 }
 
 // ---------- Sign-in (contract §0.1) ----------

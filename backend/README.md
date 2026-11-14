@@ -52,10 +52,54 @@ Mẫu đủ các biến: [`.env.example`](.env.example). Key chỉ để trong `
 | `anthropic` | Key Claude API (`sk-ant-…`) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
 | `anthropic` + gateway | Key `sk-…` của một **gateway định dạng Anthropic** — loại được hướng dẫn cấu hình cho Claude Code bằng `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` (có thể chạy model khác phía sau) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` |
 | `openai` | Máy chủ **định dạng OpenAI** (`/v1/chat/completions`): Ollama local, OpenAI, gateway tương thích | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` (mục Ollama bên dưới) |
+| `deepseek` | Key API trực tiếp từ DeepSeek, gọi bằng SDK `openai` theo tài liệu DeepSeek | `DEEPSEEK_API_KEY`, tuỳ chọn `DEEPSEEK_MODEL` |
 | `mcp` | Một MCP client (ví dụ Claude Code) đóng vai LLM | — (xem `../infra/localstack/README.md`) |
 
 Key thuộc loại nào: xem hướng dẫn của bên cấp key. Họ bảo đặt `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`
 → dòng *anthropic + gateway*; họ đưa "OpenAI base URL" → dòng `openai`.
+
+### DeepSeek trực tiếp
+
+[DeepSeek hướng dẫn dùng SDK `openai`](https://api-docs.deepseek.com/) với endpoint
+`https://api.deepseek.com`. Dependency này đã nằm trong `pyproject.toml`; không cần
+cài thêm package tên `deepseek`.
+
+```bash
+cd backend
+.venv/bin/python -m pip install -e ".[dev]"
+```
+
+Điền trong **`backend/.env` hiện có**, giữ các cấu hình AWS, lưu trữ và đăng nhập:
+
+```dotenv
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=<key API của bạn từ platform.deepseek.com>
+DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_TIMEOUT_SECONDS=120
+DEEPSEEK_MAX_TOKENS=4096
+DEEPSEEK_THINKING=false
+```
+
+Khởi động lại backend sau khi sửa `.env`: `.venv/bin/python -m uvicorn app.main:app --reload`.
+Với Docker, chạy lại `docker compose up -d --build backend` (thêm
+`-f docker-compose.backend.yml` trước `up` nếu dùng Compose EC2).
+Frontend phải dùng `VITE_USE_MOCK=false` hoặc bỏ biến mock để gọi backend thật.
+
+- Provider dùng key và model riêng, gọi thẳng DeepSeek; các biến `OPENAI_*` của
+  OpenRouter/Ollama không ảnh hưởng. Key OpenRouter không dùng cho endpoint DeepSeek.
+- Model mặc định `deepseek-flash`, tên API hiện được phục vụ bởi **DeepSeek V4.1 Flash**
+  (`DeepSeek-V4.1-Flash-1017`); không dùng tên tự đặt `deepseek-v4.1-flash`.
+  Có thể đặt `deepseek-v4-pro` theo
+  [danh sách model hiện tại](https://api-docs.deepseek.com/quick_start/pricing/).
+- Mặc định tắt thinking để trả lời gọn trong giới hạn agent. Muốn bật thì đặt
+  `DEEPSEEK_THINKING=true` và tăng `DEEPSEEK_MAX_TOKENS` nếu cần. Provider giữ
+  `reasoning_content` trong bộ nhớ và gửi lại ở vòng tool tiếp theo theo
+  [yêu cầu của DeepSeek](https://api-docs.deepseek.com/guides/thinking_mode/);
+  nội dung này không hiển thị hay lưu vào lịch sử chat.
+- HTTP 401: kiểm tra key; HTTP 402: tài khoản API không đủ số dư; HTTP 429: thử lại
+  sau. Backend không phản chiếu nội dung lỗi từ nhà cung cấp.
+- Luồng job, sanitizer, bộ tool chỉ đọc và `submit_diagnosis` dùng chung với các
+  provider khác. Đổi LLM không thay kết nối AWS hay cấu hình DynamoDB/Cognito.
 
 ### Gateway định dạng Anthropic
 

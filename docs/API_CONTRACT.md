@@ -97,7 +97,7 @@ FE dùng để dựng URL `/oauth2/authorize`, đổi code ở `/oauth2/token`, 
 200 { "status_code": 200, "message": "OK",
       "data": { "status": "ok", "version": "0.1.0", "llm_provider": "mock" } }
 ```
-`llm_provider` ∈ `mock | anthropic | bedrock | mcp` (`mcp` = một MCP client đóng vai LLM, xem mục 6).
+`llm_provider` ∈ `mock | openai | deepseek | anthropic | bedrock | mcp` (`openai` = endpoint tương thích, gồm Ollama/gateway; `deepseek` = API DeepSeek trực tiếp; `mcp` = một MCP client đóng vai LLM, xem mục 6).
 
 ---
 
