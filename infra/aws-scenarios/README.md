@@ -17,6 +17,8 @@ Cách làm: CloudFormation dựng bản **khoẻ**, sau đó `fault` cài sự c
 | KB6 | `bastion`, SG chỉ mở 22 cho IP cũ `203.0.113.10/32` | — (sự cố có sẵn trong stack) |
 | KB7 | `orders-api` v2.4.3, log `/demo/kb7-orders-api` | "Deploy" v2.5.0 qua SSM: không kết nối được DB → mọi request 500, log có stack trace |
 
+Câu hỏi và câu trả lời mong muốn của từng kịch bản: `docs/TEST_SCENARIOS.md`.
+
 ## Cần chuẩn bị
 
 - Tài khoản AWS test, credentials có quyền tạo VPC/EC2/IAM/ELB/Route 53/CloudWatch (ví dụ profile `autoaws-test`).

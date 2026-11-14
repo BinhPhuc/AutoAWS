@@ -64,6 +64,7 @@ AutoAWS/
 ├── docs/
 │   ├── SYSTEM_OVERVIEW.md   # hệ thống làm gì, 3 kịch bản test, 7 khối, 7 nhóm tool, ràng buộc
 │   ├── API_CONTRACT.md      # endpoint, schema, job event — NGUỒN SỰ THẬT cho FE↔BE
+│   ├── TEST_SCENARIOS.md    # 7 kịch bản KB1–KB7: hệ thống, câu hỏi, câu trả lời mong muốn
 │   ├── BACKEND_PLAN.md      # cấu trúc backend/, thiết kế, lộ trình B1–B10
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
@@ -137,6 +138,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 | Task | Đọc |
 |---|---|
 | Hiểu nghiệp vụ / viết prompt chẩn đoán | `docs/SYSTEM_OVERVIEW.md` §4 (3 kịch bản), §5, §6 |
+| Demo / chấm chẩn đoán | `docs/TEST_SCENARIOS.md`, `infra/aws-scenarios/README.md` |
 | Thêm/sửa tool AWS (TV2) | `docs/BACKEND_PLAN.md` §4.2, `API_CONTRACT.md` bảng tool |
 | Lõi agent / LLM provider (TV1) | `docs/BACKEND_PLAN.md` §4.3–4.4, `backend/app/llm/base.py` |
 | Giao diện chat / kết nối (TV4) | `docs/FRONTEND_PLAN.md`, `API_CONTRACT.md` §2–3 |
