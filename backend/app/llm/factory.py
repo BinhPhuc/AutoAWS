@@ -12,6 +12,10 @@ def get_provider() -> LLMProvider:
         from app.llm.openai_compatible import OpenAICompatibleProvider
 
         return OpenAICompatibleProvider()
+    if name == "deepseek":
+        from app.llm.deepseek import DeepSeekProvider
+
+        return DeepSeekProvider()
     if name == "anthropic":
         from app.llm.anthropic import AnthropicProvider
 

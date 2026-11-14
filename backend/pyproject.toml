@@ -15,6 +15,7 @@ dependencies = [
     "dnspython>=2.6",
     "anthropic[bedrock]>=2.6,<3",  # Claude on Bedrock (Mantle client) / Claude API
     "httpx>=0.27",  # OpenAI-compatible / Ollama provider
+    "openai>=1.60,<3",  # DeepSeek's documented Python SDK client
     "jsonschema>=4.20",  # tool input validation
     "mangum>=0.19",  # api-handler on Lambda (RUNTIME=lambda)
     "mcp>=2.3,<3",  # MCP bridge (LLM_PROVIDER=mcp): an MCP client plays the LLM

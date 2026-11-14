@@ -121,6 +121,7 @@ cd infra/cdk && .venv/bin/pytest                         # 14 test trên templat
 | `anthropic` | Key Claude API | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
 | `anthropic` + gateway | Key của một gateway định dạng Anthropic (loại cấu hình cho Claude Code) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` |
 | `openai` | Máy chủ định dạng OpenAI: Ollama local (Qwen), OpenAI, gateway tương thích | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` |
+| `deepseek` | API DeepSeek trực tiếp qua SDK `openai` | `DEEPSEEK_API_KEY`; mặc định `DEEPSEEK_MODEL=deepseek-flash` ([hướng dẫn](backend/README.md#deepseek-trực-tiếp)) |
 | `mcp` | Một MCP client (ví dụ Claude Code) đóng vai LLM qua `/mcp/` | — |
 
 Model phải gọi được tool. Khi dùng gateway hoặc máy chủ bên thứ ba, câu hỏi và dữ liệu AWS đã đọc đi qua máy chủ đó: chỉ dùng với LocalStack hoặc tài khoản test.

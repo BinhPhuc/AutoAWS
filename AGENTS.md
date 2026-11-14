@@ -10,7 +10,7 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 
 ## Trạng thái hiện tại
 
-> **Hiện tại (2026-11-11): chẩn đoán, khắc phục có phê duyệt, đăng nhập và hai phương án triển khai (CDK serverless, EC2 + Docker) đã có code và test; chạy trọn luồng trên LocalStack với LLM thật. Chưa deploy lên AWS thật, chưa làm checklist.**
+> **Hiện tại (2026-11-14): chẩn đoán, khắc phục có phê duyệt, đăng nhập và hai phương án triển khai (CDK serverless, EC2 + Docker) đã có code và test; chạy trọn luồng trên LocalStack với LLM thật. Đã thêm provider DeepSeek trực tiếp qua SDK OpenAI, chưa thử key DeepSeek thật. Chưa deploy lên AWS thật, chưa làm checklist.**
 > Cập nhật mục này mỗi khi hoàn thành một mốc. Các dòng dưới là nhật ký theo thứ tự thời gian (dòng cũ có thể đã bị dòng sau thay thế).
 
 - [x] Kế hoạch backend/frontend (`docs/*_PLAN.md`) — đã duyệt, mọi task B1–B10, F1–F8 đã tick
@@ -47,6 +47,7 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Sửa chuyển lab trong chat (2026-11-12): chỉ đồng bộ connection khi mở hội thoại, tránh effect của hội thoại cũ ghi đè lựa chọn lab mới trong lúc điều hướng. Thêm 2 test hồi quy; 22 test FE, build và kiểm tra định dạng file sửa đạt.
 - [x] Sửa merge `main` vào `feat/404page` (2026-11-12): lấy Sidebar và navigation ổn định từ `main`, loại import `ConnectionBadge` đã bị xoá gây màn hình trắng; nối lại route 404 và error boundary của nhánh 404, giữ AuthGate và các trang mới từ `main`. 24 test FE, build và lint đạt (còn cảnh báo Fast Refresh); Chrome xác nhận cổng 5173 hiện trang đăng nhập, mock xác nhận 404/Tools/Proposals hoạt động.
 - [x] Tách bundle frontend theo trang (2026-11-12): tải động Connect, Chat, Proposals và Tools qua `route.lazy`, thêm trạng thái chờ khi mở trực tiếp route; giữ AuthGate và error boundary. Build không còn chunk vượt 500 kB (chunk lớn nhất 327,87 kB; thư viện dùng chung vẫn được tải riêng), 24 test FE và lint đạt (còn cảnh báo Fast Refresh đã có).
+- [x] DeepSeek trực tiếp (2026-11-14): `LLM_PROVIDER=deepseek`, SDK `openai` theo tài liệu DeepSeek, key riêng `DEEPSEEK_API_KEY` (`SecretStr`), mặc định `deepseek-flash` và tắt thinking; tuỳ chọn thinking gửi lại reasoning trong bộ nhớ giữa các vòng tool. Giữ job, sanitizer, registry và kiểm bằng chứng; không retry ngầm, lỗi HTTP không lộ payload/key, báo rõ HTTP 402 thiếu số dư. Đồng bộ health contract/kiểu FE, cập nhật hướng dẫn và `.env.example`. 336 test BE, ruff và build FE đạt; **chưa gọi API DeepSeek thật vì chưa cấu hình key**.
 
 ## Bố cục repo
 
@@ -95,7 +96,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 | # | Quyết định | Lý do |
 |---|---|---|
 | 1 | Backend **Python + FastAPI**, boto3, **DynamoDB mặc định** (bảng tạo bằng IaC); SQLite chỉ bật tường minh cho local/test | Khớp lưu trữ đích; EC2 không cần database volume |
-| 2 | **LLM sau một interface** (`app/llm/base.py`), chọn bằng `LLM_PROVIDER`: `bedrock` (đích), `anthropic` (kể cả gateway), `openai` (Ollama / tương thích OpenAI), `mcp`, `mock` (mặc định) | Pipeline chạy end-to-end không cần key; đổi model không đụng vòng lặp agent |
+| 2 | **LLM sau một interface** (`app/llm/base.py`), chọn bằng `LLM_PROVIDER`: `bedrock` (đích), `anthropic` (kể cả gateway), `openai` (Ollama / tương thích OpenAI), `deepseek` (API trực tiếp qua SDK OpenAI), `mcp`, `mock` (mặc định) | Pipeline chạy end-to-end không cần key; đổi model không đụng vòng lặp agent |
 | 3 | Kết nối AWS: **Role ARN + ExternalId** (đúng thiết kế, kiểu duy nhất trên form); **Access Key** chỉ tạo qua API cho dev / LocalStack | Giữ đường bảo mật chuẩn; vẫn test nhanh được với LocalStack |
 | 4 | **Auth: `AUTH_MODE=none`** (dev, 1 người dùng `local`) **hoặc `cognito`** (bản triển khai: Cognito + JWT authorizer, dữ liệu tách theo `user_id`) | Dev/test không cần Cognito; bản AWS luôn bật đăng nhập |
 | 5 | Frontend **Vite + React + TS + Tailwind + shadcn/ui**; tiến trình chẩn đoán = job + hỏi lại (`GET /api/jobs/{id}`) | Nhẹ, đầu ra tĩnh cho S3/CloudFront |
