@@ -47,17 +47,17 @@ export function ToolsPage() {
               <Table>
                 <THead>
                   <Tr>
-                    <Th className="w-56">{t.name}</Th>
+                    <Th className="w-68">{t.name}</Th>
                     <Th className="w-44">{t.label}</Th>
                     <Th>{t.description}</Th>
-                    <Th className="w-72">{t.actions}</Th>
+                    <Th className="w-88">{t.actions}</Th>
                   </Tr>
                 </THead>
                 <TBody>
                   {specs.map((s) => (
                     <Tr key={s.name}>
                       <Td>
-                        <Mono className="font-medium">{s.name}</Mono>
+                        <Mono className="font-medium whitespace-nowrap">{s.name}</Mono>
                       </Td>
                       <Td>{s.label}</Td>
                       <Td className="text-muted-foreground">{s.description}</Td>

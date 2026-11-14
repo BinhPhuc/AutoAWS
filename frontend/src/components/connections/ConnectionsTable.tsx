@@ -68,7 +68,7 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
 
   return (
     <Fragment>
-      <Tr>
+      <Tr className="[&>td]:align-middle">
         <Td>
           <Button
             variant="ghost"
@@ -90,10 +90,10 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
           </StatusTag>
         </Td>
         <Td>
-          <Mono className="tabular">{c.account_id ?? '—'}</Mono>
+          <Mono className="tabular whitespace-nowrap">{c.account_id ?? '—'}</Mono>
         </Td>
         <Td>
-          <Mono>{c.region}</Mono>
+          <Mono className="whitespace-nowrap">{c.region}</Mono>
         </Td>
         <Td>
           <StatusTag tone={c.remediation_enabled ? 'info' : 'neutral'}>
@@ -150,33 +150,36 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
       {expanded && (
         <tr className="border-b bg-muted/40">
           <td />
-          <td colSpan={8} className="space-y-3 px-3 py-3">
-            <DescriptionList
-              items={[
-                { label: 'ID', value: <Mono>{c.id}</Mono> },
-                ...(c.role_arn ? [{ label: 'Role ARN', value: <Mono>{c.role_arn}</Mono> }] : []),
-                ...(c.external_id
-                  ? [{ label: 'External ID', value: <Mono>{c.external_id}</Mono> }]
-                  : []),
-                ...(c.access_key_id_masked
-                  ? [{ label: t.colCredential, value: <Mono>{c.access_key_id_masked}</Mono> }]
-                  : []),
-                {
-                  label: S.common.created,
-                  value: <span className="tabular">{formatTime(c.created_at)}</span>,
-                },
-              ]}
-            />
-            {c.last_error && c.status === 'failed' && (
-              <p
-                role="alert"
-                className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-danger"
-              >
-                {c.last_error}
-              </p>
-            )}
-            {c.type === 'role' && <RemediationRoleField connection={c} />}
-            {c.type === 'role' && <CloudFormationSnippet connectionId={c.id} />}
+          <td colSpan={8} className="px-3 py-3">
+            {/* w-0 + min-w-full: fills the cell without widening the columns above. */}
+            <div className="w-0 min-w-full space-y-3">
+              <DescriptionList
+                items={[
+                  { label: 'ID', value: <Mono>{c.id}</Mono> },
+                  ...(c.role_arn ? [{ label: 'Role ARN', value: <Mono>{c.role_arn}</Mono> }] : []),
+                  ...(c.external_id
+                    ? [{ label: 'External ID', value: <Mono>{c.external_id}</Mono> }]
+                    : []),
+                  ...(c.access_key_id_masked
+                    ? [{ label: t.colCredential, value: <Mono>{c.access_key_id_masked}</Mono> }]
+                    : []),
+                  {
+                    label: S.common.created,
+                    value: <span className="tabular">{formatTime(c.created_at)}</span>,
+                  },
+                ]}
+              />
+              {c.last_error && c.status === 'failed' && (
+                <p
+                  role="alert"
+                  className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-danger"
+                >
+                  {c.last_error}
+                </p>
+              )}
+              {c.type === 'role' && <RemediationRoleField connection={c} />}
+              {c.type === 'role' && <CloudFormationSnippet connectionId={c.id} />}
+            </div>
           </td>
         </tr>
       )}

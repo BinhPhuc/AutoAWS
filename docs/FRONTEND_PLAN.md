@@ -149,6 +149,7 @@ export async function streamSSE(path: string, body: unknown, onEvent: (e: AgentE
 - [x] **F6 Polish**: loading/empty/error state, toast lỗi, responsive (sidebar thành drawer < 768px), dark mode (shadcn), a11y cơ bản.
 - [x] **F7 Dockerfile + nginx** (serve dist, proxy `/api` → backend) + mục trong `docker compose` ở root.
 - [x] **F8 Cập nhật `AGENTS.md`** (trạng thái, lệnh chạy FE thật).
+- [x] **Tối ưu bundle (2026-11-12)**: tải động Connect, Chat, Proposals và Tools qua `route.lazy`; dùng `PageLoading` khi mở trực tiếp route đang tải. Giữ AuthGate và error boundary hiện có. Build không còn chunk vượt 500 kB; 24 test FE và lint đạt (còn cảnh báo Fast Refresh đã có).
 
 Hoàn thành 2026-10-16. Đã kiểm tra tích hợp thật với backend (không MSW) trên browser: connect → verify → chat → stream → DiagnosisCard, console không lỗi.
 

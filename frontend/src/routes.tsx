@@ -1,17 +1,15 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { AuthGate } from '@/components/auth/AuthGate'
 import { AppShell } from '@/components/layout/AppShell'
+import { PageLoading } from '@/components/layout/PageState'
 import { AuthCallbackPage } from '@/pages/AuthCallbackPage'
-import { ChatPage } from '@/pages/ChatPage'
 import { ChecklistPage } from '@/pages/ChecklistPage'
-import { ConnectPage } from '@/pages/ConnectPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
-import { AdminPage } from '@/pages/AdminPage'
-import { ProposalsPage } from '@/pages/ProposalsPage'
-import { ToolsPage } from '@/pages/ToolsPage'
+import { NotFoundPage } from '@/pages/NotFoundPage'
+import { RootErrorPage, RouteErrorPage } from '@/pages/RouteErrorPage'
 
 export const router = createBrowserRouter([
-  { path: '/auth/callback', element: <AuthCallbackPage /> },
+  { path: '/auth/callback', element: <AuthCallbackPage />, errorElement: <RootErrorPage /> },
   {
     path: '/',
     element: (
@@ -19,14 +17,40 @@ export const router = createBrowserRouter([
         <AppShell />
       </AuthGate>
     ),
+    errorElement: <RootErrorPage />,
+    HydrateFallback: PageLoading,
     children: [
-      { index: true, element: <HomeRedirect /> },
-      { path: 'connect', element: <ConnectPage /> },
-      { path: 'chat/:conversationId?', element: <ChatPage /> },
-      { path: 'proposals', element: <ProposalsPage /> },
-      { path: 'tools', element: <ToolsPage /> },
-      { path: 'checklist', element: <ChecklistPage /> },
-      { path: 'admin', element: <AdminPage /> },
+      {
+        // Page errors render inside AppShell so navigation stays available.
+        errorElement: <RouteErrorPage />,
+        children: [
+          { index: true, element: <HomeRedirect /> },
+          {
+            path: 'connect',
+            lazy: async () => ({ Component: (await import('@/pages/ConnectPage')).ConnectPage }),
+          },
+          {
+            path: 'chat/:conversationId?',
+            lazy: async () => ({ Component: (await import('@/pages/ChatPage')).ChatPage }),
+          },
+          {
+            path: 'proposals',
+            lazy: async () => ({
+              Component: (await import('@/pages/ProposalsPage')).ProposalsPage,
+            }),
+          },
+          {
+            path: 'tools',
+            lazy: async () => ({ Component: (await import('@/pages/ToolsPage')).ToolsPage }),
+          },
+          { path: 'checklist', element: <ChecklistPage /> },
+          {
+            path: 'admin',
+            lazy: async () => ({ Component: (await import('@/pages/AdminPage')).AdminPage }),
+          },
+          { path: '*', element: <NotFoundPage /> },
+        ],
+      },
     ],
   },
 ])

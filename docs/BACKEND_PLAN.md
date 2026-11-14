@@ -132,6 +132,7 @@ class LLMProvider(Protocol):
 - `AnthropicProvider`, `BedrockProvider`: đã triển khai qua Messages API dùng chung `app/llm/claude.py`; `McpBridgeProvider` cho phép MCP client đóng vai LLM. `OpenAICompatibleProvider` dùng Chat Completions cho Ollama hoặc endpoint tương thích.
 
 - [x] OpenAI-compatible / Ollama (2026-11-10): chuyển `OpenAICompatibleProvider` từ `dev`, chọn `LLM_PROVIDER=openai`; cấu hình URL/model/key/timeout/token qua `.env`. Ánh xạ tool calls và kết quả tool vào Chat Completions, hỗ trợ `submit_diagnosis`, thống kê token cho giới hạn lượt. Dùng lại sanitizer, registry chỉ đọc, job và kiểm bằng chứng; lỗi HTTP không phản chiếu nội dung server. Hướng dẫn: `backend/README.md`, mục Ollama.
+- [x] DeepSeek trực tiếp (2026-11-14): `DeepSeekProvider` qua SDK `openai` theo tài liệu DeepSeek, chọn `LLM_PROVIDER=deepseek`; `DEEPSEEK_API_KEY` kiểu `SecretStr`, model/timeout/token/thinking riêng. Endpoint cố định `https://api.deepseek.com`, mặc định `deepseek-flash` và tắt thinking; khi bật, gửi lại `reasoning_content` trong vòng tool qua `LLMMessage.raw` chỉ ở bộ nhớ. Không retry ngầm, lỗi HTTP/network không phản chiếu payload/key; dùng lại job, sanitizer, kiểm bằng chứng và giới hạn agent. Kiểm thử SDK bằng HTTP mock và luồng job qua moto; hướng dẫn trong `backend/README.md`.
 
 ### 4.4 Agent loop (`agent/loop.py`)
 ```
@@ -178,7 +179,7 @@ DYNAMODB_TABLE=                # điền tên bảng từ CloudFormation Outputs
 DYNAMODB_REGION=               # điền region của bảng
 DYNAMODB_ENDPOINT_URL=         # để trống với AWS endpoint chuẩn
 DYNAMODB_CREATE_TABLE=false
-LLM_PROVIDER=mock              # mock | openai | anthropic | bedrock | mcp
+LLM_PROVIDER=mock              # mock | openai | deepseek | anthropic | bedrock | mcp
 ANTHROPIC_API_KEY=
 BEDROCK_MODEL_ID=
 BEDROCK_REGION=

@@ -1,3 +1,4 @@
+import { Children } from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
@@ -39,10 +40,26 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * Plain-text children get a box trimmed to the capital letters, so the label is centred on the
+ * icon next to it whatever font the browser falls back to (without it the label sits 1-2px off
+ * with some system fonts). Browsers without `text-box` keep the normal line box.
+ */
+function trimLabel(children: React.ReactNode): React.ReactNode {
+  return Children.map(children, (child) =>
+    typeof child === "string" || typeof child === "number" ? (
+      <span className="[text-box:trim-both_cap_alphabetic]">{child}</span>
+    ) : (
+      child
+    )
+  )
+}
+
 function Button({
   className,
   variant = "default",
   size = "default",
+  children,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
   return (
@@ -50,7 +67,9 @@ function Button({
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {typeof children === "function" ? children : trimLabel(children)}
+    </ButtonPrimitive>
   )
 }
 
