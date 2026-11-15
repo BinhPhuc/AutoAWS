@@ -1,4 +1,5 @@
 import os
+import tempfile
 
 import boto3
 import pytest
@@ -15,10 +16,46 @@ os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 # moto ignores DryRun on some EC2 writes (it would apply the change): tested separately
 os.environ.setdefault("REMEDIATION_DRY_RUN", "false")
+# A developer's backend/.env (platform SSO profile, platform account) must not reach moto
+os.environ["PLATFORM_AWS_PROFILE"] = ""
+os.environ.pop("AWS_PROFILE", None)
+os.environ["DEFAULT_REGION"] = "ap-southeast-1"
+# Never the developer's saved admin LLM settings: a fresh file per test (fixture below)
+os.environ["LLM_CONFIG_BACKEND"] = "file"
+# ... nor the developer's provider keys / endpoints from backend/.env
+for _name in (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "OPENAI_API_KEY",
+    "BEDROCK_API_KEY",
+    "BEDROCK_ACCESS_KEY_ID",
+    "BEDROCK_SECRET_ACCESS_KEY",
+    "BEDROCK_ROLE_ARN",
+):
+    os.environ[_name] = ""
+os.environ.pop("AWS_BEARER_TOKEN_BEDROCK", None)  # the SDK treats even "" as an API key
+os.environ["BEDROCK_AUTH"] = "iam"
+os.environ["LLM_CONFIG_FILE"] = os.path.join(tempfile.mkdtemp(), "llm-config.enc")
 
 REGION = "ap-southeast-1"
 FAKE_KEY = "AKIAIOSFODNN7EXAMPLE"
 FAKE_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+
+@pytest.fixture(autouse=True)
+def llm_config_file():
+    """Each test starts without admin LLM settings (env only), in a temporary file."""
+    from pathlib import Path
+
+    from app.llm import config_store
+
+    path = Path(os.environ["LLM_CONFIG_FILE"])
+    path.unlink(missing_ok=True)
+    config_store.forget_cache()
+    yield path
+    path.unlink(missing_ok=True)
+    config_store.forget_cache()
 
 
 @pytest.fixture(scope="session")

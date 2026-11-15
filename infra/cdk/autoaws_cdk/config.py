@@ -20,12 +20,14 @@ class Config:
     table_name: str
     bedrock_model_id: str
     bedrock_fallback_model: str
+    # Bedrock auth = assume_role (admin page): the ONE role agent-worker may assume for it
+    bedrock_role_arn: str
     llm_effort: str
     notification_email: str  # proposals waiting / results (SNS email)
     alarm_email: str  # operational alarms and the budget
     budget_usd: int
     frontend_url: str  # site URL on a custom domain; empty = the CloudFront URL (one deploy)
-    agent_concurrency: int  # reserved concurrency of agent-worker (Bedrock quota, cost)
+    agent_concurrency: int  # reserved concurrency of agent-worker (cost cap); 0 = no reservation
     lambda_asset: Path  # built by build_lambda.sh
     destroy_data: bool  # dev: delete the table (and the user pool) with the stack
     self_sign_up: bool  # anyone can create an account on the Hosted UI (else: admins add users)
@@ -43,12 +45,13 @@ class Config:
             table_name=ctx("tableName", f"autoaws-{env_name}"),
             bedrock_model_id=ctx("bedrockModelId", "anthropic.claude-opus-5-5"),
             bedrock_fallback_model=ctx("bedrockFallbackModel", "anthropic.claude-opus-4-8"),
+            bedrock_role_arn=ctx("bedrockRoleArn", ""),
             llm_effort=ctx("llmEffort", "high"),
             notification_email=ctx("notificationEmail", ""),
             alarm_email=ctx("alarmEmail", ctx("notificationEmail", "")),
             budget_usd=int(ctx("budgetUsd", 20)),
             frontend_url=ctx("frontendUrl", ""),
-            agent_concurrency=int(ctx("agentConcurrency", 5)),
+            agent_concurrency=int(ctx("agentConcurrency", 0)),
             lambda_asset=Path(ctx("lambdaAsset", str(ROOT / "infra/cdk/build/lambda"))),
             destroy_data=str(ctx("destroyData", env_name == "dev")).lower() == "true",
             self_sign_up=str(ctx("selfSignUp", True)).lower() == "true",

@@ -51,11 +51,14 @@ Không có trường `data` trong response lỗi. HTTP status = `status_code`.
 | `JOB_NOT_FOUND` | 404 | `"Job not found"` | |
 | `JOB_IN_PROGRESS` | 409 | `"A diagnosis is already running in this conversation"` | Gửi câu hỏi khi job trước của hội thoại chưa xong |
 | `PROPOSAL_NOT_FOUND` | 404 | `"Proposal not found"` | |
+| `PROPOSAL_NOT_EDITABLE` | 409 | `"Only proposals that were not applied can be edited"` | Sửa đề xuất đã / đang thực thi hoặc đề xuất hoàn tác (mục 7) |
+| `PROPOSAL_NOT_ROLLBACKABLE` | 409 | `"Only applied fixes can be rolled back"` / `"A rollback of this proposal is already waiting or running"` / `"The resource can no longer be read: <reason>"` | Yêu cầu hoàn tác đề xuất chưa `SUCCEEDED`, là rollback, đã có rollback đang chờ / chạy, hoặc tài nguyên không còn đọc được (mục 7) |
 | `PROPOSAL_NOT_PENDING` | 409 | `"Proposal is not waiting for a decision (status SUCCEEDED)"` | Quyết định cho đề xuất đã duyệt / từ chối / hết hạn (mục 7) |
 | `REMEDIATION_DISABLED` | 400 | `"Remediation is not enabled for this connection"` | Duyệt đề xuất trên connection không có quyền sửa (mục 7) |
 | `NOT_FOUND` | 404 | `"Not Found"` | Route không tồn tại |
 | `METHOD_NOT_ALLOWED` | 405 | `"Method Not Allowed"` | Sai HTTP method |
 | `NOT_IMPLEMENTED` | 501 | `"Checklist runs are not available yet"` | Tính năng chưa có (checklist) |
+| `FORBIDDEN` | 403 | `"Admin only"` | Gọi `/api/admin/*` khi không phải admin (mục 10) |
 | `INTERNAL` | 500 | `"Internal server error"` | Lỗi không lường trước |
 
 Không còn endpoint SSE: lỗi xảy ra **trong lúc** agent chạy nằm trong `events` của job (mục 8), event `error`.
@@ -85,8 +88,10 @@ FE dùng để dựng URL `/oauth2/authorize`, đổi code ở `/oauth2/token`, 
 ### `GET /api/me`
 ```json
 200 { "status_code": 200, "message": "OK",
-      "data": { "user_id": "local" | "<cognito sub>", "username": "local" | "<cognito username>", "auth_mode": "none" | "cognito" } }
+      "data": { "user_id": "local" | "<cognito sub>", "username": "local" | "<cognito username>", "auth_mode": "none" | "cognito",
+                "is_admin": true | false } }
 ```
+`is_admin`: `AUTH_MODE=none` → luôn `true` (người dùng `local`); `AUTH_MODE=cognito` → người dùng thuộc group Cognito `admin` (claim `cognito:groups` của access token). Mục 10.
 
 ---
 
@@ -157,7 +162,8 @@ Thông tin chuẩn bị tạo role, yêu cầu đăng nhập như các route con
   "account_id": "111122223333" | null,
   "role_name": "AutoAWSReadOnly",
   "trust_principals": ["arn:aws:iam::111122223333:role/autoaws-agent-worker", "arn:aws:iam::111122223333:role/autoaws-action-executor"],
-  "external_id": "autoaws-3f9c1a2b4d5e6f70-9a8b7c6d5e4f3a2b1c0d9e8f"   // mới mỗi lần gọi, chỉ hợp lệ với người gọi
+  "external_id": "autoaws-3f9c1a2b4d5e6f70-9a8b7c6d5e4f3a2b1c0d9e8f",   // mới mỗi lần gọi, chỉ hợp lệ với người gọi
+  "default_region": "ap-southeast-2"     // region form chọn sẵn (DEFAULT_REGION của backend)
 } }
 ```
 `account_id=null` nếu nền tảng chưa cấu hình account hợp lệ. `trust_principals` dùng các role nền tảng đã cấu hình (giống template CloudFormation); khi không cấu hình role cụ thể, dùng ARN root của account nền tảng. UI không dựng policy khi thiếu account hợp lệ.
@@ -170,10 +176,16 @@ Tạo template **trước khi lưu connection**, yêu cầu đăng nhập. Body 
 200 { "status_code": 200, "message": "OK", "data": Connection }
 ```
 ### `PATCH /api/connections/{id}`
-Bật / tắt quyền sửa sau khi đã tạo stack với `EnableRemediation=true`: `{ "remediation_role_arn": "arn:...:role/AutoAWSRemediation" | null }` (chỉ `type=role`).
+Sửa kết nối đã tạo. Mọi trường đều tuỳ chọn, chỉ trường có gửi lên mới bị đổi:
 ```json
+{ "name": "Lab", "region": "ap-southeast-2",
+  "role_arn": "arn:aws:iam::123456789012:role/AutoAWSReadOnly",          // chỉ type=role
+  "remediation_role_arn": "arn:...:role/AutoAWSRemediation" | null }     // chỉ type=role; null = tắt quyền sửa
 200 { "status_code": 200, "message": "Connection updated", "data": Connection }
 ```
+- Không sửa được `type` và `external_id` (External ID do server cấp, đã nằm trong trust policy; muốn mã khác thì tạo kết nối mới).
+- Đổi `region` hoặc `role_arn` → `status` về `pending`, xoá `last_error`, bỏ phiên AssumeRole đang giữ; client gọi lại `POST …/verify`. Đổi `name` / `remediation_role_arn` không ảnh hưởng trạng thái.
+- `role_arn` / `remediation_role_arn` trên kết nối `access_key` → `400 VALIDATION_ERROR`.
 ### `DELETE /api/connections/{id}`
 ```json
 200 { "status_code": 200, "message": "Connection deleted", "data": null }
@@ -193,7 +205,7 @@ Server lấy credentials (trực tiếp hoặc `AssumeRole`), gọi `sts:GetCall
 ```
 
 ### `GET /api/connections/{id}/cloudformation`
-Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Template YAML tạo IAM role chỉ đọc có trust policy tới tài khoản nền tảng + `sts:ExternalId` = `external_id` của connection.
+Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Template YAML tạo IAM role chỉ đọc có trust policy tới tài khoản triển khai hệ thống AutoAWS + `sts:ExternalId` = `external_id` của connection.
 ```json
 200 { "status_code": 200, "message": "OK",
       "data": { "stack_name": "AutoAWSReadOnlyRole",
@@ -203,7 +215,7 @@ Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Templat
                 "template_yaml": "AWSTemplateFormatVersion: '2010-09-09'\n..." } }
 ```
 Client hiển thị nút copy `template_yaml` + hướng dẫn tạo stack (link "Launch Stack" sau).
-Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của danh mục hành động (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` bản ghi `A`), output `RemediationRoleArn`.
+Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của công cụ khắc phục có phê duyệt (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` (và `DELETE` để hoàn tác bản ghi do AutoAWS tạo) cho bản ghi `A` / `AAAA` / `CNAME` / `TXT`; Deny tường minh IAM, Organizations, stop / terminate instance và các API xoá tài nguyên), output `RemediationRoleArn`.
 
 ---
 
@@ -250,7 +262,7 @@ DiagnosisAnswer {
     { "text": "sshd có đang chạy trong máy không", "how_to_check": "sudo systemctl status sshd" }
   ],
   "confidence": "high" | "medium" | "low",   // độ tin cậy chung của cả câu trả lời
-  "proposals": [ProposalRef],       // đề xuất sửa trong danh mục (mục 7); [] nếu không có
+  "proposals": [ProposalRef],       // đề xuất dùng công cụ khắc phục có phê duyệt (mục 7); [] nếu không có
   "limit_reached": null | "max_iterations" | "time" | "tokens" | "tool_calls"   // khác null: agent phải chốt sớm, phần chưa kiểm tra nằm trong unverified
 }
 
@@ -267,7 +279,7 @@ Evidence {
 Mọi chuỗi văn xuôi trong `DiagnosisAnswer` là **tiếng Việt** (system prompt ép model trả lời tiếng Việt); tên tài nguyên, lệnh, mã lỗi AWS giữ nguyên gốc.
 
 ProposalRef {
-  "action": "associate_route_table", "params": { "subnet_id": "subnet-0a1b", "route_table_id": "rtb-01aa" },
+  "action": "route_table_associate", "params": { "subnet_id": "subnet-0a1b", "route_table_id": "rtb-01aa" },
   "reason": "Gắn subnet về route table public",   // tiếng Việt, do model viết
   "proposal_id": "prop_..." | null,               // SERVER gán: đã tạo đề xuất chờ duyệt
   "error": null | "..."                           // SERVER gán khi không tạo được (tham số sai, kiểm tra trước không đạt, connection không bật sửa)
@@ -333,7 +345,7 @@ Các `events` của job (thứ tự điển hình: `status` → (`tool_call` →
 
 ---
 
-## 4. Tools — danh sách công cụ đọc AWS
+## 4. Tools — công cụ chẩn đoán chỉ đọc
 
 ### `GET /api/tools`
 ```json
@@ -379,7 +391,7 @@ Chỉ bật khi `LLM_PROVIDER=mcp`. Dùng khi chưa có quyền gọi Bedrock/An
 
 ## 7. Khắc phục có phê duyệt (human-in-the-loop)
 
-Agent **không có công cụ ghi**: nó chỉ đưa `proposals` vào câu trả lời. Server kiểm tra từng đề xuất (schema, kiểm tra trước, snapshot tài nguyên) bằng session **chỉ đọc** rồi lưu thành `Proposal` chờ duyệt. Chỉ khi người dùng bấm Duyệt, executor mới gọi đúng API ghi của hành động đó bằng session ghi riêng, rồi kiểm chứng lại bằng session chỉ đọc.
+Agent **không gọi trực tiếp công cụ khắc phục**: nó chỉ đưa `proposals` vào câu trả lời. Server kiểm tra từng đề xuất (schema, kiểm tra trước, snapshot tài nguyên) bằng session **chỉ đọc** rồi lưu thành `Proposal` chờ duyệt. Chỉ khi người dùng bấm Duyệt, executor mới gọi đúng API ghi của hành động đó bằng session ghi riêng, rồi kiểm chứng lại bằng session chỉ đọc.
 
 ### Schema `Proposal`
 ```json
@@ -387,7 +399,7 @@ Agent **không có công cụ ghi**: nó chỉ đưa `proposals` vào câu trả
   "id": "prop_...", "conversation_id": "conv_...", "message_id": "msg_...", "connection_id": "conn_...",
   "kind": "fix" | "rollback",
   "parent_id": null | "prop_...",            // rollback: đề xuất gốc; fix đề xuất lại sau góp ý: đề xuất bị thay
-  "action": "associate_route_table", "params": { ... }, "reason": "...",
+  "action": "route_table_associate", "params": { ... }, "reason": "...",
   "status": "PENDING_APPROVAL" | "APPROVED" | "EXECUTING" | "SUCCEEDED"
           | "REJECTED" | "EXPIRED" | "SUPERSEDED" | "STALE" | "FAILED" | "VERIFY_FAILED" | "ROLLED_BACK",
   "preview": {
@@ -411,7 +423,7 @@ Văn bản trong `preview` là tiếng Anh do server sinh (nhãn) + ID tài nguy
 - Trước khi ghi, các hành động EC2 chạy thử với `DryRun=True` (chỉ trên AWS thật, `REMEDIATION_DRY_RUN=true`): AWS trả `DryRunOperation` thì mới ghi thật (lịch sử có ghi chú `dry run passed`); bị từ chối quyền → `FAILED` (`error` bắt đầu bằng `Permission:`); endpoint không trả `DryRunOperation` (trình giả lập) → `FAILED`, không ghi tiếp. Route 53 và ELB không có DryRun.
 - Lỗi khi gọi API ghi → `FAILED` (kèm `error`).
 - `RUNTIME=local`, backend khởi động lại giữa chừng: `APPROVED` (chưa ghi) được chạy tiếp; `EXECUTING` đã có `result` được kiểm chứng; `EXECUTING` chưa có `result` → `FAILED` với `error` `"Interrupted: …"` (không ghi lại lần hai — người dùng kiểm tra tài nguyên rồi hỏi lại).
-- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
+- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt; hành động không có hoàn tác tự động thì không tạo). Người dùng cũng tự yêu cầu hoàn tác một đề xuất đã `SUCCEEDED` (`POST /api/proposals/{id}/rollback`). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
 - Thực thi chạy nền: response của quyết định trả `APPROVED`; client hỏi lại `GET /api/proposals/{id}` tới khi hết `APPROVED` / `EXECUTING`.
 - Trên AWS (`RUNTIME=lambda`, mục 9): mỗi đề xuất là một lượt chạy state machine `remediation-flow` (Step Functions): gửi email SNS → chờ duyệt `.waitForTaskToken` (24 giờ, hết hạn → `EXPIRED`) → agent-worker kiểm tra lại (role chỉ đọc) → action-executor thực thi (role `AutoAWSRemediation`) → agent-worker kiểm chứng → email kết quả. Quyết định của người dùng được chuyển vào state machine bằng `SendTaskSuccess` / `SendTaskFailure`. Chạy local (`RUNTIME=local`) thì các bước này chạy nền trong backend, cùng trạng thái và API.
 
@@ -432,17 +444,58 @@ Query tuỳ chọn `?conversation_id=…`, `?status=PENDING_APPROVAL`. Mới nh�
 `followup_question` (chỉ khi góp ý): câu hỏi tiếng Việt client gửi tiếp vào hội thoại để agent đề xuất lại.
 Lỗi: `PROPOSAL_NOT_PENDING` (409), `REMEDIATION_DISABLED` (400, khi duyệt).
 
-### `GET /api/remediation/actions`
-Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp.
+### `POST /api/proposals/{id}/revise`
+Người dùng sửa tham số của một đề xuất (ví dụ CIDR, port). Không sửa tại chỗ: server tạo **đề xuất mới** từ cùng hành động với tham số mới, kiểm lại đủ như đề xuất của agent (schema của hành động, luật cứng như không mở 22/3389 cho `0.0.0.0/0`, đọc lại tài nguyên, xem trước + snapshot mới), rồi người dùng duyệt đề xuất mới. Nhờ vậy chỉ thực thi đúng thứ đã xem trước.
+```json
+{ "params": { "group_id": "sg-0abc", "direction": "ingress", "protocol": "tcp", "from_port": 8080, "to_port": 8080, "cidr": "203.0.113.0/24" } }   // đầy đủ tham số của hành động
+201 { "status_code": 201, "message": "Proposal revised", "data": Proposal }     // đề xuất mới: PENDING_APPROVAL, parent_id = id cũ
+```
+- Sửa được đề xuất `kind = fix` ở trạng thái chưa ghi gì: `PENDING_APPROVAL`, `REJECTED`, `EXPIRED`, `STALE`, `SUPERSEDED`. Đề xuất cũ đang `PENDING_APPROVAL` → `SUPERSEDED` (ghi chú `edited by the user`, `by` = người sửa); trạng thái khác giữ nguyên.
+- Lịch sử đề xuất mới: `PENDING_APPROVAL` với ghi chú `revised by the user from prop_…`, `by` = người sửa.
+- Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_EDITABLE` (409: đã thực thi / đang thực thi / là rollback), `REMEDIATION_DISABLED` (400), `VALIDATION_ERROR` (422: tham số sai schema hoặc vi phạm kiểm tra trước, `message` nêu lý do).
+- Trên AWS (`RUNTIME=lambda`), bước kiểm tra chạy trong agent-worker (api-handler không có quyền vào tài khoản người dùng), giống verify kết nối.
 
-| name | Sửa | API ghi | Kiểm tra trước | Kiểm chứng | Hoàn tác |
+### `POST /api/proposals/{id}/rollback`
+Người dùng muốn quay lại một thay đổi đã áp dụng (đề xuất `kind = fix`, `SUCCEEDED`). Server đọc trạng thái hiện tại của tài nguyên (snapshot) và tạo **đề xuất `kind: "rollback"`**, `parent_id` = đề xuất gốc; đề xuất này cũng phải được duyệt mới chạy. Không có body.
+```json
+201 { "status_code": 201, "message": "Rollback proposed", "data": Proposal }   // PENDING_APPROVAL, kind "rollback"
+```
+- Lúc duyệt, nếu tài nguyên đã đổi khác snapshot (ai đó sửa tiếp sau thay đổi của AutoAWS) → `STALE`, không ghi đè.
+- Hoàn tác chỉ đưa tài nguyên về trạng thái trước thay đổi của chính đề xuất đó (`preview.summary` = `Undo prop_…: …`); kiểm chứng: tài nguyên khớp snapshot trước khi sửa. Xong → đề xuất gốc `ROLLED_BACK`.
+- Lịch sử: `PENDING_APPROVAL` với ghi chú `rollback requested by the user`, `by` = người yêu cầu.
+- Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_ROLLBACKABLE` (409: chưa áp dụng / là rollback / đã có rollback đang chờ hoặc chạy / tài nguyên đã bị xoá, không đọc được / hành động không có hoàn tác tự động, ví dụ `instance_start` vì AutoAWS không bao giờ stop instance), `REMEDIATION_DISABLED` (400), `AWS_AUTH_FAILED` (400: không assume được role).
+- Trên AWS (`RUNTIME=lambda`), bước đọc chạy trong agent-worker, giống `revise`.
+
+### `GET /api/remediation/actions`
+Danh sách công cụ khắc phục có phê duyệt: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp (session ghi của một đề xuất chỉ gọi được đúng các API này).
+
+Công cụ khắc phục **cố định nhưng tổng quát**: chia theo loại tài nguyên và thao tác, không theo kịch bản. Tham số phẳng (string / integer / enum) để form sửa đề xuất sinh được từ `input_schema`. Mọi ID phải đọc được bằng role chỉ đọc lúc snapshot; tài nguyên đích phải cùng VPC.
+
+| Nhóm | name | API ghi | Kiểm tra trước (từ chối nếu sai) | Kiểm chứng | Hoàn tác |
 |---|---|---|---|---|---|
-| `associate_route_table` | KB1 | ec2:AssociateRouteTable / ReplaceRouteTableAssociation | Route table đích cùng VPC, có 0.0.0.0/0 → igw đang active | Route table hiệu lực của subnet có tuyến tới IGW | Gắn lại route table cũ (hoặc về main) |
-| `create_route_to_igw` | KB1 | ec2:CreateRoute | Chưa có 0.0.0.0/0; IGW đã gắn vào VPC | Tuyến active | ec2:DeleteRoute đúng tuyến vừa tạo |
-| `authorize_sg_ingress` | KB2 | ec2:AuthorizeSecurityGroupIngress | Quy tắc chưa có; **từ chối 22 / 3389 từ 0.0.0.0/0 hoặc ::/0** | Quy tắc có trong SG | ec2:RevokeSecurityGroupIngress |
-| `allocate_and_associate_eip` | KB2 | ec2:AllocateAddress, AssociateAddress | Instance đang chạy, chưa có Elastic IP | Public IP của instance = Elastic IP | DisassociateAddress + ReleaseAddress |
-| `upsert_a_record` | KB2 | route53:ChangeResourceRecordSets (UPSERT A) | Bản ghi A **đã có** trong hosted zone của tài khoản; IP mới là IP của tài khoản (hoặc `instance_id` → IP hiện tại lúc thực thi) | Route 53 trả giá trị mới, thay đổi INSYNC | UPSERT lại giá trị cũ |
-| `modify_health_check_path` | KB3 | elasticloadbalancing:ModifyTargetGroup | Đường dẫn bắt đầu bằng `/` | Mọi target healthy (chờ tối đa ~5 chu kỳ) | Đặt lại đường dẫn cũ |
+| Security Group | `sg_add_rule` (group_id, direction `ingress`/`egress`, protocol `tcp`/`udp`/`icmp`/`all`, from_port, to_port, cidr **hoặc** source_group_id, description) | ec2:AuthorizeSecurityGroupIngress/Egress | Rule chưa có; **ingress từ `0.0.0.0/0` / `::/0` mà dải cổng chứa 22 hoặc 3389 (kể cả `all`) → từ chối** | Rule có trong SG | Revoke đúng rule |
+| | `sg_remove_rule` (cùng tham số nhận diện rule) | ec2:RevokeSecurityGroupIngress/Egress | Rule đang có | Rule không còn | Authorize lại (giữ description) |
+| Route | `route_add` (route_table_id, destination_cidr IPv4/IPv6, target_type `internet_gateway`/`nat_gateway`/`transit_gateway`/`vpc_peering_connection`/`network_interface`, target_id) | ec2:CreateRoute | Chưa có route cho đích đó; target tồn tại, IGW gắn vào VPC, NAT `available` cùng VPC | Route `active` tới target | ec2:DeleteRoute đúng route vừa tạo |
+| | `route_replace` (như trên) | ec2:ReplaceRoute | Route đã có, không phải `local`, target khác hiện tại | Route `active` tới target mới | ReplaceRoute về target cũ |
+| | `route_delete` (route_table_id, destination_cidr) | ec2:DeleteRoute | Route đã có, không phải `local` | Route không còn | CreateRoute lại target cũ |
+| | `route_table_associate` (subnet_id, route_table_id) | ec2:AssociateRouteTable / ReplaceRouteTableAssociation | Cùng VPC, subnet chưa dùng bảng đó (preview cảnh báo nếu bảng mới không có 0.0.0.0/0) | Route table hiệu lực của subnet là bảng mới | Gắn lại bảng cũ (hoặc về main) |
+| Network ACL | `nacl_add_entry` (network_acl_id, rule_number, direction, rule_action `allow`/`deny`, protocol, from_port, to_port, cidr) | ec2:CreateNetworkAclEntry | Số rule còn trống ở chiều đó; ingress `allow` từ world chứa 22 / 3389 → từ chối | Entry có đúng giá trị | DeleteNetworkAclEntry |
+| | `nacl_replace_entry` (như trên) | ec2:ReplaceNetworkAclEntry | Entry đã có và khác giá trị mới; cùng luật 22 / 3389 | Entry có giá trị mới | Replace về entry cũ |
+| | `nacl_delete_entry` (network_acl_id, rule_number, direction) | ec2:DeleteNetworkAclEntry | Entry đã có, không phải rule mặc định `*` (32767) | Entry không còn | CreateNetworkAclEntry lại entry cũ |
+| | `nacl_associate` (subnet_id, network_acl_id) | ec2:ReplaceNetworkAclAssociation | Cùng VPC, subnet chưa dùng NACL đó | NACL của subnet là NACL mới | Gắn lại NACL cũ |
+| Subnet / instance | `subnet_set_auto_public_ip` (subnet_id, value `enable`/`disable`) | ec2:ModifySubnetAttribute | Giá trị khác hiện tại | Thuộc tính đúng giá trị mới | Đặt lại giá trị cũ |
+| | `instance_start` (instance_id) | ec2:StartInstances | Instance đang `stopped` | Instance `running` | **Không có** (AutoAWS không stop instance) |
+| | `instance_attach_security_group` (instance_id, group_id) | ec2:ModifyInstanceAttribute | SG cùng VPC, chưa gắn, tối đa 5 SG | Instance có SG đó | Trả danh sách SG cũ |
+| | `instance_detach_security_group` (instance_id, group_id) | ec2:ModifyInstanceAttribute | SG đang gắn và không phải SG cuối cùng | Instance không còn SG đó | Trả danh sách SG cũ |
+| Elastic IP | `eip_allocate_and_associate` (instance_id) | ec2:AllocateAddress, AssociateAddress | Instance `running`, chưa có Elastic IP | Public IP = Elastic IP | DisassociateAddress + ReleaseAddress (EIP do AutoAWS cấp) |
+| | `eip_associate` (allocation_id, instance_id) | ec2:AssociateAddress | EIP của tài khoản, chưa gắn; instance `running`, chưa có EIP | Public IP = EIP | DisassociateAddress (không release) |
+| Route 53 | `dns_upsert_record` (record_name, type `A`/`AAAA`/`CNAME`/`TXT`, đúng một trong value / instance_id / load_balancer, ttl, zone_id) | route53:ChangeResourceRecordSets (UPSERT; DELETE chỉ để hoàn tác bản ghi do AutoAWS tạo) | Tên thuộc hosted zone của tài khoản; A / AAAA là IP của instance / EIP trong tài khoản (`instance_id` → IP lúc thực thi; `load_balancer` → alias A tới ALB/NLB của tài khoản); CNAME chỉ trỏ endpoint AWS (`*.amazonaws.com`, `*.cloudfront.net`) hoặc tên trong hosted zone của tài khoản, không đặt ở apex; TXT ≤ 255 ký tự; giá trị khác hiện tại | Route 53 trả giá trị mới, thay đổi INSYNC | UPSERT lại bản ghi cũ; bản ghi mới tạo thì DELETE |
+| ELB | `tg_modify_health_check` (target_group, path, port, protocol, matcher, interval_seconds, timeout_seconds, healthy_threshold, unhealthy_threshold — ít nhất một) | elasticloadbalancing:ModifyTargetGroup | Có thay đổi; path bắt đầu bằng `/`; path / matcher chỉ cho HTTP(S) | Thông số mới; mọi target healthy (chờ tối đa ~5 chu kỳ) | Đặt lại mọi thông số cũ |
+| | `tg_register_target` (target_group, target_id, port) | elasticloadbalancing:RegisterTargets | Target cùng VPC, chưa đăng ký | Target có trong nhóm, không `unused` | DeregisterTargets |
+| | `tg_deregister_target` (target_group, target_id, port) | elasticloadbalancing:DeregisterTargets | Target đang đăng ký | Target `draining` hoặc đã ra khỏi nhóm | RegisterTargets lại |
+
+Mọi hành động EC2 chạy thử `DryRun` trước khi ghi, trừ `subnet_set_auto_public_ip` (API không có DryRun). Không hành động nào xoá tài nguyên (VPC, subnet, instance, SG, route table, NACL, EIP không do AutoAWS cấp, hosted zone, load balancer, target group), đụng IAM hay stop / terminate instance; gỡ một rule / route / entry / target là thay đổi cấu hình, có snapshot và hoàn tác.
+
 
 ---
 
@@ -484,6 +537,75 @@ Yêu cầu dừng: agent-worker kiểm tra cờ giữa các bước và kết th
 - `POST /api/connections/{id}/verify` chạy trong agent-worker (gọi đồng bộ): api-handler không có quyền vào tài khoản người dùng.
 - Đăng nhập: stack `Auth` (Cognito User Pool, Hosted UI, app client public + PKCE). HTTP API gắn JWT authorizer cho mọi route trừ
   `GET /api/health` và `GET /api/auth/config`. Callback / logout URL của app client = URL CloudFront (hoặc `frontendUrl` khi gắn tên miền riêng) + `http://localhost:5173` (chỉ `envName=dev`); một lần `cdk deploy` là đủ.
+
+---
+
+## 10. Admin — cấu hình LLM
+
+Chỉ admin (`is_admin`, mục 0.1). Người khác → `403 FORBIDDEN`. Cấu hình ở đây **ghi đè** biến môi trường `LLM_PROVIDER` / `BEDROCK_*` / `ANTHROPIC_*` / `OPENAI_*`; chưa lưu gì thì dùng env (`source: "env"`). Mọi backend đọc lại sau tối đa 30 giây.
+
+**Lưu ở đâu:** một tài liệu cấu hình (kể cả key) — `LLM_CONFIG_BACKEND=secretsmanager` (bản AWS: một secret Secrets Manager, mã hoá KMS, `LLM_CONFIG_SECRET_ID`) hoặc `file` (local: file mã hoá Fernet `LLM_CONFIG_FILE`, khoá `LLM_CONFIG_KEY`, mặc định dẫn xuất từ `EXTERNAL_ID_SECRET`). **Key không bao giờ được trả về**: response chỉ có `set`, 4 ký tự cuối (`hint`) và thời điểm đổi.
+
+### Schema `LlmConfig`
+```json
+{
+  "provider": "bedrock" | "anthropic" | "openai" | "mock",
+  "source": "admin" | "env",
+  "storage": "secretsmanager" | "file",
+  "updated_at": "2026-11-13T10:00:00Z" | null, "updated_by": "user id" | null,
+  "bedrock": {
+    "model": "anthropic.claude-opus-5-5", "fallback_model": "anthropic.claude-opus-4-8" | "",
+    "region": "ap-southeast-2",
+    "auth": "iam" | "api_key" | "access_key" | "assume_role",
+    "access_key_id": "AKIA****MPLE" | "",                       // auth = access_key (che bớt)
+    "role_arn": "arn:aws:iam::487450071041:role/AutoAWSBedrockInvoke" | "",  // auth = assume_role
+    "external_id": "…" | "",
+    "secrets": { "api_key": Secret, "secret_access_key": Secret }
+  },
+  "anthropic": { "model": "claude-opus-5-5", "base_url": "" | "https://gateway…", "secrets": { "api_key": Secret } },
+  "openai":    { "model": "qwen2.5:latest", "base_url": "http://localhost:11434/v1", "secrets": { "api_key": Secret } }
+}
+// Secret = { "set": true, "hint": "…abcd", "updated_at": "…" } | { "set": false, "hint": null, "updated_at": null }
+```
+Cách xác thực Bedrock:
+- `iam`: role / credentials của chính nền tảng (role Lambda, profile `PLATFORM_AWS_PROFILE`) — không cần key, khuyên dùng.
+- `api_key`: Bedrock API key (`secrets.api_key`, gửi `Authorization: Bearer`).
+- `access_key`: access key của một IAM user có quyền Bedrock (`access_key_id` + `secrets.secret_access_key`).
+- `assume_role`: assume một role (thường ở tài khoản khác có Bedrock) bằng credentials của nền tảng — `role_arn`, tuỳ chọn `external_id`. Trên bản CDK, agent-worker chỉ được assume đúng role khai trong context `bedrockRoleArn` (mặc định không có), để nó vẫn không assume được role nào khác của người dùng.
+
+`anthropic`: `base_url` trống = Claude API (`api_key` là `x-api-key`); có `base_url` = gateway định dạng Anthropic (key gửi `Authorization: Bearer`, chế độ tương thích). `openai`: Chat Completions tương thích OpenAI (Ollama, …), `api_key` tuỳ chọn.
+
+### `GET /api/admin/llm`
+```json
+200 { "status_code": 200, "message": "OK", "data": LlmConfig }
+```
+
+### `PUT /api/admin/llm`
+Lưu cấu hình (cả tài liệu, trừ key). Key gửi trong `secrets`: chuỗi = đặt / thay, `null` = xoá, không gửi = giữ nguyên.
+```json
+{
+  "provider": "bedrock",
+  "bedrock": { "model": "…", "fallback_model": "", "region": "ap-southeast-2", "auth": "api_key", "access_key_id": "", "role_arn": "", "external_id": "" },
+  "anthropic": { "model": "…", "base_url": "" },
+  "openai": { "model": "…", "base_url": "…" },
+  "secrets": { "bedrock.api_key": "ABSK…", "anthropic.api_key": null }
+}
+200 { "status_code": 200, "message": "LLM settings saved", "data": LlmConfig }
+```
+- Khoá trong `secrets`: `bedrock.api_key`, `bedrock.secret_access_key`, `anthropic.api_key`, `openai.api_key`.
+- Kiểm tra: provider được chọn phải đủ thông tin (model; Bedrock: region + thông tin của `auth`; `access_key_id` dạng `AKIA…`/`ASIA…`; `role_arn` dạng ARN role; `base_url` http(s)) → không thì `422 VALIDATION_ERROR`.
+- Gửi `access_key_id` đã che (`AKIA****…`) = giữ nguyên giá trị đang lưu.
+
+### `DELETE /api/admin/llm`
+Xoá cấu hình admin (kể cả key), quay về biến môi trường. `200 "LLM settings reset"`, `data: LlmConfig` (`source: "env"`).
+
+### `POST /api/admin/llm/test`
+Gửi một câu ngắn tới provider đang dùng (cấu hình đã lưu), không có tool, không đụng AWS của người dùng.
+```json
+200 { "status_code": 200, "message": "OK",
+      "data": { "ok": true | false, "provider": "bedrock", "model": "…", "latency_ms": 840, "reply": "OK" | null, "error": null | "bedrock: no access to model …" } }
+```
+Trên AWS (`RUNTIME=lambda`) chạy trong agent-worker (chỉ nó có quyền gọi LLM).
 
 ---
 

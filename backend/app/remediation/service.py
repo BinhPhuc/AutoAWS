@@ -29,7 +29,7 @@ from app.aws.remediation.sessions import (
     remediation_session,
 )
 from app.config import get_settings
-from app.errors import AppError
+from app.errors import AppError, NotFound
 from app.platform import dispatch
 from app.storage.base import Store
 from app.storage.models import Connection, Conversation, Proposal, new_id, utcnow
@@ -49,6 +49,10 @@ VERIFY_FAILED = "VERIFY_FAILED"
 ROLLED_BACK = "ROLLED_BACK"
 
 MAX_PROPOSALS_PER_ANSWER = 5
+# A user may revise a fix proposal only while nothing was written for it
+EDITABLE = {PENDING, REJECTED, EXPIRED, STALE, SUPERSEDED}
+# A rollback in one of these still holds the resource: no second one meanwhile
+ACTIVE = {PENDING, APPROVED, EXECUTING}
 
 
 def snapshot_hash(snapshot: dict) -> str:
@@ -144,7 +148,6 @@ def attach_proposals(
     answer: DiagnosisAnswer,
 ) -> None:
     """Turn the answer's proposals into stored PENDING proposals (sets proposal_id / error)."""
-    settings = get_settings()
     for i, ref in enumerate(answer.proposals):
         if conn is None:
             ref.error = "Connection not found"
@@ -161,26 +164,157 @@ def attach_proposals(
         if prepared is None:
             ref.error = error
             continue
-        proposal = Proposal(
-            id=new_id("prop"),
+        proposal = _new_proposal(
             user_id=conversation.user_id,
             conversation_id=conversation.id,
             message_id=message_id,
             connection_id=conn.id,
             action=ref.action,
-            params_json=json.dumps(ref.params, ensure_ascii=False),
+            params=ref.params,
             reason=ref.reason,
-            preview_json=json.dumps(prepared.preview, ensure_ascii=False, default=str),
-            snapshot_json=json.dumps(prepared.snapshot, ensure_ascii=False, default=str),
-            snapshot_hash=snapshot_hash(prepared.snapshot),
-            expires_at=utcnow() + timedelta(hours=settings.proposal_ttl_hours),
-            history_json=json.dumps(
-                [{"status": PENDING, "at": utcnow().isoformat(), "note": "proposed by the agent"}]
-            ),
+            prepared=prepared,
+            note="proposed by the agent",
         )
         store.create_proposal(proposal)
         dispatch.start_remediation_flow(proposal)
         ref.proposal_id = proposal.id
+
+
+def _new_proposal(
+    *,
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    connection_id: str,
+    action: str,
+    params: dict,
+    reason: str,
+    prepared: Prepared,
+    note: str,
+    by: str | None = None,
+    parent_id: str | None = None,
+) -> Proposal:
+    """A PENDING fix proposal from a prepared (validated, previewed, snapshotted) action."""
+    return Proposal(
+        id=new_id("prop"),
+        user_id=user_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        connection_id=connection_id,
+        parent_id=parent_id,
+        action=action,
+        params_json=json.dumps(params, ensure_ascii=False),
+        reason=reason,
+        preview_json=json.dumps(prepared.preview, ensure_ascii=False, default=str),
+        snapshot_json=json.dumps(prepared.snapshot, ensure_ascii=False, default=str),
+        snapshot_hash=snapshot_hash(prepared.snapshot),
+        expires_at=utcnow() + timedelta(hours=get_settings().proposal_ttl_hours),
+        history_json=json.dumps(
+            [{"status": PENDING, "at": utcnow().isoformat(), "note": note, "by": by}]
+        ),
+    )
+
+
+def revise(store: Store, proposal_id: str, params: dict, by: str | None = None) -> Proposal:
+    """The user's edited parameters become a NEW proposal, checked exactly like the agent's
+    (schema, prechecks, fresh preview and snapshot), so only what was previewed can run.
+    A PENDING original is superseded. Runs where the read-only role can be assumed."""
+    p = store.get_proposal(proposal_id)
+    if p is None:
+        raise NotFound("PROPOSAL_NOT_FOUND", "Proposal not found")
+    expire_due(store, p)
+    if p.kind != "fix" or p.status not in EDITABLE:
+        raise AppError(
+            "PROPOSAL_NOT_EDITABLE", 409, "Only proposals that were not applied can be edited"
+        )
+    conn = store.get_connection(p.connection_id)
+    if conn is None or not remediation_enabled(conn):
+        raise AppError(
+            "REMEDIATION_DISABLED", 400, "Remediation is not enabled for this connection"
+        )
+    try:
+        read = resolve_session(conn)
+    except CredentialError as e:
+        raise AppError("AWS_AUTH_FAILED", 400, f"AWS authentication failed: {e}") from e
+    prepared, error = prepare(read, p.action, params)
+    if prepared is None:
+        raise AppError("VALIDATION_ERROR", 422, f"Invalid request: {error}")
+    if p.status == PENDING:
+        if not transition(store, p, SUPERSEDED, "edited by the user", expected=PENDING, by=by):
+            raise AppError(
+                "PROPOSAL_NOT_EDITABLE", 409, "Only proposals that were not applied can be edited"
+            )
+        dispatch.send_decision(store.get_proposal(p.id))  # ends its remediation-flow wait
+    new = _new_proposal(
+        user_id=p.user_id,
+        conversation_id=p.conversation_id,
+        message_id=p.message_id,
+        connection_id=p.connection_id,
+        action=p.action,
+        params=params,
+        reason=p.reason,
+        prepared=prepared,
+        note=f"revised by the user from {p.id}",
+        by=by,
+        parent_id=p.id,
+    )
+    store.create_proposal(new)
+    dispatch.start_remediation_flow(new)
+    return new
+
+
+def request_rollback(store: Store, proposal_id: str, by: str | None = None) -> Proposal:
+    """The user wants an applied fix undone: a rollback proposal (approved like any other)
+    built from the resource's current state, so a later change by someone else makes it
+    STALE instead of being overwritten. Runs where the read-only role can be assumed."""
+    p = store.get_proposal(proposal_id)
+    if p is None:
+        raise NotFound("PROPOSAL_NOT_FOUND", "Proposal not found")
+    if p.kind != "fix" or p.status != SUCCEEDED:
+        raise AppError("PROPOSAL_NOT_ROLLBACKABLE", 409, "Only applied fixes can be rolled back")
+    if any(
+        x.parent_id == p.id and x.kind == "rollback" and expire_due(store, x).status in ACTIVE
+        for x in store.list_proposals(conversation_id=p.conversation_id)
+    ):
+        raise AppError(
+            "PROPOSAL_NOT_ROLLBACKABLE",
+            409,
+            "A rollback of this proposal is already waiting or running",
+        )
+    spec = get_action(p.action)
+    if spec is not None and spec.undo is None:
+        raise AppError(
+            "PROPOSAL_NOT_ROLLBACKABLE",
+            409,
+            f"{spec.label} has no automatic undo: revert it yourself if needed",
+        )
+    conn = store.get_connection(p.connection_id)
+    if spec is None or conn is None or not remediation_enabled(conn):
+        raise AppError(
+            "REMEDIATION_DISABLED", 400, "Remediation is not enabled for this connection"
+        )
+    try:
+        read = resolve_session(conn)
+    except CredentialError as e:
+        raise AppError("AWS_AUTH_FAILED", 400, f"AWS authentication failed: {e}") from e
+    try:
+        rollback = _rollback_proposal(
+            p,
+            spec,
+            read,
+            json.loads(p.params_json),
+            reason="Người dùng yêu cầu hoàn tác thay đổi đã áp dụng.",
+            note="rollback requested by the user",
+            by=by,
+        )
+    except Exception as e:  # noqa: BLE001 — e.g. the resource was deleted since
+        log.info("Rollback of %s: resource not readable: %s", p.id, e)
+        raise AppError(
+            "PROPOSAL_NOT_ROLLBACKABLE", 409, f"The resource can no longer be read: {e}"
+        ) from e
+    store.create_proposal(rollback)
+    dispatch.start_remediation_flow(rollback)
+    return rollback
 
 
 # ---- decisions ----------------------------------------------------------------------
@@ -301,7 +435,7 @@ def recheck_step(store: Store, proposal_id: str) -> dict:
         if spec is None or conn is None:
             transition(store, p, FAILED, "action or connection no longer exists")
             return {"ok": False, "status": FAILED}
-        if p.kind == "rollback" and parent is None:
+        if p.kind == "rollback" and (parent is None or spec.undo is None):
             transition(store, p, FAILED, "the proposal to roll back no longer exists")
             return {"ok": False, "status": FAILED}
         try:
@@ -393,7 +527,7 @@ def verify_step(store: Store, proposal_id: str) -> dict:
             transition(
                 store, p, VERIFY_FAILED, "verification failed", verification_json=verification
             )
-            rollback = _propose_rollback(store, p, spec, read, params)
+            rollback = _propose_rollback(store, p, spec, read, params) if spec.undo else None
             return {"ok": False, "status": VERIFY_FAILED, "rollback_id": rollback}
         after = spec.snapshot(read, params)
         restored = snapshot_hash(after) == parent.snapshot_hash
@@ -426,13 +560,39 @@ def expire_step(store: Store, proposal_id: str) -> dict:
 def _propose_rollback(
     store: Store, p: Proposal, spec: ActionSpec, read, params: dict
 ) -> str | None:
+    """After a failed verification: offer the rollback (never raises)."""
     try:
-        after = spec.snapshot(read, params)
+        rollback = _rollback_proposal(
+            p,
+            spec,
+            read,
+            params,
+            reason="Kiểm chứng sau khi sửa không đạt: đề xuất hoàn tác về trạng thái trước.",
+            note=f"rollback of {p.id}",
+        )
     except Exception:  # noqa: BLE001
         log.exception("Could not snapshot %s for its rollback", p.id)
         return None
+    store.create_proposal(rollback)
+    dispatch.start_remediation_flow(rollback)
+    return rollback.id
+
+
+def _rollback_proposal(
+    p: Proposal,
+    spec: ActionSpec,
+    read,
+    params: dict,
+    *,
+    reason: str,
+    note: str,
+    by: str | None = None,
+) -> Proposal:
+    """A rollback of ``p``, snapshotting the resource as it is now (the re-check before the
+    undo compares against this)."""
+    after = spec.snapshot(read, params)
     undo = spec.undo_description(params, json.loads(p.snapshot_json))
-    rollback = Proposal(
+    return Proposal(
         id=new_id("prop"),
         user_id=p.user_id,
         conversation_id=p.conversation_id,
@@ -442,7 +602,7 @@ def _propose_rollback(
         parent_id=p.id,
         action=p.action,
         params_json=p.params_json,
-        reason="Kiểm chứng sau khi sửa không đạt: đề xuất hoàn tác về trạng thái trước.",
+        reason=reason,
         preview_json=json.dumps(
             {
                 "summary": f"Undo {p.id}: {undo}",
@@ -457,9 +617,6 @@ def _propose_rollback(
         snapshot_hash=snapshot_hash(after),
         expires_at=utcnow() + timedelta(hours=get_settings().proposal_ttl_hours),
         history_json=json.dumps(
-            [{"status": PENDING, "at": utcnow().isoformat(), "note": f"rollback of {p.id}"}]
+            [{"status": PENDING, "at": utcnow().isoformat(), "note": note, "by": by}]
         ),
     )
-    store.create_proposal(rollback)
-    dispatch.start_remediation_flow(rollback)
-    return rollback.id

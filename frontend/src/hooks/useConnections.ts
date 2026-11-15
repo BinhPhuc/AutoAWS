@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { toast } from 'sonner'
 import { connectionsApi } from '@/api/connections'
 import { ApiError } from '@/api/client'
-import type { CreateConnectionInput } from '@/api/types'
+import type { ConnectionPatch, CreateConnectionInput } from '@/api/types'
 
 export const connectionKeys = {
   all: ['connections'] as const,
@@ -98,6 +98,23 @@ export function useSetRemediationRole() {
     onSuccess: ({ message }) => {
       toast.success(message)
       void qc.invalidateQueries({ queryKey: connectionKeys.all })
+    },
+    onError: (e) => toastApiError(e),
+  })
+}
+
+/** Edit name / region / role ARN. A changed region or role comes back `pending`: verify it
+ * right away, like a new connection. */
+export function useUpdateConnection() {
+  const qc = useQueryClient()
+  const verify = useVerifyConnection()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: ConnectionPatch }) =>
+      connectionsApi.update(id, patch),
+    onSuccess: ({ data, message }) => {
+      toast.success(message)
+      void qc.invalidateQueries({ queryKey: connectionKeys.all })
+      if (data.status === 'pending') verify.mutate(data.id)
     },
     onError: (e) => toastApiError(e),
   })

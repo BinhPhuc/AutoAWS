@@ -167,6 +167,64 @@ async def test_api_errors_become_llm_errors():
         await provider.chat([LLMMessage(role="system", content="S")], [])
 
 
+class _Flaky(_FakeClient):
+    """Fails `failures` times with an error event inside a 200 stream, then answers."""
+
+    def __init__(self, failures: int, status: int = 200):
+        import anthropic
+        import httpx2
+
+        super().__init__(_message([{"type": "text", "text": "ok"}]))
+        request = httpx2.Request("POST", "https://gw.example/v1/messages")
+        response = httpx2.Response(status, request=request)
+        outer, ok_message = self, self.messages
+        self.calls = 0
+
+        class _Messages:
+            def stream(self, **params):
+                outer.calls += 1
+                if outer.calls <= failures:
+                    raise anthropic.APIStatusError(
+                        "upstream error", response=response, body={"type": "api_error"}
+                    )
+                return ok_message.stream(**params)
+
+        self.messages = _Messages()
+
+
+@pytest.fixture
+def no_backoff(monkeypatch):
+    import app.llm.claude as claude
+
+    async def instant(_seconds):
+        return None
+
+    monkeypatch.setattr(claude.asyncio, "sleep", instant)
+
+
+async def test_an_error_inside_the_stream_is_retried(no_backoff):
+    client = _Flaky(failures=2)
+    provider = ClaudeMessagesProvider("anthropic", client, "m", "high", 100, claude_features=False)
+    response = await provider.chat([LLMMessage(role="system", content="S")], [])
+    assert response.text == "ok" and client.calls == 3
+
+
+async def test_a_lasting_stream_error_is_reported_with_its_message(no_backoff):
+    client = _Flaky(failures=5)
+    provider = ClaudeMessagesProvider("anthropic", client, "m", "high", 100, claude_features=False)
+    with pytest.raises(LLMError, match=r"API error 200 \(upstream error\)"):
+        await provider.chat([LLMMessage(role="system", content="S")], [])
+    assert client.calls == 3
+
+
+async def test_client_errors_are_not_retried(no_backoff):
+    client = _Flaky(failures=5, status=422)
+    provider = ClaudeMessagesProvider("anthropic", client, "m", "high", 100, claude_features=False)
+    with pytest.raises(LLMError):
+        await provider.chat([LLMMessage(role="system", content="S")], [])
+    assert client.calls == 1
+
+
 def test_bedrock_provider_builds_the_mantle_client(monkeypatch):
     from anthropic import AsyncAnthropicBedrockMantle
 
@@ -281,3 +339,30 @@ def test_cache_breakpoints_do_not_change_the_original_request():
         "tools": [],
         "messages": [],
     }
+
+
+async def test_a_gateway_bot_challenge_is_reported_plainly():
+    """A Cloudflare "Just a moment..." page (cloud IPs blocked) is not "no access to model"."""
+    import anthropic
+    import httpx2
+
+    page = "<!DOCTYPE html><html><head><title>Just a moment...</title>" + "x" * 5000
+
+    class Blocked(_FakeClient):
+        def __init__(self):
+            super().__init__(None)
+            request = httpx2.Request("POST", "https://gw.example/v1/messages")
+            response = httpx2.Response(403, request=request)
+
+            class _Messages:
+                def stream(self, **params):
+                    raise anthropic.PermissionDeniedError(page, response=response, body=None)
+
+            self.messages = _Messages()
+
+    provider = ClaudeMessagesProvider(
+        "anthropic", Blocked(), "m", "high", 100, claude_features=False
+    )
+    with pytest.raises(LLMError) as err:
+        await provider.chat([LLMMessage(role="system", content="S")], [])
+    assert "Cloudflare challenge" in str(err.value) and "<html" not in str(err.value)

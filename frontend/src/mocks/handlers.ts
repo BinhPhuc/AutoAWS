@@ -4,6 +4,9 @@ import type {
   ApiErrorBody,
   CloudFormationInfo,
   Connection,
+  ConnectionPatch,
+  LlmConfig,
+  LlmConfigInput,
   Conversation,
   CreateConnectionInput,
   CreateConversationInput,
@@ -53,7 +56,9 @@ export const handlers = [
   http.get('/api/auth/config', () =>
     ok({ mode: 'none', domain: null, client_id: null, scopes: [] }),
   ),
-  http.get('/api/me', () => ok({ user_id: 'local', username: 'local', auth_mode: 'none' })),
+  http.get('/api/me', () =>
+    ok({ user_id: 'local', username: 'local', auth_mode: 'none', is_admin: true }),
+  ),
 
   // ---------- connections ----------
   http.get('/api/connections/setup', () =>
@@ -62,6 +67,7 @@ export const handlers = [
       role_name: 'AutoAWSReadOnly',
       trust_principals: ['arn:aws:iam::111122223333:root'],
       external_id: mockExternalId(), // the real server signs it for the caller
+      default_region: 'ap-southeast-1',
     }),
   ),
   http.post('/api/connections/cloudformation-preview', async ({ request }) => {
@@ -283,9 +289,25 @@ export const handlers = [
   http.patch('/api/connections/:id', async ({ params, request }) => {
     const c = db.connections.find((x) => x.id === params.id)
     if (!c) return fail(404, 'CONNECTION_NOT_FOUND', 'Connection not found', pathOf(request))
-    const body = (await request.json()) as { remediation_role_arn: string | null }
-    c.remediation_role_arn = body.remediation_role_arn
-    c.remediation_enabled = !!body.remediation_role_arn
+    const body = (await request.json()) as ConnectionPatch
+    if (('role_arn' in body || 'remediation_role_arn' in body) && c.type !== 'role')
+      return fail(
+        400,
+        'VALIDATION_ERROR',
+        'Role ARNs can only be set on role connections',
+        pathOf(request),
+      )
+    if (body.name !== undefined) c.name = body.name
+    const reconnect =
+      (body.region !== undefined && body.region !== c.region) ||
+      (body.role_arn !== undefined && body.role_arn !== c.role_arn)
+    if (body.region !== undefined) c.region = body.region
+    if (body.role_arn !== undefined) c.role_arn = body.role_arn
+    if ('remediation_role_arn' in body) {
+      c.remediation_role_arn = body.remediation_role_arn ?? null
+      c.remediation_enabled = !!body.remediation_role_arn
+    }
+    if (reconnect) Object.assign(c, { status: 'pending', last_error: null })
     return ok(c, 'Connection updated')
   }),
 
@@ -330,7 +352,15 @@ export const handlers = [
           ok: true,
           details: 'subnet-0a1b uses rtb-public: 0.0.0.0/0 -> igw-0f3c (active)',
         }
-        mark('SUCCEEDED', 'verified')
+        mark('SUCCEEDED', p.kind === 'rollback' ? 'rolled back and verified' : 'verified')
+        const parent = db.proposals.find((x) => x.id === p.parent_id)
+        if (p.kind === 'rollback' && parent) {
+          parent.status = 'ROLLED_BACK'
+          parent.history = [
+            ...parent.history,
+            { status: 'ROLLED_BACK', at: now(), note: `rolled back by ${p.id}` },
+          ]
+        }
       }, 2000)
       return ok({ proposal: p, followup_question: null }, 'Proposal approved')
     }
@@ -348,7 +378,169 @@ export const handlers = [
     )
   }),
 
-  http.get('/api/remediation/actions', async () => ok([])),
+  http.post('/api/proposals/:id/revise', async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === params.id)
+    if (!p) return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found', pathOf(request))
+    const editable = ['PENDING_APPROVAL', 'REJECTED', 'EXPIRED', 'STALE', 'SUPERSEDED']
+    if (p.kind !== 'fix' || !editable.includes(p.status))
+      return fail(
+        409,
+        'PROPOSAL_NOT_EDITABLE',
+        'Only proposals that were not applied can be edited',
+        pathOf(request),
+      )
+    const body = (await request.json()) as { params: Record<string, unknown> }
+    // The real server re-runs the pre-checks; the mock refuses the private route table
+    if (String(body.params.route_table_id ?? '').includes('private'))
+      return fail(
+        422,
+        'VALIDATION_ERROR',
+        `Invalid request: Pre-check failed: ${String(body.params.route_table_id)} has no active 0.0.0.0/0 route to an Internet gateway`,
+        pathOf(request),
+      )
+    if (p.status === 'PENDING_APPROVAL') {
+      p.status = 'SUPERSEDED'
+      p.history = [...p.history, { status: 'SUPERSEDED', at: now(), note: 'edited by the user' }]
+    }
+    const next: Proposal = {
+      ...structuredClone(p),
+      id: nextId('prop'),
+      parent_id: p.id,
+      params: body.params,
+      status: 'PENDING_APPROVAL',
+      result: null,
+      verification: null,
+      error: null,
+      history: [
+        { status: 'PENDING_APPROVAL', at: now(), note: `revised by the user from ${p.id}` },
+      ],
+      created_at: now(),
+      updated_at: now(),
+      expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    }
+    db.proposals.unshift(next)
+    return ok(next, 'Proposal revised', 201)
+  }),
+
+  http.post('/api/proposals/:id/rollback', async ({ params, request }) => {
+    const p = db.proposals.find((x) => x.id === params.id)
+    if (!p) return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found', pathOf(request))
+    if (p.kind !== 'fix' || p.status !== 'SUCCEEDED')
+      return fail(
+        409,
+        'PROPOSAL_NOT_ROLLBACKABLE',
+        'Only applied fixes can be rolled back',
+        pathOf(request),
+      )
+    const active = db.proposals.some(
+      (x) =>
+        x.parent_id === p.id &&
+        x.kind === 'rollback' &&
+        ['PENDING_APPROVAL', 'APPROVED', 'EXECUTING'].includes(x.status),
+    )
+    if (active)
+      return fail(
+        409,
+        'PROPOSAL_NOT_ROLLBACKABLE',
+        'A rollback of this proposal is already waiting or running',
+        pathOf(request),
+      )
+    const rb: Proposal = {
+      ...structuredClone(p),
+      id: nextId('prop'),
+      kind: 'rollback',
+      parent_id: p.id,
+      status: 'PENDING_APPROVAL',
+      reason: 'Người dùng yêu cầu hoàn tác thay đổi đã áp dụng.',
+      preview: {
+        summary: `Undo ${p.id}: ${p.preview.rollback}`,
+        changes: [],
+        impact: 'Restores the state captured before the approved change.',
+        risk: 'low',
+        rollback: '-',
+        verify: 'The resource matches the state before the change.',
+      },
+      result: null,
+      verification: null,
+      error: null,
+      history: [{ status: 'PENDING_APPROVAL', at: now(), note: 'rollback requested by the user' }],
+      created_at: now(),
+      updated_at: now(),
+      expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    }
+    db.proposals.unshift(rb)
+    return ok(rb, 'Rollback proposed', 201)
+  }),
+
+  http.get('/api/remediation/actions', async () => ok(remediationActions)),
+
+  // ---------- admin: LLM settings (keys are never returned) ----------
+  http.get('/api/admin/llm', () => ok(llm)),
+  http.put('/api/admin/llm', async ({ request }) => {
+    const body = (await request.json()) as LlmConfigInput
+    const at = now()
+    const hint = (v: string) => (v.length >= 12 ? `…${v.slice(-4)}` : '…')
+    const apply = (
+      cur: LlmConfig['bedrock']['secrets']['api_key'],
+      v: string | null | undefined,
+    ) =>
+      v === undefined
+        ? cur
+        : v === null
+          ? { set: false, hint: null, updated_at: null }
+          : { set: true, hint: hint(v), updated_at: at }
+    const sec = body.secrets
+    llm = {
+      ...llm,
+      provider: body.provider,
+      source: 'admin',
+      updated_at: at,
+      updated_by: 'local',
+      bedrock: {
+        ...body.bedrock,
+        access_key_id: body.bedrock.access_key_id.includes('****')
+          ? llm.bedrock.access_key_id
+          : body.bedrock.access_key_id.replace(/^(.{4}).*(.{4})$/, '$1****$2'),
+        secrets: {
+          api_key: apply(llm.bedrock.secrets.api_key, sec['bedrock.api_key']),
+          secret_access_key: apply(
+            llm.bedrock.secrets.secret_access_key,
+            sec['bedrock.secret_access_key'],
+          ),
+        },
+      },
+      anthropic: {
+        ...body.anthropic,
+        secrets: { api_key: apply(llm.anthropic.secrets.api_key, sec['anthropic.api_key']) },
+      },
+      openai: {
+        ...body.openai,
+        secrets: { api_key: apply(llm.openai.secrets.api_key, sec['openai.api_key']) },
+      },
+    }
+    return ok(llm, 'LLM settings saved')
+  }),
+  http.delete('/api/admin/llm', () => {
+    llm = structuredClone(LLM_ENV)
+    return ok(llm, 'LLM settings reset')
+  }),
+  http.post('/api/admin/llm/test', async () => {
+    await delay(500)
+    const model = {
+      bedrock: llm.bedrock.model,
+      anthropic: llm.anthropic.model,
+      openai: llm.openai.model,
+      mock: '',
+    }[llm.provider]
+    return ok({
+      ok: true,
+      provider: llm.provider,
+      model,
+      latency_ms: 480,
+      reply: 'OK',
+      error: null,
+    })
+  }),
 
   // ---------- tools ----------
   http.get('/api/tools', async () => {
@@ -404,7 +596,7 @@ Outputs:
 `
 }
 
-/** KB1 answers carry one proposal (associate_route_table) stored in the mock db. */
+/** KB1 answers carry one proposal (route_table_associate) stored in the mock db. */
 function withMockProposals(answer: DiagnosisAnswer, conversationId: string, messageId: string) {
   if (!answer.fix_steps.some((f) => f.includes('subnet-0a1b'))) return answer
   const p: Proposal = {
@@ -414,7 +606,7 @@ function withMockProposals(answer: DiagnosisAnswer, conversationId: string, mess
     connection_id: db.connections[0]?.id ?? '',
     kind: 'fix',
     parent_id: null,
-    action: 'associate_route_table',
+    action: 'route_table_associate',
     params: { subnet_id: 'subnet-0a1b', route_table_id: 'rtb-public' },
     reason: 'Gắn subnet-0a1b về route table public có tuyến 0.0.0.0/0 → igw-0f3c.',
     status: 'PENDING_APPROVAL',
@@ -448,6 +640,73 @@ function withMockProposals(answer: DiagnosisAnswer, conversationId: string, mess
     ],
   }
 }
+
+const NO_KEY = { set: false, hint: null, updated_at: null }
+/** The environment's LLM settings (what DELETE /api/admin/llm goes back to). */
+const LLM_ENV: LlmConfig = {
+  provider: 'mock',
+  source: 'env',
+  storage: 'file',
+  updated_at: null,
+  updated_by: null,
+  bedrock: {
+    model: 'anthropic.claude-opus-5-5',
+    fallback_model: 'anthropic.claude-opus-4-8',
+    region: 'ap-southeast-2',
+    auth: 'iam',
+    access_key_id: '',
+    role_arn: '',
+    external_id: '',
+    secrets: { api_key: NO_KEY, secret_access_key: NO_KEY },
+  },
+  anthropic: { model: 'claude-opus-5-5', base_url: '', secrets: { api_key: NO_KEY } },
+  openai: { model: '', base_url: 'http://localhost:11434/v1', secrets: { api_key: NO_KEY } },
+}
+let llm: LlmConfig = structuredClone(LLM_ENV)
+
+/** Two catalogue actions with the server's input schemas (backend catalog.py). */
+const remediationActions = [
+  {
+    name: 'route_table_associate',
+    label: 'Change subnet route table',
+    description: 'Make a subnet use another route table of its VPC.',
+    aws_actions: ['ec2:AssociateRouteTable', 'ec2:ReplaceRouteTableAssociation'],
+    input_schema: {
+      type: 'object',
+      properties: {
+        subnet_id: { type: 'string', pattern: '^subnet-[0-9a-f]+$' },
+        route_table_id: { type: 'string', pattern: '^rtb-[0-9a-z]+$' },
+      },
+      required: ['subnet_id', 'route_table_id'],
+    },
+  },
+  {
+    name: 'sg_add_rule',
+    label: 'Add security group rule',
+    description:
+      'Add ONE rule (inbound or outbound, one port range, one source) to a security group.',
+    aws_actions: [
+      'ec2:AuthorizeSecurityGroupIngress',
+      'ec2:AuthorizeSecurityGroupEgress',
+      'ec2:RevokeSecurityGroupIngress',
+      'ec2:RevokeSecurityGroupEgress',
+    ],
+    input_schema: {
+      type: 'object',
+      properties: {
+        group_id: { type: 'string', pattern: '^sg-[0-9a-f]+$' },
+        direction: { type: 'string', enum: ['ingress', 'egress'] },
+        protocol: { type: 'string', enum: ['tcp', 'udp', 'icmp', 'all'] },
+        from_port: { type: 'integer', minimum: -1, maximum: 65535 },
+        to_port: { type: 'integer', minimum: -1, maximum: 65535 },
+        cidr: { type: 'string', description: 'e.g. 0.0.0.0/0 or 203.0.113.7/32' },
+        source_group_id: { type: 'string', pattern: '^sg-[0-9a-f]+$' },
+        description: { type: 'string', maxLength: 255 },
+      },
+      required: ['group_id'],
+    },
+  },
+]
 
 /** Plays a scripted scenario into the job, like the agent-worker would. */
 async function runMockJob(job: Job, conv: Conversation, list: Message[], question: string) {

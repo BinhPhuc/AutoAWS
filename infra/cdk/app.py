@@ -52,6 +52,7 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
         auth.user_pool,
         auth.client,
         auth.domain_url,
+        agent.llm_config,
         env=env,
     )
     ops = OpsStack(

@@ -44,6 +44,11 @@ Thumbs.db
 infra/localstack/answers.local.json
 infra/eval/results/
 infra/aws-scenarios/answers.aws.json
+infra/aws-scenarios/answers.aws.lock
 infra/cdk/.venv/
 infra/cdk/build/
 infra/cdk/cdk.out/
+
+# Admin LLM settings (encrypted, keys inside): never commit
+backend/.llm-config.enc
+.llm-config.enc

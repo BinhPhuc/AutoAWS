@@ -36,6 +36,7 @@ class ApiStack(Stack):
         user_pool: cognito.IUserPool,
         web_client: cognito.IUserPoolClient,
         hosted_ui_url: str,
+        llm_config: secretsmanager.ISecret,
         **kwargs,
     ) -> None:
         super().__init__(scope, cid, **kwargs)
@@ -68,6 +69,9 @@ class ApiStack(Stack):
         table.grant_read_write_data(role)
         key.grant_encrypt_decrypt(role)
         agent_worker.grant_invoke(role)
+        # The admin page saves the LLM settings (keys are write-only through the API)
+        llm_config.grant_read(role)
+        llm_config.grant_write(role)
 
         # Signs the External IDs issued to users (backend app/external_id.py). Generated once;
         # it must never change, or IDs shown before the role was created stop verifying.
@@ -98,7 +102,12 @@ class ApiStack(Stack):
             environment={
                 **common_env(self, cfg, table, site_url),
                 "AGENT_WORKER_FUNCTION": agent_worker.function_name,
-                "LLM_PROVIDER": "mock",  # the API never calls a model
+                # The API never calls a model (the admin test runs in agent-worker); it carries
+                # the same defaults so the admin page shows what agent-worker really uses
+                "LLM_PROVIDER": "bedrock",
+                "BEDROCK_MODEL_ID": cfg.bedrock_model_id,
+                "BEDROCK_REGION": self.region,
+                "BEDROCK_FALLBACK_MODEL": cfg.bedrock_fallback_model,
                 # Served through CloudFront under the same origin; CORS only for the site
                 "CORS_ORIGINS": site_url,
                 "AUTH_MODE": "cognito",
@@ -106,6 +115,8 @@ class ApiStack(Stack):
                 "COGNITO_CLIENT_ID": web_client.user_pool_client_id,
                 "COGNITO_DOMAIN": hosted_ui_url,
                 "EXTERNAL_ID_SECRET": external_id_key.secret_value.unsafe_unwrap(),
+                "LLM_CONFIG_BACKEND": "secretsmanager",
+                "LLM_CONFIG_SECRET_ID": llm_config.secret_arn,
             },
         )
         integration = integrations.HttpLambdaIntegration(

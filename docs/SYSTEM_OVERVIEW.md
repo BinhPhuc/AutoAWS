@@ -135,7 +135,7 @@ Nhờ vậy agent kiểm tra có thứ tự thay vì liệt kê nguyên nhân ch
 
 > Đây là đích cuối. **Bản init chạy local** (FastAPI + React) nhưng cấu trúc code bám theo các khối này để sau đóng gói lên Lambda.
 
-**Tài khoản nền tảng AutoAWS** chứa toàn bộ ứng dụng; **tài khoản người dùng** chỉ được truy cập qua IAM role chỉ đọc + STS credentials tạm thời (~15 phút).
+**Tài khoản triển khai hệ thống AutoAWS** chứa toàn bộ ứng dụng; **tài khoản người dùng** chỉ được truy cập qua IAM role chỉ đọc + STS credentials tạm thời (~15 phút).
 
 | Thành phần | Công nghệ | Vai trò |
 |---|---|---|

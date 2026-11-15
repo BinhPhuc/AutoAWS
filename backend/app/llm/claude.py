@@ -19,6 +19,7 @@ defaults to ``medium``, so the effort is always sent). Requests stream and are c
 with ``get_final_message()`` because tool results can make inputs long.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -28,6 +29,24 @@ from app.aws.registry import ToolSpec
 from app.llm.base import LLMError, LLMMessage, LLMResponse, ToolCallRequest
 
 log = logging.getLogger(__name__)
+
+# The SDK retries failed HTTP responses itself, but not an `error` event that arrives inside
+# a stream which started with 200 (gateways relay upstream failures this way). One such
+# blip would otherwise throw away every tool call of the turn.
+STREAM_ATTEMPTS = 3
+
+
+def _is_bot_challenge(message: str) -> bool:
+    """An HTML bot-check page (e.g. Cloudflare "Just a moment...") instead of an API error:
+    the gateway blocks the caller's network, typically cloud provider IP ranges."""
+    m = message or ""
+    return "Just a moment" in m or "challenges.cloudflare.com" in m or "cf_chl" in m
+
+
+def _short(message: str, limit: int = 300) -> str:
+    """Error text for logs / users: never a whole HTML page."""
+    m = " ".join((message or "").split())
+    return m if len(m) <= limit else m[:limit] + "…"
 
 
 def to_messages(messages: list[LLMMessage]) -> tuple[str, list[dict]]:
@@ -179,17 +198,44 @@ class ClaudeMessagesProvider:
             **self.extra,
         }
 
+    async def _stream(self, api: Any, params: dict) -> Any:
+        for attempt in range(1, STREAM_ATTEMPTS + 1):
+            try:
+                async with api.stream(**params) as stream:
+                    return await stream.get_final_message()
+            except anthropic.APIStatusError as e:
+                transient = e.status_code == 200 or e.status_code >= 500
+                if not transient or attempt == STREAM_ATTEMPTS:
+                    raise
+                log.warning(
+                    "%s: error in the response (%s %s), retry %d/%d",
+                    self.name,
+                    e.status_code,
+                    e.message,
+                    attempt,
+                    STREAM_ATTEMPTS - 1,
+                )
+                await asyncio.sleep(2 * attempt)
+        raise AssertionError("unreachable")
+
     async def chat(self, messages: list[LLMMessage], tools: list[ToolSpec]) -> LLMResponse:
         params = self.request(messages, tools)
         try:
             # Gateways get the plain endpoint (the beta one adds ?beta=true)
             api = self.client.beta.messages if self.claude_features else self.client.messages
-            async with api.stream(**params) as stream:
-                message = await stream.get_final_message()
+            message = await self._stream(api, params)
         except anthropic.AuthenticationError as e:
             raise LLMError(f"{self.name}: authentication failed ({e.message})") from e
         except anthropic.PermissionDeniedError as e:
-            raise LLMError(f"{self.name}: no access to model {self.model} ({e.message})") from e
+            if _is_bot_challenge(e.message):
+                raise LLMError(
+                    f"{self.name}: the endpoint's bot protection (Cloudflare challenge) refused "
+                    "this server's IP address; call it from an allowed network or use another "
+                    "provider"
+                ) from e
+            raise LLMError(
+                f"{self.name}: no access to model {self.model} ({_short(e.message)})"
+            ) from e
         except anthropic.NotFoundError as e:
             raise LLMError(f"{self.name}: model {self.model} not found ({e.message})") from e
         except anthropic.RateLimitError as e:
@@ -198,7 +244,8 @@ class ClaudeMessagesProvider:
             log.error("Bad request to %s: %s", self.name, e.message)
             raise LLMError(f"{self.name}: request rejected ({e.message})") from e
         except anthropic.APIStatusError as e:
-            raise LLMError(f"{self.name}: API error {e.status_code}") from e
+            log.error("%s: API error %s: %s", self.name, e.status_code, _short(e.message))
+            raise LLMError(f"{self.name}: API error {e.status_code} ({_short(e.message)})") from e
         except anthropic.APIConnectionError as e:
             raise LLMError(f"{self.name}: cannot reach the API") from e
         response = from_message(message)

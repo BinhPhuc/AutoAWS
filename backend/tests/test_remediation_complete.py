@@ -80,7 +80,7 @@ def _inbound(ec2, sg) -> list:
 def test_dry_run_passes_then_the_change_is_applied_once(world, monkeypatch):
     monkeypatch.setattr(world["settings"], "remediation_dry_run", True)
     pid = world["propose"](
-        "authorize_sg_ingress", {"group_id": world["sg"], "port": 8080, "cidr": "0.0.0.0/0"}
+        "sg_add_rule", {"group_id": world["sg"], "from_port": 8080, "cidr": "0.0.0.0/0"}
     )
     out = world["run"](pid)
     assert out["status"] == "SUCCEEDED", out
@@ -90,14 +90,14 @@ def test_dry_run_passes_then_the_change_is_applied_once(world, monkeypatch):
 
 def test_dry_run_refused_means_nothing_is_written(world, monkeypatch):
     monkeypatch.setattr(world["settings"], "remediation_dry_run", True)
-    spec = catalog.CATALOG["authorize_sg_ingress"]
+    spec = catalog.CATALOG["sg_add_rule"]
 
     def denied(*_):
         raise catalog.DryRunDenied("You are not authorized to perform this operation.")
 
     monkeypatch.setitem(catalog.CATALOG, spec.name, dataclasses.replace(spec, dry_run=denied))
     pid = world["propose"](
-        "authorize_sg_ingress", {"group_id": world["sg"], "port": 8080, "cidr": "0.0.0.0/0"}
+        "sg_add_rule", {"group_id": world["sg"], "from_port": 8080, "cidr": "0.0.0.0/0"}
     )
     out = world["run"](pid)
     assert out["status"] == "FAILED" and out["error"].startswith("Permission:")
@@ -109,7 +109,7 @@ def test_an_endpoint_that_ignores_dry_run_stops_the_execution(world, monkeypatch
     AutoAWS must notice the missing DryRunOperation answer and stop."""
     monkeypatch.setattr(world["settings"], "remediation_dry_run", True)
     pid = world["propose"](
-        "associate_route_table", {"subnet_id": world["subnet"], "route_table_id": world["public"]}
+        "route_table_associate", {"subnet_id": world["subnet"], "route_table_id": world["public"]}
     )
     out = world["run"](pid)
     assert out["status"] == "FAILED" and "ignored DryRun" in out["error"]
@@ -126,18 +126,18 @@ def test_dry_run_is_off_against_emulators(world, monkeypatch):
 def test_restart_recovers_or_closes_interrupted_proposals(world):
     store = world["store"]
     rt = {"subnet_id": world["subnet"], "route_table_id": world["public"]}
-    sg8080 = {"group_id": world["sg"], "port": 8080, "cidr": "0.0.0.0/0"}
-    sg443 = {"group_id": world["sg"], "port": 443, "cidr": "0.0.0.0/0"}
+    sg8080 = {"group_id": world["sg"], "from_port": 8080, "cidr": "0.0.0.0/0"}
+    sg443 = {"group_id": world["sg"], "from_port": 443, "cidr": "0.0.0.0/0"}
 
-    approved = world["propose"]("associate_route_table", rt)  # approved, never started
+    approved = world["propose"]("route_table_associate", rt)  # approved, never started
     service.decide(store, store.get_proposal(approved), "approve")
 
-    applied = world["propose"]("authorize_sg_ingress", sg8080)  # written, not verified yet
+    applied = world["propose"]("sg_add_rule", sg8080)  # written, not verified yet
     service.decide(store, store.get_proposal(applied), "approve")
     service.recheck_step(store, applied)
     service.execute_step(store, applied)
 
-    unknown = world["propose"]("authorize_sg_ingress", sg443)  # died before storing a result
+    unknown = world["propose"]("sg_add_rule", sg443)  # died before storing a result
     service.decide(store, store.get_proposal(unknown), "approve")
     service.recheck_step(store, unknown)
 

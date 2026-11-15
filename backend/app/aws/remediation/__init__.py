@@ -1,7 +1,7 @@
 """Remediation: the ONLY place AutoAWS writes to a user's account (AGENTS.md hard constraint #1).
 
-- ``catalog``: the fixed list of actions (report Table 2.11), each with snapshot, pre-check,
-  preview, execute, verify and undo written by hand. The LLM only names an action and its
-  parameters; it never writes commands.
+- ``catalog``: the fixed, generic list of actions (by resource and operation), each with
+  snapshot, pre-check, preview, execute, verify and undo written by hand (``actions/``). The
+  LLM only names an action and its parameters; it never writes commands.
 - ``sessions``: the write session, locked to exactly the API calls of one action.
 """

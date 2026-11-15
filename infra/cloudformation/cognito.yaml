@@ -126,6 +126,13 @@ Resources:
         IdToken: hours
         RefreshToken: days
 
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref Users
+      GroupName: admin
+      Description: AutoAWS admins (LLM provider, model and keys on the admin page)
+
 Outputs:
   UserPoolId:
     Description: Set COGNITO_USER_POOL_ID to this value.

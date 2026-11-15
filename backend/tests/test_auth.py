@@ -58,7 +58,7 @@ def cognito(monkeypatch):
 def test_without_sign_in_everyone_is_the_local_user(client):
     assert client.get("/api/auth/config").json()["data"]["mode"] == "none"
     me = client.get("/api/me").json()["data"]
-    assert me == {"user_id": "local", "username": "local", "auth_mode": "none"}
+    assert me == {"user_id": "local", "username": "local", "auth_mode": "none", "is_admin": True}
 
 
 # ---- AUTH_MODE=cognito -------------------------------------------------------------------
@@ -86,7 +86,12 @@ def test_every_other_route_needs_a_token(client, cognito, path):
 
 def test_a_valid_access_token_identifies_the_user(client, cognito):
     me = client.get("/api/me", headers=bearer("user-a")).json()["data"]
-    assert me == {"user_id": "user-a", "username": "user-a", "auth_mode": "cognito"}
+    assert me == {
+        "user_id": "user-a",
+        "username": "user-a",
+        "auth_mode": "cognito",
+        "is_admin": False,
+    }
 
 
 @pytest.mark.parametrize(
@@ -162,7 +167,7 @@ def owned_by_a(client, cognito, aws):
                 user_id=a,
                 conversation_id=conv["id"],
                 connection_id=conn["id"],
-                action="authorize_sg_ingress",
+                action="sg_add_rule",
             )
         ).id
     return {"user": a, "conn": conn, "conv": conv, "job": job, "prop": prop, "ext_id": ext_id}
@@ -213,6 +218,12 @@ def test_other_users_see_nothing_and_cannot_touch_it(client, owned_by_a):
     assert r.json()["error"] == "CONVERSATION_NOT_FOUND"
     r = client.post(f"/api/proposals/{prop}/decision", headers=h, json={"decision": "approve"})
     assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
+    r = client.post(f"/api/proposals/{prop}/revise", headers=h, json={"params": {}})
+    assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
+    r = client.post(f"/api/proposals/{prop}/rollback", headers=h)
+    assert r.json()["error"] == "PROPOSAL_NOT_FOUND"
+    r = client.patch(f"/api/connections/{conn}", headers=h, json={"name": "mine now"})
+    assert r.json()["error"] == "CONNECTION_NOT_FOUND"
     # and nothing of A's changed
     assert (
         client.get(f"/api/connections/{conn}", headers=bearer(owned_by_a["user"])).status_code

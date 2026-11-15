@@ -89,7 +89,7 @@ def _ask(
 
 def _fix(kb1) -> dict:
     return {
-        "action": "associate_route_table",
+        "action": "route_table_associate",
         "params": {"subnet_id": kb1["subnet"], "route_table_id": kb1["public"]},
         "reason": "Gắn subnet về route table public",
     }
@@ -154,7 +154,7 @@ def test_reject_and_feedback_change_nothing(client, connection, kb1, monkeypatch
     # the next turn tells the model what happened to its proposals
     _, _, provider = _ask(client, connection, monkeypatch, [], conv_id=conv_id)
     question = provider.seen[0][-1].content
-    assert f"{pid} fix associate_route_table" in question and "SUPERSEDED" in question
+    assert f"{pid} fix route_table_associate" in question and "SUPERSEDED" in question
 
 
 def test_resource_changed_since_the_preview_is_stale(client, connection, kb1, monkeypatch):
@@ -179,10 +179,10 @@ def test_resource_changed_since_the_preview_is_stale(client, connection, kb1, mo
 
 
 def test_failed_verification_proposes_a_rollback(client, connection, kb1, monkeypatch):
-    spec = catalog.CATALOG["associate_route_table"]
+    spec = catalog.CATALOG["route_table_associate"]
     monkeypatch.setitem(
         catalog.CATALOG,
-        "associate_route_table",
+        "route_table_associate",
         dataclasses.replace(spec, verify=lambda *a: (False, "forced failure")),
     )
     conv_id, answer, _ = _ask(client, connection, monkeypatch, [_fix(kb1)])
@@ -206,8 +206,8 @@ def test_failed_verification_proposes_a_rollback(client, connection, kb1, monkey
 
 def test_refused_proposals_are_reported_not_stored(client, connection, kb1, monkeypatch):
     open_ssh = {
-        "action": "authorize_sg_ingress",
-        "params": {"group_id": kb1["sg"], "port": 22, "cidr": "0.0.0.0/0"},
+        "action": "sg_add_rule",
+        "params": {"group_id": kb1["sg"], "from_port": 22, "cidr": "0.0.0.0/0"},
         "reason": "Mở SSH",
     }
     unknown = {"action": "terminate_instances", "params": {}, "reason": "?"}
@@ -284,9 +284,11 @@ def test_role_connection_remediation_role(client):
 def test_actions_catalogue_endpoint(client):
     actions = client.get("/api/remediation/actions").json()["data"]
     names = {a["name"] for a in actions}
-    assert "associate_route_table" in names and len(actions) == 6
-    sg = next(a for a in actions if a["name"] == "authorize_sg_ingress")
+    assert "route_table_associate" in names and len(actions) == 20
+    sg = next(a for a in actions if a["name"] == "sg_add_rule")
     assert sg["aws_actions"] == [
         "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
         "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
     ]

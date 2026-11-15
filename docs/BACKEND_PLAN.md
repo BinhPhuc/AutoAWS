@@ -183,7 +183,7 @@ LLM_PROVIDER=mock              # mock | openai | deepseek | anthropic | bedrock 
 ANTHROPIC_API_KEY=
 BEDROCK_MODEL_ID=
 BEDROCK_REGION=
-PLATFORM_AWS_ACCOUNT_ID=       # cần cho type=role (tài khoản nền tảng)
+PLATFORM_AWS_ACCOUNT_ID=       # cần cho type=role (tài khoản triển khai hệ thống AutoAWS)
 PLATFORM_AWS_PROFILE=          # hoặc AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY chuẩn của boto3
 MAX_AGENT_ITERATIONS=8
 CORS_ORIGINS=*

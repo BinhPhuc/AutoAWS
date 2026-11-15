@@ -30,8 +30,16 @@ VERIFY_AWS_ACTIONS = ["sts:GetCallerIdentity", "ec2:DescribeRegions"]
 # per account and Region (docs/SYSTEM_OVERVIEW.md / report §2.3.2).
 RETRY_CONFIG = Config(retries={"mode": "adaptive", "max_attempts": 6})
 
-_role_cache: dict[str, tuple[boto3.Session, datetime]] = {}
+# conn.id -> (session, expiration, (role_arn, external_id, region)): a connection edited to
+# another role or region never reuses a session made for the old values
+_role_cache: dict[str, tuple[boto3.Session, datetime, tuple]] = {}
 _REFRESH_MARGIN = timedelta(seconds=60)
+
+
+def _reuse_margin() -> timedelta:
+    """A job resolves its session once and keeps it for the whole run (up to
+    MAX_AGENT_SECONDS), so a cached session is only handed out if it outlives a full job."""
+    return timedelta(seconds=get_settings().max_agent_seconds) + _REFRESH_MARGIN
 
 
 class CredentialError(Exception):
@@ -98,7 +106,8 @@ def resolve_session(conn: Connection) -> boto3.Session:
     if conn.type == "role":
         cached = _role_cache.get(conn.id)
         now = datetime.now(UTC)
-        if cached and cached[1] - _REFRESH_MARGIN > now:
+        key = (conn.role_arn, conn.external_id, conn.region)
+        if cached and cached[2] == key and cached[1] - _reuse_margin() > now:
             return cached[0]
         if not conn.role_arn or not conn.external_id:
             raise CredentialError("Connection has no role ARN / external id")
@@ -128,7 +137,7 @@ def resolve_session(conn: Connection) -> boto3.Session:
         expiration = creds["Expiration"]
         if expiration.tzinfo is None:
             expiration = expiration.replace(tzinfo=UTC)
-        _role_cache[conn.id] = (session, expiration)
+        _role_cache[conn.id] = (session, expiration, key)
         return session
 
     raise CredentialError(f"Unknown connection type: {conn.type}")

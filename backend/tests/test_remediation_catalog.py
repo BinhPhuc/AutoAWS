@@ -86,101 +86,38 @@ def _round_trip(action: str, params: dict) -> dict:
     return {"prepared": prepared, "result": result, "writes": writes}
 
 
-def test_catalogue_has_the_six_report_actions():
-    assert set(CATALOG) == {
-        "associate_route_table",
-        "create_route_to_igw",
-        "authorize_sg_ingress",
-        "allocate_and_associate_eip",
-        "upsert_a_record",
-        "modify_health_check_path",
-    }
-    for spec in CATALOG.values():
-        for action in spec.write_actions:
-            assert not action.startswith(("iam:", "organizations:")), action
-            assert action not in ("ec2:TerminateInstances", "ec2:StopInstances")
+def _error(aws, action: str, params: dict) -> str:
+    prepared, error = prepare(aws, action, params)
+    assert prepared is None, f"{action} {params} should be refused"
+    return error
 
 
-def test_associate_route_table(aws):
-    n = _network(aws)
-    out = _round_trip(
-        "associate_route_table", {"subnet_id": n["subnet"], "route_table_id": n["public"]}
-    )
-    preview = out["prepared"].preview
-    assert n["private"] in preview["changes"][0]["before"]
-    assert n["public"] in preview["changes"][0]["after"]
-    # pre-check: the target must have an Internet route and be another table
-    _, error = prepare(
-        aws, "associate_route_table", {"subnet_id": n["subnet"], "route_table_id": n["private"]}
-    )
-    assert "no active 0.0.0.0/0" in error
+def _zone(aws) -> str:
+    return aws.client("route53").create_hosted_zone(Name="example.com.", CallerReference="z")[
+        "HostedZone"
+    ]["Id"]
 
 
-def test_create_route_to_igw(aws):
-    n = _network(aws)
-    out = _round_trip("create_route_to_igw", {"route_table_id": n["private"]})
-    assert out["result"]["gateway_id"] == n["igw"]
-    _, error = prepare(aws, "create_route_to_igw", {"route_table_id": n["public"]})
-    assert "already has a 0.0.0.0/0 route" in error
-
-
-def test_authorize_sg_ingress(aws):
-    n = _network(aws)
-    _round_trip("authorize_sg_ingress", {"group_id": n["sg"], "port": 8080, "cidr": "0.0.0.0/0"})
-    for cidr in ("0.0.0.0/0", "::/0"):
-        _, error = prepare(
-            aws, "authorize_sg_ingress", {"group_id": n["sg"], "port": 22, "cidr": cidr}
-        )
-        assert "never opened to the whole Internet" in error
-    prepared, error = prepare(
-        aws, "authorize_sg_ingress", {"group_id": n["sg"], "port": 22, "cidr": "203.0.113.7/32"}
-    )
-    assert prepared and not error
-
-
-def test_allocate_and_associate_eip(aws):
-    n = _network(aws)
-    out = _round_trip("allocate_and_associate_eip", {"instance_id": n["instance"]})
-    assert out["result"]["public_ip"]
-    # the Elastic IP was released by the undo: nothing left behind
-    assert aws.client("ec2").describe_addresses()["Addresses"] == []
-
-
-def test_upsert_a_record(aws):
-    n = _network(aws)
-    ip = aws.client("ec2").describe_instances(InstanceIds=[n["instance"]])["Reservations"][0][
-        "Instances"
-    ][0]["PublicIpAddress"]
-    r53 = aws.client("route53")
-    zone = r53.create_hosted_zone(Name="example.com.", CallerReference="z")["HostedZone"]["Id"]
-    r53.change_resource_record_sets(
+def _record(aws, zone: str, name: str, rtype: str, value: str) -> None:
+    aws.client("route53").change_resource_record_sets(
         HostedZoneId=zone,
         ChangeBatch={
             "Changes": [
                 {
                     "Action": "UPSERT",
                     "ResourceRecordSet": {
-                        "Name": "app.example.com.",
-                        "Type": "A",
+                        "Name": name,
+                        "Type": rtype,
                         "TTL": 300,
-                        "ResourceRecords": [{"Value": "13.212.10.20"}],
+                        "ResourceRecords": [{"Value": value}],
                     },
                 }
             ]
         },
     )
-    out = _round_trip(
-        "upsert_a_record", {"record_name": "app.example.com", "instance_id": n["instance"]}
-    )
-    assert out["result"]["value"] == ip
-    _, error = prepare(aws, "upsert_a_record", {"record_name": "app.example.com", "ip": "8.8.8.8"})
-    assert "not a public IP" in error
-    _, error = prepare(aws, "upsert_a_record", {"record_name": "new.example.com", "ip": ip})
-    assert "no A record" in error
 
 
-def test_modify_health_check_path(aws):
-    n = _network(aws)
+def _load_balancer(aws, n: dict) -> dict:
     ec2 = n["ec2"]
     subnet2 = ec2.create_subnet(
         VpcId=n["vpc"], CidrBlock="10.0.2.0/24", AvailabilityZone=f"{REGION}b"
@@ -197,17 +134,400 @@ def test_modify_health_check_path(aws):
         DefaultActions=[{"Type": "forward", "TargetGroupArn": tg["TargetGroupArn"]}],
     )
     elb.register_targets(TargetGroupArn=tg["TargetGroupArn"], Targets=[{"Id": n["instance"]}])
-    out = _round_trip("modify_health_check_path", {"target_group": "web-tg", "path": "/api/health"})
-    assert out["result"]["previous_path"] == "/health"
-    _, error = prepare(
-        aws, "modify_health_check_path", {"target_group": "web-tg", "path": "health"}
+    return {"elb": elb, "lb": lb, "tg": tg}
+
+
+def test_catalogue_is_generic_and_never_destructive():
+    assert set(CATALOG) == {
+        "sg_add_rule",
+        "sg_remove_rule",
+        "route_add",
+        "route_replace",
+        "route_delete",
+        "route_table_associate",
+        "nacl_add_entry",
+        "nacl_replace_entry",
+        "nacl_delete_entry",
+        "nacl_associate",
+        "subnet_set_auto_public_ip",
+        "instance_start",
+        "instance_attach_security_group",
+        "instance_detach_security_group",
+        "eip_allocate_and_associate",
+        "eip_associate",
+        "dns_upsert_record",
+        "tg_modify_health_check",
+        "tg_register_target",
+        "tg_deregister_target",
+    }
+    from app.aws.cloudformation import REMEDIATION_DENIED
+
+    for spec in CATALOG.values():
+        assert spec.group and spec.label and spec.description
+        for action in spec.write_actions:
+            assert not action.startswith(("iam:", "organizations:")), action
+            assert action not in REMEDIATION_DENIED, (spec.name, action)
+    # only starting an instance has no automatic undo (stopping is never allowed)
+    assert [n for n, spec in CATALOG.items() if spec.undo is None] == ["instance_start"]
+
+
+# ---- security groups -----------------------------------------------------------------
+
+
+def test_sg_add_and_remove_rules(aws):
+    n = _network(aws)
+    web = {"group_id": n["sg"], "from_port": 8080, "cidr": "0.0.0.0/0"}
+    out = _round_trip("sg_add_rule", web)
+    assert "ingress tcp/8080 from 0.0.0.0/0" in out["prepared"].preview["summary"]
+    _round_trip("sg_add_rule", {**web, "protocol": "udp", "from_port": 5000, "to_port": 5010})
+    _round_trip("sg_add_rule", {**web, "direction": "egress", "from_port": 443})
+    other = n["ec2"].create_security_group(GroupName="lb", Description="lb", VpcId=n["vpc"])
+    _round_trip(
+        "sg_add_rule",
+        {"group_id": n["sg"], "from_port": 80, "source_group_id": other["GroupId"]},
     )
-    assert "must start with /" in error
+    _round_trip("sg_add_rule", {"group_id": n["sg"], "protocol": "icmp", "cidr": "10.0.0.0/8"})
+
+    # remove an existing rule (and put it back on undo, description included)
+    n["ec2"].authorize_security_group_ingress(
+        GroupId=n["sg"],
+        IpPermissions=[
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "temp"}],
+            }
+        ],
+    )
+    _round_trip("sg_remove_rule", {"group_id": n["sg"], "from_port": 22, "cidr": "0.0.0.0/0"})
+    # the default egress rule (all traffic) can be removed too
+    _round_trip(
+        "sg_remove_rule",
+        {"group_id": n["sg"], "direction": "egress", "protocol": "all", "cidr": "0.0.0.0/0"},
+    )
+
+
+def test_sg_rules_refused(aws):
+    n = _network(aws)
+    sg = n["sg"]
+    for params in (
+        {"group_id": sg, "from_port": 22, "cidr": "0.0.0.0/0"},
+        {"group_id": sg, "from_port": 3389, "cidr": "::/0"},
+        {"group_id": sg, "from_port": 1, "to_port": 1024, "cidr": "0.0.0.0/0"},
+        {"group_id": sg, "protocol": "all", "cidr": "0.0.0.0/0"},
+    ):
+        assert "never opened to the whole Internet" in _error(aws, "sg_add_rule", params)
+    # the user's own IP is fine; outbound 22 to anywhere too
+    assert prepare(aws, "sg_add_rule", {"group_id": sg, "from_port": 22, "cidr": "203.0.113.7/32"})[
+        0
+    ]
+    assert prepare(
+        aws,
+        "sg_add_rule",
+        {"group_id": sg, "direction": "egress", "from_port": 22, "cidr": "0.0.0.0/0"},
+    )[0]
+    assert "exactly one of cidr" in _error(aws, "sg_add_rule", {"group_id": sg, "from_port": 80})
+    assert "from_port is required" in _error(
+        aws, "sg_add_rule", {"group_id": sg, "cidr": "1.2.3.4/32"}
+    )
+    assert "not a valid CIDR" in _error(
+        aws, "sg_add_rule", {"group_id": sg, "from_port": 80, "cidr": "x"}
+    )
+    assert "has no rule" in _error(
+        aws, "sg_remove_rule", {"group_id": sg, "from_port": 8443, "cidr": "0.0.0.0/0"}
+    )
+
+
+# ---- routes --------------------------------------------------------------------------
+
+
+def test_routes_add_replace_delete(aws):
+    n = _network(aws)
+    ec2 = n["ec2"]
+    igw = {"target_type": "internet_gateway", "target_id": n["igw"]}
+    _round_trip(
+        "route_add", {"route_table_id": n["private"], "destination_cidr": "0.0.0.0/0", **igw}
+    )
+    eip = ec2.allocate_address(Domain="vpc")["AllocationId"]
+    nat = ec2.create_nat_gateway(SubnetId=n["subnet"], AllocationId=eip)["NatGateway"][
+        "NatGatewayId"
+    ]
+    _round_trip(
+        "route_replace",
+        {
+            "route_table_id": n["public"],
+            "destination_cidr": "0.0.0.0/0",
+            "target_type": "nat_gateway",
+            "target_id": nat,
+        },
+    )
+    _round_trip("route_delete", {"route_table_id": n["public"], "destination_cidr": "0.0.0.0/0"})
+
+
+def test_routes_refused(aws):
+    n = _network(aws)
+    igw = {"target_type": "internet_gateway", "target_id": n["igw"]}
+    assert "use route_replace" in _error(
+        aws, "route_add", {"route_table_id": n["public"], "destination_cidr": "0.0.0.0/0", **igw}
+    )
+    assert "use route_add" in _error(
+        aws,
+        "route_replace",
+        {"route_table_id": n["private"], "destination_cidr": "0.0.0.0/0", **igw},
+    )
+    local = {"route_table_id": n["public"], "destination_cidr": "10.0.0.0/16"}
+    assert "local route cannot be deleted" in _error(aws, "route_delete", local)
+    assert "local route cannot be changed" in _error(aws, "route_replace", {**local, **igw})
+    other_vpc = n["ec2"].create_vpc(CidrBlock="10.9.0.0/16")["Vpc"]["VpcId"]
+    other_igw = n["ec2"].create_internet_gateway()["InternetGateway"]["InternetGatewayId"]
+    n["ec2"].attach_internet_gateway(InternetGatewayId=other_igw, VpcId=other_vpc)
+    assert "is not attached to" in _error(
+        aws,
+        "route_add",
+        {
+            "route_table_id": n["private"],
+            "destination_cidr": "0.0.0.0/0",
+            "target_type": "internet_gateway",
+            "target_id": other_igw,
+        },
+    )
+
+
+def test_route_table_associate(aws):
+    n = _network(aws)
+    out = _round_trip(
+        "route_table_associate", {"subnet_id": n["subnet"], "route_table_id": n["public"]}
+    )
+    preview = out["prepared"].preview
+    assert n["private"] in preview["changes"][0]["before"]
+    assert n["public"] in preview["changes"][0]["after"]
+    assert "the subnet is public" in preview["impact"]
+    assert "already uses" in _error(
+        aws, "route_table_associate", {"subnet_id": n["subnet"], "route_table_id": n["private"]}
+    )
+
+
+# ---- network ACLs --------------------------------------------------------------------
+
+
+def test_nacl_entries(aws):
+    n = _network(aws)
+    acl = n["ec2"].create_network_acl(VpcId=n["vpc"])["NetworkAcl"]["NetworkAclId"]
+    entry = {
+        "network_acl_id": acl,
+        "rule_number": 100,
+        "direction": "egress",
+        "rule_action": "deny",
+        "protocol": "tcp",
+        "from_port": 1024,
+        "to_port": 65535,
+        "cidr": "0.0.0.0/0",
+    }
+    _round_trip("nacl_add_entry", entry)
+    n["ec2"].create_network_acl_entry(
+        NetworkAclId=acl,
+        RuleNumber=100,
+        Egress=True,
+        RuleAction="deny",
+        Protocol="6",
+        PortRange={"From": 1024, "To": 65535},
+        CidrBlock="0.0.0.0/0",
+    )
+    _round_trip("nacl_replace_entry", {**entry, "rule_action": "allow"})
+    _round_trip(
+        "nacl_delete_entry", {"network_acl_id": acl, "rule_number": 100, "direction": "egress"}
+    )
+    assert "use nacl_replace_entry" in _error(aws, "nacl_add_entry", entry)
+    assert "already has these values" in _error(aws, "nacl_replace_entry", entry)
+    ssh = {**entry, "rule_number": 90, "direction": "ingress", "rule_action": "allow"}
+    assert "never opened" in _error(aws, "nacl_add_entry", {**ssh, "from_port": 22, "to_port": 22})
+    assert prepare(
+        aws, "nacl_add_entry", {**ssh, "rule_action": "deny", "from_port": 22, "to_port": 22}
+    )[0]
+    assert "Invalid parameters" in _error(
+        aws, "nacl_delete_entry", {"network_acl_id": acl, "rule_number": 32767}
+    )
+
+
+def test_nacl_associate(aws):
+    n = _network(aws)
+    acl = n["ec2"].create_network_acl(VpcId=n["vpc"])["NetworkAcl"]["NetworkAclId"]
+    _round_trip("nacl_associate", {"subnet_id": n["subnet"], "network_acl_id": acl})
+    other = n["ec2"].create_vpc(CidrBlock="10.9.0.0/16")["Vpc"]["VpcId"]
+    foreign = n["ec2"].create_network_acl(VpcId=other)["NetworkAcl"]["NetworkAclId"]
+    assert "not in the subnet's VPC" in _error(
+        aws, "nacl_associate", {"subnet_id": n["subnet"], "network_acl_id": foreign}
+    )
+
+
+# ---- subnet / instance -----------------------------------------------------------------
+
+
+def test_subnet_auto_public_ip(aws):
+    n = _network(aws)
+    _round_trip("subnet_set_auto_public_ip", {"subnet_id": n["subnet"], "value": "disable"})
+    assert "already has auto-assign" in _error(
+        aws, "subnet_set_auto_public_ip", {"subnet_id": n["subnet"], "value": "enable"}
+    )
+
+
+def test_instance_start_has_no_undo(aws):
+    n = _network(aws)
+    params = {"instance_id": n["instance"]}
+    assert "not stopped" in _error(aws, "instance_start", params)
+    n["ec2"].stop_instances(InstanceIds=[n["instance"]])
+    writes: set[str] = set()
+    read, write = _recording(set()), _recording(writes)
+    prepared, error = prepare(read, "instance_start", params)
+    assert prepared, error
+    assert "No automatic undo" in prepared.preview["rollback"]
+    spec = get_action("instance_start")
+    result = spec.execute(read, write, params, prepared.snapshot)
+    assert spec.verify(read, params, prepared.snapshot, result)[0]
+    assert writes == {"ec2:StartInstances"} and spec.undo is None
+
+
+def test_instance_security_groups(aws):
+    n = _network(aws)
+    extra = n["ec2"].create_security_group(GroupName="x", Description="x", VpcId=n["vpc"])[
+        "GroupId"
+    ]
+    _round_trip("instance_attach_security_group", {"instance_id": n["instance"], "group_id": extra})
+    n["ec2"].modify_instance_attribute(InstanceId=n["instance"], Groups=[n["sg"], extra])
+    _round_trip("instance_detach_security_group", {"instance_id": n["instance"], "group_id": extra})
+    n["ec2"].modify_instance_attribute(InstanceId=n["instance"], Groups=[n["sg"]])
+    assert "only security group" in _error(
+        aws, "instance_detach_security_group", {"instance_id": n["instance"], "group_id": n["sg"]}
+    )
+    assert "already uses" in _error(
+        aws, "instance_attach_security_group", {"instance_id": n["instance"], "group_id": n["sg"]}
+    )
+
+
+def test_elastic_ips(aws):
+    n = _network(aws)
+    out = _round_trip("eip_allocate_and_associate", {"instance_id": n["instance"]})
+    assert out["result"]["public_ip"]
+    # the Elastic IP AutoAWS allocated was released by the undo: nothing left behind
+    assert aws.client("ec2").describe_addresses()["Addresses"] == []
+    alloc = n["ec2"].allocate_address(Domain="vpc")["AllocationId"]
+    _round_trip("eip_associate", {"allocation_id": alloc, "instance_id": n["instance"]})
+    # an existing Elastic IP is only detached on undo, never released
+    assert [a["AllocationId"] for a in n["ec2"].describe_addresses()["Addresses"]] == [alloc]
+
+
+# ---- Route 53 --------------------------------------------------------------------------
+
+
+def test_dns_records(aws):
+    n = _network(aws)
+    ip = n["ec2"].describe_instances(InstanceIds=[n["instance"]])["Reservations"][0]["Instances"][
+        0
+    ]["PublicIpAddress"]
+    zone = _zone(aws)
+    _record(aws, zone, "app.example.com.", "A", "13.212.10.20")
+    out = _round_trip(
+        "dns_upsert_record", {"record_name": "app.example.com", "instance_id": n["instance"]}
+    )
+    assert out["result"]["record"]["values"] == [ip]
+    # a NEW record: the undo deletes what AutoAWS created
+    _round_trip("dns_upsert_record", {"record_name": "ip.example.com", "value": ip})
+    _round_trip(
+        "dns_upsert_record",
+        {"record_name": "_check.example.com", "type": "TXT", "value": "verify=abc"},
+    )
+    lb = _load_balancer(aws, n)["lb"]
+    _round_trip(
+        "dns_upsert_record",
+        {"record_name": "www.example.com", "type": "CNAME", "value": lb["DNSName"]},
+    )
+    _round_trip("dns_upsert_record", {"record_name": "example.com", "load_balancer": "web"})
+    assert (
+        aws.client("route53").list_resource_record_sets(HostedZoneId=zone)["ResourceRecordSets"][
+            -1
+        ]["Name"]
+        == "app.example.com."
+    )
+
+
+def test_dns_refused(aws):
+    n = _network(aws)
+    zone = _zone(aws)
+    _record(aws, zone, "app.example.com.", "A", "13.212.10.20")
+    dns = "dns_upsert_record"
+    assert "not an address of an instance" in _error(
+        aws, dns, {"record_name": "app.example.com", "value": "8.8.8.8"}
+    )
+    assert "neither an AWS endpoint" in _error(
+        aws, dns, {"record_name": "www.example.com", "type": "CNAME", "value": "evil.attacker.tld"}
+    )
+    assert "zone apex" in _error(
+        aws, dns, {"record_name": "example.com", "type": "CNAME", "value": "x.amazonaws.com"}
+    )
+    assert "a CNAME must be alone" in _error(
+        aws, dns, {"record_name": "app.example.com", "type": "CNAME", "value": "x.amazonaws.com"}
+    )
+    assert "No hosted zone" in _error(
+        aws, dns, {"record_name": "app.other.org", "instance_id": n["instance"]}
+    )
+    assert "exactly one of" in _error(
+        aws,
+        dns,
+        {"record_name": "app.example.com", "value": "1.2.3.4", "instance_id": n["instance"]},
+    )
+    assert "only for A / AAAA" in _error(
+        aws, dns, {"record_name": "t.example.com", "type": "TXT", "instance_id": n["instance"]}
+    )
+
+
+# ---- load balancer target groups ---------------------------------------------------------
+
+
+def test_target_group_health_check(aws):
+    n = _network(aws)
+    _load_balancer(aws, n)
+    out = _round_trip("tg_modify_health_check", {"target_group": "web-tg", "path": "/api/health"})
+    assert out["result"]["changes"] == {"path": "/api/health"}
+    _round_trip(
+        "tg_modify_health_check",
+        {
+            "target_group": "web-tg",
+            "interval_seconds": 10,
+            "timeout_seconds": 5,
+            "matcher": "200-399",
+        },
+    )
+    assert "must start with /" in _error(
+        aws, "tg_modify_health_check", {"target_group": "web-tg", "path": "health"}
+    )
+    assert "already has these" in _error(
+        aws, "tg_modify_health_check", {"target_group": "web-tg", "path": "/health"}
+    )
+    assert "shorter than the interval" in _error(
+        aws, "tg_modify_health_check", {"target_group": "web-tg", "timeout_seconds": 60}
+    )
+
+
+def test_target_group_targets(aws):
+    n = _network(aws)
+    _load_balancer(aws, n)
+    _round_trip("tg_deregister_target", {"target_group": "web-tg", "target_id": n["instance"]})
+    second = n["ec2"].run_instances(
+        ImageId="ami-12345678", MinCount=1, MaxCount=1, SubnetId=n["subnet"]
+    )["Instances"][0]["InstanceId"]
+    _round_trip("tg_register_target", {"target_group": "web-tg", "target_id": second})
+    assert "already registered" in _error(
+        aws, "tg_register_target", {"target_group": "web-tg", "target_id": n["instance"]}
+    )
+    assert "not registered" in _error(
+        aws, "tg_deregister_target", {"target_group": "web-tg", "target_id": second}
+    )
 
 
 def test_unknown_action_and_bad_params(aws):
     assert "Unknown remediation action" in prepare(aws, "delete_vpc", {})[1]
-    assert "Invalid parameters" in prepare(aws, "associate_route_table", {"subnet_id": "x"})[1]
+    assert "Invalid parameters" in prepare(aws, "route_table_associate", {"subnet_id": "x"})[1]
 
 
 # ---- the executor's write session ---------------------------------------------------------

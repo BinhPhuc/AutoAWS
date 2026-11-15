@@ -2,12 +2,13 @@
 Table 2.10). agent-worker is the only component that talks to the LLM and it can never
 assume the remediation role; action-executor is the only one that can."""
 
-from aws_cdk import ArnFormat, Duration, Stack
+from aws_cdk import ArnFormat, Duration, RemovalPolicy, SecretValue, Stack
 from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from .config import AGENT_ROLE_NAME, EXECUTOR_ROLE_NAME, STATE_MACHINE_NAME, Config
@@ -67,6 +68,21 @@ class AgentStack(Stack):
         env = common_env(self, cfg, table, site_url)
         sm_arn = state_machine_arn(self)
 
+        # LLM settings an admin saves in the web app, provider keys included (backend
+        # app/llm/config_store.py). One secret, encrypted with KMS (the account's
+        # aws/secretsmanager key: the project key lives in AutoAws-Data and granting its
+        # use to these roles would make the stacks depend on each other); the api-handler
+        # reads + writes it, the agent-worker only reads it. The template value is the
+        # empty document: the admin's content lives only in the secret.
+        self.llm_config = secretsmanager.Secret(
+            self,
+            "LlmConfig",
+            secret_name=f"autoaws-{cfg.env_name}-llm-config",
+            description="AutoAWS: LLM provider, model and provider keys set on the admin page",
+            secret_string_value=SecretValue.unsafe_plain_text("{}"),
+            removal_policy=RemovalPolicy.DESTROY if cfg.destroy_data else RemovalPolicy.RETAIN,
+        )
+
         # ---- agent-worker: LLM + read-only role ----------------------------------------
         agent_role = iam.Role(
             self,
@@ -92,13 +108,20 @@ class AgentStack(Stack):
                 sid="ClaudeOnBedrock",  # Mantle endpoint (anthropic SDK client)
                 actions=["bedrock-mantle:CreateInference", "bedrock-mantle:CountTokens"],
                 resources=[f"arn:aws:bedrock-mantle:{self.region}:{self.account}:project/*"],
-                conditions={
-                    "StringEquals": {
-                        "bedrock-mantle:Model": [cfg.bedrock_model_id, cfg.bedrock_fallback_model]
-                    }
-                },
+                # Claude models only; the admin page picks which one
+                conditions={"StringLike": {"bedrock-mantle:Model": ["anthropic.*"]}},
             )
         )
+        if cfg.bedrock_role_arn:
+            # Bedrock auth = assume_role (admin page): exactly this role, nothing broader, so
+            # agent-worker still cannot assume any other role in users' accounts
+            agent_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="BedrockInAnotherAccount",
+                    actions=["sts:AssumeRole"],
+                    resources=[cfg.bedrock_role_arn],
+                )
+            )
         agent_role.add_to_policy(
             iam.PolicyStatement(
                 sid="StartRemediationFlow", actions=["states:StartExecution"], resources=[sm_arn]
@@ -113,6 +136,7 @@ class AgentStack(Stack):
         )
         table.grant_read_write_data(agent_role)
         key.grant_encrypt_decrypt(agent_role)
+        self.llm_config.grant_read(agent_role)
 
         self.agent_worker = lambda_.Function(
             self,
@@ -125,7 +149,9 @@ class AgentStack(Stack):
             role=agent_role,
             memory_size=1024,
             timeout=Duration.minutes(5),  # a turn is capped at MAX_AGENT_SECONDS=240
-            reserved_concurrent_executions=cfg.agent_concurrency,
+            # 0 = no reservation. New accounts often have a total of 5–10 concurrent executions
+            # and Lambda must keep 10 unreserved, so any reservation fails there.
+            reserved_concurrent_executions=cfg.agent_concurrency or None,
             tracing=lambda_.Tracing.ACTIVE,
             log_group=log_group(self, "AgentWorkerLogs"),
             environment={
@@ -136,6 +162,8 @@ class AgentStack(Stack):
                 "BEDROCK_FALLBACK_MODEL": cfg.bedrock_fallback_model,
                 "LLM_EFFORT": cfg.llm_effort,
                 "MAX_AGENT_SECONDS": "240",
+                "LLM_CONFIG_BACKEND": "secretsmanager",
+                "LLM_CONFIG_SECRET_ID": self.llm_config.secret_arn,
             },
         )
         # Async invocations are never retried: a retry would run the same turn twice.

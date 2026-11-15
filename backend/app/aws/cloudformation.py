@@ -15,14 +15,30 @@ STACK_NAME = "AutoAWSReadOnlyRole"
 ROLE_NAME = "AutoAWSReadOnly"
 REMEDIATION_ROLE_NAME = "AutoAWSRemediation"
 
-# Never granted to the remediation role, even by mistake in the catalogue.
+# Never granted to the remediation role, even by mistake in the catalogue: IAM, stopping
+# instances, and deleting the user's resources (rules / routes / entries are configuration
+# and stay removable, with an undo).
 REMEDIATION_DENIED = [
     "iam:*",
     "organizations:*",
     "account:*",
     "ec2:TerminateInstances",
     "ec2:StopInstances",
+    "ec2:DeleteVpc",
+    "ec2:DeleteSubnet",
+    "ec2:DeleteSecurityGroup",
+    "ec2:DeleteRouteTable",
+    "ec2:DeleteNetworkAcl",
+    "ec2:DeleteInternetGateway",
+    "ec2:DeleteNatGateway",
+    "elasticloadbalancing:DeleteLoadBalancer",
+    "elasticloadbalancing:DeleteTargetGroup",
+    "route53:DeleteHostedZone",
 ]
+# Route 53 record changes the catalogue makes: UPSERT, and DELETE only to undo a record
+# AutoAWS created; only these record types.
+ROUTE53_CHANGE_ACTIONS = ["UPSERT", "DELETE"]
+ROUTE53_RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT"]
 
 
 def policy_actions() -> list[str]:
@@ -56,6 +72,8 @@ def _remediation_yaml(executor_role_arn: str = "") -> str:
     r53_yaml = "\n".join(f"                  - {a}" for a in groups["route53"])
     denied_yaml = "\n".join(f"                  - {a}" for a in REMEDIATION_DENIED)
     principal = _principal([executor_role_arn])
+    r53_change_actions = "[" + ", ".join(f"'{a}'" for a in ROUTE53_CHANGE_ACTIONS) + "]"
+    r53_record_types = "[" + ", ".join(f"'{t}'" for t in ROUTE53_RECORD_TYPES) + "]"
     return f"""  AutoAWSRemediationRole:
     Type: AWS::IAM::Role
     Condition: RemediationEnabled
@@ -86,15 +104,15 @@ def _remediation_yaml(executor_role_arn: str = "") -> str:
                 Condition:
                   StringEquals:
                     aws:RequestedRegion: !Ref AWS::Region
-              - Sid: AllowUpsertOfARecordsOnly
+              - Sid: AllowCatalogueRecordChangesOnly
                 Effect: Allow
                 Resource: 'arn:aws:route53:::hostedzone/*'
                 Action:
 {r53_yaml}
                 Condition:
                   ForAllValues:StringEquals:
-                    route53:ChangeResourceRecordSetsActions: ['UPSERT']
-                    route53:ChangeResourceRecordSetsRecordTypes: ['A']
+                    route53:ChangeResourceRecordSetsActions: {r53_change_actions}
+                    route53:ChangeResourceRecordSetsRecordTypes: {r53_record_types}
               - Sid: DenyDangerous
                 Effect: Deny
                 Resource: '*'

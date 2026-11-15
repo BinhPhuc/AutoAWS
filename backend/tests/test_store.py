@@ -281,17 +281,17 @@ def test_proposals_round_trip_and_compare_and_set(store):
 
     conv = store.create_conversation(Conversation(connection_id="conn_prop"))
     old = store.create_proposal(
-        Proposal(conversation_id=conv.id, action="associate_route_table", created_at=T0)
+        Proposal(conversation_id=conv.id, action="route_table_associate", created_at=T0)
     )
     new = store.create_proposal(
         Proposal(
             conversation_id=conv.id,
-            action="authorize_sg_ingress",
+            action="sg_add_rule",
             params_json='{"port": 8080}',
             created_at=T0 + timedelta(seconds=1),
         )
     )
-    store.create_proposal(Proposal(conversation_id="conv_other", action="upsert_a_record"))
+    store.create_proposal(Proposal(conversation_id="conv_other", action="dns_upsert_record"))
 
     mine = store.list_proposals(conversation_id=conv.id)
     assert [p.id for p in mine] == [new.id, old.id]  # newest first

@@ -19,6 +19,8 @@ infra/eval/run_eval.py reads (--answers infra/aws-scenarios/answers.aws.json).
 """
 
 import argparse
+import contextlib
+import fcntl
 import json
 import re
 import sys
@@ -99,18 +101,28 @@ def _expect(kb: str, out: dict, extra: dict) -> list:
     }[kb]
 
 
+@contextlib.contextmanager
+def _answers():
+    """Read-modify-write of answers.aws.json under a lock: several scenarios may run
+    `up` / `down` at the same time, and each must keep the others' entries."""
+    with open(ANSWERS.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        answers = json.loads(ANSWERS.read_text()) if ANSWERS.exists() else {}
+        yield answers
+        ANSWERS.write_text(json.dumps(answers, indent=2, ensure_ascii=False))
+
+
 def write_answer(ctx: Ctx, kb: str, **extra) -> None:
-    answers = json.loads(ANSWERS.read_text()) if ANSWERS.exists() else {}
     out = ctx.outputs(kb)
-    previous = answers.get(kb, {})
-    extra = {**{k: v for k, v in previous.items() if k == "stale_ip"}, **extra}
-    answers[kb] = {
-        **out,
-        **extra,
-        "ask": ASK[kb].format(record=out.get("RecordName", "app.example.com")),
-        "expect": _expect(kb, out, extra),
-    }
-    ANSWERS.write_text(json.dumps(answers, indent=2, ensure_ascii=False))
+    with _answers() as answers:
+        previous = answers.get(kb, {})
+        extra = {**{k: v for k, v in previous.items() if k == "stale_ip"}, **extra}
+        answers[kb] = {
+            **out,
+            **extra,
+            "ask": ASK[kb].format(record=out.get("RecordName", "app.example.com")),
+            "expect": _expect(kb, out, extra),
+        }
 
 
 # ---- stack lifecycle ---------------------------------------------------------------------
@@ -161,20 +173,33 @@ def up(ctx: Ctx, kb: str) -> None:
         print(f"{kb}: the incident is built in, ready to diagnose.")
 
 
+def _release_kb1_subnet(ctx: Ctx) -> None:
+    """`fault`/`fix` replace the subnet's route table association, which gives it a new id
+    that CloudFormation does not know: deleting the stack would then fail on the route table
+    ("has dependencies"). Drop that association; the stack's own one is left to CloudFormation."""
+    out = ctx.outputs("kb1")
+    own = ctx.cfn.describe_stack_resource(StackName=ctx.stack("kb1"), LogicalResourceId="SubnetRt")
+    assoc = _subnet_rt_association(ctx, out["SubnetId"])
+    if assoc != own["StackResourceDetail"].get("PhysicalResourceId"):
+        ctx.ec2.disassociate_route_table(AssociationId=assoc)
+        print(f"kb1: removed association {assoc} (not the stack's)")
+
+
 def down(ctx: Ctx, kb: str) -> None:
     try:
-        fix(ctx, kb, quiet=True)  # e.g. a custom NACL cannot be deleted while associated
-    except (ClientError, WaiterError, KeyError, IndexError) as e:
+        if kb == "kb1":
+            _release_kb1_subnet(ctx)
+        else:
+            fix(ctx, kb, quiet=True)  # e.g. a custom NACL cannot be deleted while associated
+    except (ClientError, WaiterError, KeyError, IndexError, StopIteration) as e:
         print(f"{kb}: fix before delete skipped ({e})")
     print(f"Deleting stack {ctx.stack(kb)}…")
     ctx.cfn.delete_stack(StackName=ctx.stack(kb))
     ctx.cfn.get_waiter("stack_delete_complete").wait(
         StackName=ctx.stack(kb), WaiterConfig={"Delay": 15, "MaxAttempts": 80}
     )
-    if ANSWERS.exists():
-        answers = json.loads(ANSWERS.read_text())
+    with _answers() as answers:
         answers.pop(kb, None)
-        ANSWERS.write_text(json.dumps(answers, indent=2, ensure_ascii=False))
     print(f"{kb}: deleted")
 
 

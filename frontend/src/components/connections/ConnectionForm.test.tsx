@@ -136,6 +136,28 @@ describe('ConnectionForm role onboarding from dev', () => {
     expect(api.verify).toHaveBeenCalledWith('conn_setup')
   })
 
+  it('starts with the region the server suggests', async () => {
+    api.setup.mockImplementation(async () => ({
+      data: {
+        account_id: '111122223333',
+        role_name: 'AutoAWSReadOnly',
+        trust_principals: [],
+        external_id: nextIssuedId(),
+        default_region: 'ap-southeast-2',
+      },
+    }))
+    renderForm()
+    const externalId = await shownExternalId()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Lab' } })
+    fireEvent.change(screen.getByLabelText('Role ARN'), { target: { value: roleArn } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save & verify' }))
+    await waitFor(() =>
+      expect(api.create).toHaveBeenCalledWith(
+        expect.objectContaining({ region: 'ap-southeast-2', external_id: externalId }),
+      ),
+    )
+  })
+
   it('previews CloudFormation with the current External ID before saving', async () => {
     renderForm()
     expect(screen.getAllByRole('tab')).toHaveLength(2)

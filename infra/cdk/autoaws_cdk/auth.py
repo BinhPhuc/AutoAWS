@@ -46,6 +46,14 @@ class AuthStack(Stack):
             deletion_protection=not cfg.destroy_data,
             removal_policy=RemovalPolicy.DESTROY if cfg.destroy_data else RemovalPolicy.RETAIN,
         )
+        # Members are admins of the web app (LLM settings page); add users by hand
+        cognito.CfnUserPoolGroup(
+            self,
+            "AdminGroup",
+            user_pool_id=self.user_pool.user_pool_id,
+            group_name="admin",
+            description="AutoAWS admins: LLM provider, model and keys",
+        )
         # Domain prefixes may not contain "aws", "amazon" or "cognito"
         prefix = cfg.auth_domain_prefix or f"autodiag-{cfg.env_name}-{self.account}"
         self.domain = self.user_pool.add_domain(

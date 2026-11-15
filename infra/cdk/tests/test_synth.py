@@ -21,6 +21,7 @@ def stacks(tmp_path_factory):
         context={
             "lambdaAsset": str(asset),
             "notificationEmail": "team@example.com",
+            "agentConcurrency": 5,
             "frontendUrl": "https://d111.cloudfront.net",
             "alarmEmail": "ops@example.com",
         },
@@ -317,3 +318,56 @@ def test_the_api_signs_external_ids_with_a_generated_key(stacks):
     )
     value = json.dumps(fn["Properties"]["Environment"]["Variables"]["EXTERNAL_ID_SECRET"])
     assert "resolve:secretsmanager" in value  # a dynamic reference, not the key itself
+
+
+def test_no_reserved_concurrency_by_default(default_stacks):
+    """New accounts often have only 5–10 concurrent executions in total and Lambda keeps 10
+    unreserved, so reserving any would fail the deploy: off unless agentConcurrency is set."""
+    for fn in default_stacks["agent"].find_resources("AWS::Lambda::Function").values():
+        assert "ReservedConcurrentExecutions" not in fn["Properties"]
+
+
+def test_admin_llm_settings_secret_and_admin_group(stacks):
+    agent = stacks["agent"]
+    agent.has_resource_properties(
+        "AWS::SecretsManager::Secret", {"Name": "autoaws-dev-llm-config", "SecretString": "{}"}
+    )
+    fns = agent.find_resources("AWS::Lambda::Function")
+    worker = next(f for k, f in fns.items() if k.startswith("AgentWorker"))
+    variables = worker["Properties"]["Environment"]["Variables"]
+    assert variables["LLM_CONFIG_BACKEND"] == "secretsmanager"
+    # agent-worker reads the secret, never writes it; the API handler does both
+    agent_st = _statements(agent, "AgentWorkerRole")
+    assert "secretsmanager:GetSecretValue" in _actions(agent_st)
+    assert "secretsmanager:PutSecretValue" not in _actions(agent_st)
+    api_st = _statements(stacks["api"], "ApiHandlerRole")
+    assert {"secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"} <= _actions(api_st)
+    # any Claude model on Bedrock (the admin picks), nothing else
+    mantle = next(st for st in agent_st if st.get("Sid") == "ClaudeOnBedrock")
+    assert mantle["Condition"] == {"StringLike": {"bedrock-mantle:Model": ["anthropic.*"]}}
+    stacks["auth"].has_resource_properties("AWS::Cognito::UserPoolGroup", {"GroupName": "admin"})
+
+
+def test_a_bedrock_role_in_another_account_is_granted_only_when_configured(
+    stacks, tmp_path_factory
+):
+    """Default: agent-worker can assume only users' AutoAWSReadOnly roles. With
+    bedrockRoleArn set, exactly that one role is added for Bedrock auth = assume_role."""
+    role = "arn:aws:iam::487450071041:role/AutoAWSBedrockInvoke"
+    assert role not in json.dumps(_statements(stacks["agent"], "AgentWorkerRole"))
+    mp = pytest.MonkeyPatch()
+    mp.setenv("CDK_DEFAULT_ACCOUNT", "111122223333")
+    mp.setenv("CDK_DEFAULT_REGION", "ap-southeast-1")
+    asset = tmp_path_factory.mktemp("lambda2")
+    (asset / "app").mkdir()
+    (asset / "app" / "__init__.py").write_text("")
+    app = cdk.App(
+        outdir=str(tmp_path_factory.mktemp("cdk.out2")),
+        context={"lambdaAsset": str(asset), "bedrockRoleArn": role},
+    )
+    agent = Template.from_stack(build(app)["agent"])
+    mp.undo()
+    assert sorted(_resources(_statements(agent, "AgentWorkerRole"), "sts:AssumeRole")) == [
+        "arn:aws:iam::*:role/AutoAWSReadOnly",
+        role,
+    ]

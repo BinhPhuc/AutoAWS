@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, MessageSquare, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, MessageSquare, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label'
 import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
 import { CloudFormationSnippet } from './CloudFormationSnippet'
+import { EditConnectionDialog } from './EditConnectionDialog'
 
 export function ConnectionsTable({ connections }: { connections: Connection[] }) {
   const t = S.connections
@@ -62,6 +63,7 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
   const { setActiveConnectionId } = useActiveConnection(undefined)
   const [expanded, setExpanded] = useState(c.status === 'failed')
   const [confirm, setConfirm] = useState(false)
+  const [editing, setEditing] = useState(false)
   const t = S.connections
 
   return (
@@ -127,6 +129,14 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
             <Button
               variant="ghost"
               size="icon-sm"
+              aria-label={`${t.edit.button}: ${c.name}`}
+              onClick={() => setEditing(true)}
+            >
+              <Pencil />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               aria-label={`${S.common.delete}: ${c.name}`}
               onClick={() => setConfirm(true)}
               disabled={remove.isPending}
@@ -173,6 +183,8 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
           </td>
         </tr>
       )}
+
+      <EditConnectionDialog connection={c} open={editing} onOpenChange={setEditing} />
 
       <Dialog open={confirm} onOpenChange={setConfirm}>
         <DialogContent>

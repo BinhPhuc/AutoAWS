@@ -5,7 +5,7 @@
 ## Project là gì
 
 **AutoAWS** — trợ lý AI chẩn đoán và khắc phục sự cố trên AWS (bài tập lớn môn Điện toán đám mây, Nhóm 16, UET-VNU).
-Người dùng kết nối tài khoản AWS bằng quyền **chỉ đọc**, mô tả sự cố bằng ngôn ngữ tự nhiên; agent (LLM + tool use) gọi **bộ công cụ đọc AWS cố định** (EC2, SG/NACL/route table, Route 53, ELB, CloudWatch, CloudTrail), đối chiếu dữ liệu thật và trả lời: **nguyên nhân → bằng chứng → cách khắc phục → điểm chưa xác nhận**.
+Người dùng kết nối tài khoản AWS bằng quyền **chỉ đọc**, mô tả sự cố bằng ngôn ngữ tự nhiên; agent (LLM + tool use) gọi **công cụ chẩn đoán chỉ đọc** (EC2, SG/NACL/route table, Route 53, ELB, CloudWatch, CloudTrail), đối chiếu dữ liệu thật và trả lời: **nguyên nhân → bằng chứng → cách khắc phục → điểm chưa xác nhận**.
 Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.docx`).
 
 ## Trạng thái hiện tại
@@ -42,6 +42,12 @@ Chi tiết: `docs/SYSTEM_OVERVIEW.md` (tóm tắt tài liệu gốc `AutoAWS.doc
 - [x] Trả lời gọn theo `dev` (2026-11-11): prompt chỉ điều tra trong phạm vi câu hỏi, dừng khi có nguyên nhân chặn đủ để trả lời; tóm tắt 1–2 câu, lời chào/cảm ơn hoặc hỏi lại không gọi AWS. Giữ job, `submit_diagnosis`, kiểm chứng bằng chứng và phê duyệt khắc phục. Thêm `infra/ollama/Modelfile` cho Qwen context 16.384, temperature 0.2; context 4.096 trên máy dev không đủ giữ prompt và bộ tool. 289 test BE và ruff đạt; smoke test Qwen thật qua agent loop: “hi”, “cảm ơn”, “giúp tôi với” đều trả lời ngắn bằng tiếng Việt, không gọi AWS. Chưa đánh giá lại chẩn đoán AWS thật.
 - [x] Gộp phần còn nằm ngoài `main` + rà soát (2026-11-11, nhánh `chore/sync-final-readme`): CDK deploy **một lần** (HTTP API rỗng tạo ở stack Frontend để cắt vòng CloudFront ↔ Cognito ↔ authorizer; `frontendUrl` chỉ còn dùng cho tên miền riêng); `LLM_PROVIDER=anthropic` + `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` = gateway định dạng Anthropic ở chế độ tương thích (không thinking / effort / beta), `ANTHROPIC_GATEWAY_CACHE` gắn `cache_control` cho phần lặp lại — đã chạy thật KB1, KB2 trên LocalStack qua một gateway (model Gemini); sửa `infra/eval/run_eval.py` còn đọc SSE (hỏng từ khi đổi sang job); README viết lại; hướng dẫn LocalStack tạo kết nối Access Key qua API (form chỉ còn IAM role). 293 test BE, 20 test FE, 13 test CDK.
 - [x] External ID do server cấp (2026-11-11, nhánh `final`): `GET /api/connections/setup` trả `external_id` = `autoaws-<nonce>-<HMAC(EXTERNAL_ID_SECRET, user_id:nonce)>` (`app/external_id.py`, không lưu trạng thái); `POST /api/connections` và `cloudformation-preview` chỉ nhận mã server cấp cho đúng người gọi (`400 EXTERNAL_ID_INVALID`), mã đã có kết nối dùng → `409 EXTERNAL_ID_IN_USE`; giữ luồng của Bình (mã hiện trước khi tạo role), ô External ID chỉ đọc, Regenerate xin mã mới; bắt buộc `EXTERNAL_ID_SECRET` khi `AUTH_MODE=cognito` / `RUNTIME=lambda`, CDK sinh khoá trong Secrets Manager. 305 test BE, 20 test FE, 14 test CDK.
+- [x] Sửa kết nối sau khi tạo (2026-11-12, nhánh `feat/edit-connections-proposals`): `PATCH /api/connections/{id}` nhận `name` / `region` / `role_arn` / `remediation_role_arn` (không đổi `type` / `external_id`); đổi region hoặc role → `pending`, xoá session cache, FE tự verify lại; cache session khoá theo (role, External ID, region); `DEFAULT_REGION` → `default_region` trong `GET /api/connections/setup` cho form; nút Edit + hộp thoại trên bảng kết nối. Backend `POST /api/proposals/{id}/revise` (đề xuất mới có `parent_id`, đề xuất cũ đang chờ → SUPERSEDED). 321 test BE, 25 test FE, 15 test CDK.
+- [x] Chạy thật KB1, KB3–KB7 trên tài khoản AWS test (2026-11-13, LLM qua gateway): chẩn đoán đúng cả 6 kịch bản; khắc phục KB1 trọn luồng (sửa đề xuất → duyệt → DryRun → ghi bằng `AutoAWSRemediation` → kiểm chứng). Sửa: session role chỉ dùng lại nếu còn sống hết một job (trước đây hết hạn giữa job), thử lại khi gateway báo lỗi giữa stream, `scenario.py down kb1` không còn kẹt xoá stack, `run_eval.py --connection`. Chưa chạy KB2 (cần tên miền).
+- [x] UI sửa đề xuất (2026-11-13, nhánh `feat/proposal-edit-ui`): nút Edit trên thẻ đề xuất ở các trạng thái PENDING_APPROVAL / REJECTED / EXPIRED / STALE / SUPERSEDED (chưa có bản sửa); form sinh từ `input_schema` của hành động (string + pattern / enum / maxLength, integer + min / max, trường tuỳ chọn để trống thì bỏ), lỗi pre-check của server hiện ngay trong hộp thoại; bản sửa hiện lồng dưới đề xuất gốc. 330 test BE (thêm `test_revise_proposals.py`: thay đề xuất chờ, pre-check / schema hỏng giữ nguyên bản gốc, sửa sau REJECTED / STALE, không sửa được bản đã áp dụng / rollback, chạy qua agent-worker trên Lambda, người khác → 404), 36 test FE.
+- [x] Hoàn tác theo yêu cầu (2026-11-13, nhánh `feat/proposal-undo`): `POST /api/proposals/{id}/rollback` cho đề xuất `fix` đã `SUCCEEDED` → đề xuất `rollback` (vẫn phải duyệt), snapshot trạng thái hiện tại nên ai đó sửa tiếp thì rollback thành STALE, không ghi đè; một rollback đang chờ / chạy thì không tạo thêm; tài nguyên đã bị xoá → `409 PROPOSAL_NOT_ROLLBACKABLE`; trên Lambda chạy trong agent-worker. FE: nút Undo change trên thẻ đề xuất đã áp dụng. 338 test BE, 43 test FE. Chạy thật sửa → hoàn tác trên AWS cho 4/6 hành động: `associate_route_table` (KB1), `allocate_and_associate_eip` (KB5, Elastic IP được trả lại), `authorize_sg_ingress` (KB6, kèm sửa đề xuất), `modify_health_check_path` (KB3, kiểm chứng đợi target healthy) — đều SUCCEEDED → ROLLED_BACK. KB6 / KB3: agent không tự đề xuất khi thiếu IP nhà / đường dẫn mới, người dùng nói thêm trong chat thì đề xuất đúng. `scenario.py` khoá `answers.aws.json` khi chạy nhiều kịch bản song song (trước đây ghi đè mất mục).
+- [x] Trang admin cấu hình LLM (2026-11-13, nhánh `feat/admin-llm-settings`): admin = group Cognito `admin` (CDK + `cognito.yaml`), local thì người dùng `local`; `GET /api/me` có `is_admin`; `/api/admin/llm` (GET / PUT / DELETE / test) chọn provider (Bedrock, Claude API / gateway, OpenAI-compatible, mock), model, endpoint và nhập key; Bedrock tách 4 cách xác thực `iam` / `api_key` / `access_key` / `assume_role`. Key chỉ ghi, không bao giờ trả về (chỉ `set` + 4 ký tự cuối); lưu trong một secret Secrets Manager (bản AWS, KMS) hoặc file mã hoá Fernet (local, gitignore); ghi đè env, mọi tiến trình đọc lại sau 30 giây; test LLM chạy trong agent-worker trên Lambda. CDK: secret `autoaws-<env>-llm-config`, quyền Bedrock mở cho mọi model `anthropic.*`, assume role Bedrock chỉ cho đúng ARN `bedrockRoleArn`. 369 test BE, 49 test FE, 17 test CDK; thử local với gateway thật (Test OK). **Chưa deploy, chưa thử Secrets Manager / Bedrock thật.**
+- [x] Công cụ khắc phục có phê duyệt tổng quát (2026-11-15, nhánh `feat/generic-remediation`): thay 6 hành động đặt theo kịch bản bằng 20 hành động theo tài nguyên / thao tác (`app/aws/remediation/actions/`: SG thêm / gỡ rule cả 2 chiều; route thêm / đổi target / xoá, đổi route table; NACL thêm / sửa / xoá entry, đổi NACL; subnet auto public IP; start instance (không có hoàn tác); gắn / gỡ SG của instance; EIP mới / có sẵn; Route 53 A / AAAA / CNAME / TXT / alias ALB; health check, register / deregister target). Hành động không có hoàn tác → rollback `409`. Template: Route 53 cho `UPSERT` + `DELETE` (chỉ hoàn tác) với 4 loại bản ghi, Deny thêm các API xoá tài nguyên. Phía khách phải tạo lại role. Chạy thật với Sonnet qua gateway: LocalStack KB1, KB2 (SG + DNS), KB4 (`nacl_replace_entry`), KB5, KB6, KB8 (`instance_start`, Undo → 409), KB9; AWS KB1, KB3 (`tg_modify_health_check`), KB4 (`nacl_delete_entry`), KB5, KB6 — đều SUCCEEDED → ROLLED_BACK, có DryRun trên AWS; KB7 chẩn đoán đúng. 412 test BE, 53 test FE.
 - [ ] **Tiếp theo** (xếp theo ưu tiên): deploy thật một phương án (CDK hoặc EC2) rồi thử Cognito + Bedrock; `run_eval.py --runs 5` với LLM thật; KB3 + CloudTrail trên AWS; CI (GitHub Actions: pytest, ruff, vitest, build, test CDK); mặc định an toàn hơn (`CORS_ORIGINS`, `AUTH_MODE` trong Compose EC2); checklist runner
 
 - [x] Sửa chuyển lab trong chat (2026-11-12): chỉ đồng bộ connection khi mở hội thoại, tránh effect của hội thoại cũ ghi đè lựa chọn lab mới trong lúc điều hướng. Thêm 2 test hồi quy; 22 test FE, build và kiểm tra định dạng file sửa đạt.
@@ -59,6 +65,7 @@ AutoAWS/
 ├── docs/
 │   ├── SYSTEM_OVERVIEW.md   # hệ thống làm gì, 3 kịch bản test, 7 khối, 7 nhóm tool, ràng buộc
 │   ├── API_CONTRACT.md      # endpoint, schema, job event — NGUỒN SỰ THẬT cho FE↔BE
+│   ├── TEST_SCENARIOS.md    # 7 kịch bản KB1–KB7: hệ thống, câu hỏi, câu trả lời mong muốn
 │   ├── BACKEND_PLAN.md      # cấu trúc backend/, thiết kế, lộ trình B1–B10
 │   └── FRONTEND_PLAN.md     # cấu trúc frontend/, luồng UI, lộ trình F1–F8
 ├── backend/                 # FastAPI — app/{api,aws/tools,agent,llm,storage}, tests/ (xem backend/README.md)
@@ -89,7 +96,7 @@ cd frontend && pnpm test && pnpm lint && pnpm build
 docker compose up --build                            # FE http://localhost:5173, BE :8000
 ```
 Máy dev tham chiếu: Node 24 + pnpm 11, Python 3.14, Docker. Không có AWS CLI / uv.
-Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thật cần Access Key (dev) hoặc Role ARN + tài khoản nền tảng (`PLATFORM_AWS_*` trong `backend/.env`).
+Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thật cần Access Key (dev) hoặc Role ARN + tài khoản triển khai hệ thống AutoAWS (`PLATFORM_AWS_*` trong `backend/.env`).
 
 ## Quyết định đã chốt (ADR mini)
 
@@ -106,10 +113,10 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 ## Ràng buộc cứng — KHÔNG được vi phạm
 
 1. **Đọc mặc định chỉ đọc; ghi chỉ qua executor đã duyệt.**
-   - Lõi agent, tool đọc (`app/aws/tools/`) và session đọc **tuyệt đối chỉ đọc**: chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`. LLM không bao giờ có công cụ ghi.
-   - Lệnh ghi **chỉ** nằm trong `app/aws/remediation/` (danh mục cố định Bảng 2.11 của báo cáo), chỉ chạy một đề xuất **người dùng đã duyệt**, bằng session ghi riêng bị khoá đúng các API của hành động đó (role `AutoAWS-Remediation`; access key chỉ khi bật `REMEDIATION_ALLOW_ACCESS_KEYS` cho dev).
-   - Không bao giờ: xoá tài nguyên của người dùng (trừ hoàn tác chính thay đổi do AutoAWS tạo), đụng IAM / Organizations, stop / terminate instance, mở 22 / 3389 cho `0.0.0.0/0`.
-   - Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt` (trên tài khoản người dùng; khoá `EXTERNAL_ID_SECRET` của chính nền tảng được CloudFormation đưa vào Lambda, app không gọi Secrets Manager).
+   - Lõi agent, công cụ chẩn đoán chỉ đọc (`app/aws/tools/`) và session đọc **tuyệt đối chỉ đọc**: chỉ `Describe*`, `List*`, `Get*`, `LookupEvents`, `StartQuery`, `GetQueryResults`, `GetMetricData`. LLM không bao giờ gọi trực tiếp công cụ khắc phục.
+   - Lệnh ghi **chỉ** nằm trong `app/aws/remediation/` (công cụ khắc phục có phê duyệt: cố định nhưng **tổng quát**, chia theo loại tài nguyên và thao tác — Bảng 2.11 của báo cáo, `API_CONTRACT.md` §7), chỉ chạy một đề xuất **người dùng đã duyệt**, bằng session ghi riêng bị khoá đúng các API của hành động đó (role `AutoAWS-Remediation`; access key chỉ khi bật `REMEDIATION_ALLOW_ACCESS_KEYS` cho dev).
+   - Không bao giờ: xoá tài nguyên của người dùng (VPC, subnet, instance, SG, route table, NACL, EIP không do AutoAWS cấp, hosted zone, load balancer, target group — trừ hoàn tác chính thứ AutoAWS tạo), đụng IAM / Organizations, stop / terminate instance, mở 22 / 3389 cho `0.0.0.0/0` / `::/0`. Gỡ một rule / route / entry NACL / target là **thay đổi cấu hình**, được phép vì có snapshot và hoàn tác.
+   - Không đọc S3 object, Secrets Manager, Parameter Store, không `kms:Decrypt` **trên tài khoản người dùng**. Secrets Manager của **chính nền tảng** chỉ dùng cho đúng các secret được cấp ARN: `EXTERNAL_ID_SECRET` (CloudFormation đưa vào Lambda) và cấu hình LLM của trang admin (`LLM_CONFIG_SECRET_ID`: api-handler đọc + ghi, agent-worker chỉ đọc).
 2. **Không log / in / commit credentials**, secret, `.env`. Credentials tạm thời chỉ ở bộ nhớ.
 3. Dữ liệu AWS đưa vào LLM **phải** qua `app/sanitizer.py`.
 4. LLM **chỉ** gọi được tool có trong `app/aws/registry.py` (cộng `submit_diagnosis` — kênh trả lời do vòng lặp xử lý, không chạm AWS); boto3 dùng cho **tài khoản người dùng** chỉ xuất hiện trong `app/aws/` (ngoại lệ dev: `infra/localstack/seed.py` tạo tài nguyên, chỉ chạy với LocalStack; `infra/aws-scenarios/` tạo/sửa tài nguyên kịch bản trong **tài khoản AWS test**, không bao giờ do app gọi).
@@ -132,6 +139,7 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 | Task | Đọc |
 |---|---|
 | Hiểu nghiệp vụ / viết prompt chẩn đoán | `docs/SYSTEM_OVERVIEW.md` §4 (3 kịch bản), §5, §6 |
+| Demo / chấm chẩn đoán | `docs/TEST_SCENARIOS.md`, `infra/aws-scenarios/README.md` |
 | Thêm/sửa tool AWS (TV2) | `docs/BACKEND_PLAN.md` §4.2, `API_CONTRACT.md` bảng tool |
 | Lõi agent / LLM provider (TV1) | `docs/BACKEND_PLAN.md` §4.3–4.4, `backend/app/llm/base.py` |
 | Giao diện chat / kết nối (TV4) | `docs/FRONTEND_PLAN.md`, `API_CONTRACT.md` §2–3 |
@@ -140,4 +148,4 @@ Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thậ
 
 ## Thành viên
 
-TV1 Trần Phúc Khánh (lõi agent, prompt) · TV2 Phạm Phúc Bình (tool đọc AWS) · TV3 Dương Đình Minh — nhóm trưởng (hạ tầng, API, kiểm thử) · TV4 Lê Minh Đạt (checklist, giao diện web).
+TV1 Trần Phúc Khánh (lõi agent, kịch bản kiểm thử) · TV2 Phạm Phúc Bình (công cụ chẩn đoán chỉ đọc, công cụ khắc phục có phê duyệt) · TV3 Dương Đình Minh — nhóm trưởng (hạ tầng, API, tài liệu) · TV4 Lê Minh Đạt (checklist, giao diện, hạ tầng).

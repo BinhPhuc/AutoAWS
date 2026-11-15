@@ -291,7 +291,7 @@ def kb1_proposal(store, aws, monkeypatch):
         summary="s",
         proposals=[
             ProposalRef(
-                action="associate_route_table",
+                action="route_table_associate",
                 params={"subnet_id": subnet, "route_table_id": public},
                 reason="r",
             )

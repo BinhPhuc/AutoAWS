@@ -5,7 +5,17 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, checklists, connections, conversations, health, jobs, proposals, tools
+from app.api import (
+    admin,
+    auth,
+    checklists,
+    connections,
+    conversations,
+    health,
+    jobs,
+    proposals,
+    tools,
+)
 from app.auth import current_user
 from app.config import get_settings
 from app.errors import install_exception_handlers
@@ -77,6 +87,8 @@ def create_app() -> FastAPI:
     # (handlers that need the user declare it again; FastAPI resolves it once per request).
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    # Admin routes check the admin group themselves (403 for other users)
+    app.include_router(admin.router, prefix="/api")
     for r in (
         connections.router,
         conversations.router,

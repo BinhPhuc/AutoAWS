@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, MessageSquareReply, ShieldAlert, Undo2, X } from 'lucide-react'
+import { Check, MessageSquareReply, Pencil, ShieldAlert, Undo2, X } from 'lucide-react'
 import type { Proposal, ProposalRef } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,9 +14,17 @@ import { Label } from '@/components/ui/label'
 import { StatusTag } from '@/components/ui/status-tag'
 import { Mono } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { useDecide, useProposal, useProposals } from '@/hooks/useProposals'
+import {
+  EDITABLE,
+  RUNNING,
+  useDecide,
+  useProposal,
+  useProposals,
+  useRequestRollback,
+} from '@/hooks/useProposals'
 import { formatTime } from '@/lib/format'
 import { S } from '@/lib/strings'
+import { EditProposalDialog } from './EditProposalDialog'
 import { ProposalOutcome, ProposalPreview, ProposalStatusTag } from './ProposalParts'
 
 /** "Proposed fixes" block of a diagnosis: one card per proposal the agent made. */
@@ -57,16 +65,29 @@ export function ProposalCard({
 }) {
   const { data: p } = useProposal(id)
   const conversationProposals = useProposals(p?.conversation_id)
-  const rollbacks = (conversationProposals.data ?? []).filter(
-    (x) => x.parent_id === id && x.kind === 'rollback',
-  )
+  const children = (conversationProposals.data ?? []).filter((x) => x.parent_id === id)
+  const rollbacks = children.filter((x) => x.kind === 'rollback')
+  // A revision is a fix with this proposal as parent; it has its own revisions / rollbacks
+  const revisions = children.filter((x) => x.kind === 'fix')
   if (!p) return null
   return (
     <div className="space-y-3">
-      <ProposalBody proposal={p} onFollowup={onFollowup} />
+      <ProposalBody
+        proposal={p}
+        onFollowup={onFollowup}
+        revised={revisions.length > 0}
+        rollbackActive={rollbacks.some(
+          (r) => r.status === 'PENDING_APPROVAL' || RUNNING.includes(r.status),
+        )}
+      />
       {rollbacks.map((r) => (
         <div key={r.id} className="border-l-2 border-warning-border pl-3">
           <ProposalBody proposal={r} onFollowup={onFollowup} />
+        </div>
+      ))}
+      {revisions.map((r) => (
+        <div key={r.id} className="border-l-2 border-primary/40 pl-3">
+          <ProposalCard id={r.id} onFollowup={onFollowup} />
         </div>
       ))}
     </div>
@@ -76,13 +97,23 @@ export function ProposalCard({
 function ProposalBody({
   proposal: p,
   onFollowup,
+  revised = false,
+  rollbackActive = false,
 }: {
   proposal: Proposal
   onFollowup?: (question: string) => void
+  /** Already edited into a newer proposal: edit that one instead */
+  revised?: boolean
+  /** A rollback of this proposal is waiting or running */
+  rollbackActive?: boolean
 }) {
   const t = S.remediation
   const decide = useDecide()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const requestRollback = useRequestRollback()
+  const editable = p.kind === 'fix' && EDITABLE.includes(p.status) && !revised
+  const undoable = p.kind === 'fix' && p.status === 'SUCCEEDED' && !rollbackActive
   const [feedback, setFeedback] = useState('')
   const pending = p.status === 'PENDING_APPROVAL'
 
@@ -112,6 +143,7 @@ function ProposalBody({
         )}
         <h4 className="min-w-0 flex-1 text-sm font-semibold">
           {p.kind === 'rollback' && <span className="text-warning">{t.rollback}: </span>}
+          {p.kind === 'fix' && p.parent_id && <span className="text-primary">{t.revised}: </span>}
           {p.preview.summary}
         </h4>
         <ProposalStatusTag status={p.status} />
@@ -121,6 +153,31 @@ function ProposalBody({
         <ProposalPreview proposal={p} />
         {!pending && p.status !== 'APPROVED' && <ProposalOutcome proposal={p} />}
       </div>
+      {editable && !pending && (
+        <footer className="flex flex-wrap items-center gap-2 border-t bg-muted/40 px-3 py-2">
+          <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
+            <Pencil />
+            {t.edit}
+          </Button>
+        </footer>
+      )}
+      {undoable && (
+        <footer className="flex flex-wrap items-center gap-2 border-t bg-muted/40 px-3 py-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => requestRollback.mutate(p.id)}
+            disabled={requestRollback.isPending}
+            aria-describedby={`undo-hint-${p.id}`}
+          >
+            <Undo2 />
+            {t.requestRollback}
+          </Button>
+          <span id={`undo-hint-${p.id}`} className="text-xs text-muted-foreground">
+            {t.requestRollbackHint}
+          </span>
+        </footer>
+      )}
       {pending && (
         <footer className="flex flex-wrap items-center gap-2 border-t bg-muted/40 px-3 py-2">
           <Button size="sm" onClick={() => send('approve')} disabled={decide.isPending}>
@@ -145,6 +202,17 @@ function ProposalBody({
             <MessageSquareReply />
             {t.feedback}
           </Button>
+          {editable && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditOpen(true)}
+              disabled={decide.isPending}
+            >
+              <Pencil />
+              {t.edit}
+            </Button>
+          )}
           {p.expires_at && (
             <span className="tabular ml-auto text-xs text-muted-foreground">
               {t.expires} {formatTime(p.expires_at)}
@@ -152,6 +220,8 @@ function ProposalBody({
           )}
         </footer>
       )}
+
+      {editable && <EditProposalDialog proposal={p} open={editOpen} onOpenChange={setEditOpen} />}
 
       <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}>
         <DialogContent>

@@ -153,6 +153,12 @@ def main() -> None:
     p.add_argument("--only", default="", help="comma-separated scenario ids, e.g. kb1,kb2")
     p.add_argument("--answers", type=Path, default=ANSWERS)
     p.add_argument("--timeout", type=float, default=900, help="seconds to wait per question")
+    p.add_argument(
+        "--connection",
+        default="",
+        help="id of an existing connected connection (e.g. a role on a real AWS test account); "
+        "default: the LocalStack access key connection",
+    )
     args = p.parse_args()
 
     if not args.answers.exists():
@@ -164,7 +170,7 @@ def main() -> None:
     results: dict = {}
     with httpx.Client(timeout=60) as client:
         health = client.get(f"{args.api}/health").json()["data"]
-        conn_id = connection_id(client, args.api)
+        conn_id = args.connection or connection_id(client, args.api)
         print(f"Backend {health['version']}, LLM provider: {health['llm_provider']}")
         for kb, expected in scenarios.items():
             for i in range(args.runs):

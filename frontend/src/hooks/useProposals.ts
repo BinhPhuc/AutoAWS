@@ -68,3 +68,47 @@ export function usePendingProposals(): number {
   })
   return data?.length ?? 0
 }
+
+/** The fixed catalogue with each action's input schema (does not change while running). */
+export function useRemediationActions() {
+  return useQuery({
+    queryKey: ['remediation-actions'],
+    queryFn: async () => (await proposalsApi.actions()).data,
+    staleTime: Infinity,
+  })
+}
+
+/** Statuses whose parameters can still be edited (docs/API_CONTRACT.md §7, revise). */
+export const EDITABLE: ProposalStatus[] = [
+  'PENDING_APPROVAL',
+  'REJECTED',
+  'EXPIRED',
+  'STALE',
+  'SUPERSEDED',
+]
+
+export function useReviseProposal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, params }: { id: string; params: Record<string, unknown> }) =>
+      proposalsApi.revise(id, params),
+    onSuccess: ({ data, message }) => {
+      toast.success(message)
+      qc.setQueryData(proposalKeys.detail(data.id), data)
+      void qc.invalidateQueries({ queryKey: proposalKeys.all })
+    },
+  })
+}
+
+export function useRequestRollback() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => proposalsApi.rollback(id),
+    onSuccess: ({ data, message }) => {
+      toast.success(message)
+      qc.setQueryData(proposalKeys.detail(data.id), data)
+      void qc.invalidateQueries({ queryKey: proposalKeys.all })
+    },
+    onError: (e) => toastApiError(e),
+  })
+}
