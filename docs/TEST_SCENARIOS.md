@@ -22,11 +22,9 @@ Bảy kịch bản khớp Bảng 2.14 của báo cáo tiến độ lần 2.
    - bằng chứng là dữ liệu đọc được, không phải suy đoán;
    - cách sửa đúng;
    - không bịa thêm thông tin.
-
-   Chấm tự động bằng `infra/eval/run_eval.py --answers infra/aws-scenarios/answers.aws.json`. File này do `scenario.py` ghi, chứa ID tài nguyên thật và các từ khoá phải xuất hiện, được trích ở dòng "Từ khoá chấm" của từng kịch bản.
 5. Test xong thì chạy `$PY $S down kb1 ...` để xoá stack. Nếu đã áp dụng bản sửa có cấp Elastic IP thì kiểm tra lại Elastic IP còn sót.
 
-Trong tài liệu, ID ở dạng `<...>` thay đổi theo mỗi lần dựng. ID thật nằm trong `scenario.py status kbN` và `answers.aws.json`.
+Trong tài liệu, ID ở dạng `<...>` thay đổi theo mỗi lần dựng. ID thật nằm trong `scenario.py status kbN`.
 
 | KB | Lớp lỗi | Câu hỏi (tóm tắt) | Nguyên nhân | AutoAWS đề xuất sửa |
 |---|---|---|---|---|
@@ -62,7 +60,6 @@ Trong tài liệu, ID ở dạng `<...>` thay đổi theo mỗi lần dựng. ID
 - **Cách khắc phục:** gắn subnet lại route table public `rtb-<public>` (đang có `0.0.0.0/0 → igw`), hoặc thêm route `0.0.0.0/0 → igw-<...>` vào route table hiện tại.
 - **AutoAWS đề xuất:** `route_table_associate` (subnet → `rtb-<public>`), sau đó kiểm chứng route table mới của subnet. Ngoài ra có thể dùng `route_add` (0.0.0.0/0 → `igw-<...>` trên route table hiện tại).
 
-**Từ khoá chấm:** `rtb-<private>` hoặc "route table"; và `0.0.0.0/0` / "igw" / "internet gateway".
 
 ---
 
@@ -92,7 +89,6 @@ Cần một tên miền đã có public hosted zone trên Route 53.
 - **AutoAWS đề xuất:** `dns_upsert_record` (A `app.<domain>` → `<IP mới>`, hoặc `instance_id` sau `eip_allocate_and_associate` để IP không đổi nữa) và `sg_add_rule` (inbound TCP 8080).
 - **Điểm chưa xác nhận:** container có thật sự lắng nghe 8080 hay không. Agent không đọc được nội dung bên trong instance, nên phải ghi là chưa xác nhận và đưa lệnh để người dùng tự kiểm tra, ví dụ `docker ps`, `curl localhost:8080`.
 
-**Từ khoá chấm:** `<IP cũ>`; và `8080` cùng `sg-<...>` / "security group".
 
 ---
 
@@ -126,7 +122,6 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - Nếu agent chưa tìm thấy đường dẫn mới trong log, nó phải hỏi lại hoặc ghi là chưa xác nhận, không được đoán.
   - Người dùng có thể nói thêm "bản mới dùng /api/health" để agent đề xuất.
 
-**Từ khoá chấm:** `/health`; và `/api/health` / "health check" / "unhealthy".
 
 ---
 
@@ -152,7 +147,6 @@ Cần một tên miền đã có public hosted zone trên Route 53.
 - **Cách khắc phục:** gắn subnet lại NACL mặc định của VPC, hoặc thêm rule outbound ALLOW TCP 1024–65535 với số rule nhỏ hơn rule deny.
 - **AutoAWS đề xuất:** `nacl_associate` (subnet → NACL mặc định `acl-<default>`), hoặc `nacl_add_entry` (egress ALLOW TCP 1024–65535, số rule nhỏ hơn rule deny) / `nacl_replace_entry` (đổi rule deny thành allow). Hoàn tác đưa NACL về như trước.
 
-**Từ khoá chấm:** `acl-<...>` / "network acl" / "nacl"; và `1024` / "ephemeral" / "cổng tạm" / "outbound".
 
 ---
 
@@ -176,7 +170,6 @@ Cần một tên miền đã có public hosted zone trên Route 53.
 - **Cách khắc phục:** cấp một Elastic IP rồi gắn vào instance. Về lâu dài, bật auto-assign public IP cho subnet hoặc đi qua bastion / SSM Session Manager.
 - **AutoAWS đề xuất:** `eip_allocate_and_associate` cho `i-<...>`. Hoàn tác (Undo change) sẽ gỡ và trả lại Elastic IP.
 
-**Từ khoá chấm:** "public ip" / "ip public" / "ip công khai" / "elastic ip".
 
 ---
 
@@ -201,7 +194,6 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - Agent không biết IP nhà, nên phải hỏi lại hoặc để người dùng nói thêm, ví dụ "IP nhà tôi là x.x.x.x". Không được tự điền một IP.
   - Người dùng cũng có thể sửa tham số đề xuất trước khi duyệt.
 
-**Từ khoá chấm:** `203.0.113.10`.
 
 ---
 
@@ -231,7 +223,6 @@ Cần một tên miền đã có public hosted zone trên Route 53.
 - **AutoAWS:** không có công cụ khắc phục nào cho lỗi tầng ứng dụng, nên chỉ hướng dẫn. Không có đề xuất chờ duyệt.
 - **Điểm chưa xác nhận:** database đúng ra phải ở đâu. Agent chỉ thấy địa chỉ trong log, nên ghi là chưa xác nhận.
 
-**Từ khoá chấm:** `5432` / "orders-db" / "operationalerror" / "database" / "cơ sở dữ liệu".
 
 ---
 

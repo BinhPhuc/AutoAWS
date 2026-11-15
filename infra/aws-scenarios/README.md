@@ -44,12 +44,8 @@ $PY $S up kb2 $OPTS --param HostedZoneId=Z0123456789ABC --param DomainName=examp
 ```
 
 Sau đó cho AutoAWS đọc tài khoản test: tạo kết nối Role (deploy template CloudFormation mà app sinh ra,
-`AutoAWS-ReadOnly`) hoặc Access Key (dev), rồi hỏi câu của kịch bản — hoặc chấm điểm tự động:
-
-```bash
-$PY infra/eval/run_eval.py --answers infra/aws-scenarios/answers.aws.json --runs 5
-```
-`answers.aws.json` (gitignore) chứa câu hỏi + nguyên nhân kỳ vọng với ID tài nguyên thật, do `up`/`fault` ghi.
+`AutoAWS-ReadOnly`) hoặc Access Key (dev), rồi hỏi câu của kịch bản và đối chiếu với câu trả lời mong muốn
+trong `docs/TEST_SCENARIOS.md`.
 
 ## Lưu ý
 
