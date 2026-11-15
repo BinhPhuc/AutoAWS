@@ -98,7 +98,7 @@ Frontend phải dùng `VITE_USE_MOCK=false` hoặc bỏ biến mock để gọi 
   nội dung này không hiển thị hay lưu vào lịch sử chat.
 - HTTP 401: kiểm tra key; HTTP 402: tài khoản API không đủ số dư; HTTP 429: thử lại
   sau. Backend không phản chiếu nội dung lỗi từ nhà cung cấp.
-- Luồng job, sanitizer, bộ tool chỉ đọc và `submit_diagnosis` dùng chung với các
+- Luồng job, sanitizer, công cụ chẩn đoán chỉ đọc và `submit_diagnosis` dùng chung với các
   provider khác. Đổi LLM không thay kết nối AWS hay cấu hình DynamoDB/Cognito.
 
 ### Gateway định dạng Anthropic
@@ -115,7 +115,7 @@ ANTHROPIC_GATEWAY_CACHE=true                     # tuỳ chọn, xem dưới
   Messages API cơ bản (model, system, messages, tools, max_tokens), xác thực `Authorization: Bearer`, không gửi
   thinking / `LLM_EFFORT` / beta riêng của Claude — gateway chạy model khác thường từ chối các tham số đó.
 - `ANTHROPIC_GATEWAY_CACHE=true` gắn `cache_control` vào system prompt, tool cuối và tin nhắn mới nhất. Mỗi vòng
-  của agent gửi lại toàn bộ prompt + bộ tool + hội thoại; gateway có tính giá "cache read" sẽ tính phần lặp lại
+  của agent gửi lại toàn bộ prompt + định nghĩa công cụ + hội thoại; gateway có tính giá "cache read" sẽ tính phần lặp lại
   này rẻ hơn. Kiểm tra trong log backend: `cache_read=…` lớn hơn 0 từ vòng thứ hai.
 - Kiểm tra nhanh key và model:
   ```bash
@@ -129,7 +129,7 @@ ANTHROPIC_GATEWAY_CACHE=true                     # tuỳ chọn, xem dưới
 
 Lưu ý khi dùng gateway hoặc máy chủ bên thứ ba (cả `anthropic` + gateway lẫn `openai`):
 
-- Model **phải gọi được tool**: agent gọi các tool đọc AWS và kết thúc bằng tool `submit_diagnosis`.
+- Model **phải gọi được tool**: agent gọi các công cụ chẩn đoán chỉ đọc và kết thúc bằng tool `submit_diagnosis`.
 - **Dữ liệu đi qua máy chủ đó**: câu hỏi và kết quả đọc AWS (đã qua sanitizer nhưng vẫn có tên tài nguyên, IP,
   cấu hình, log). Chỉ dùng với LocalStack hoặc tài khoản test; đây là đường thay thế cho demo, bản đích là Bedrock.
 - Header của web hiện tên provider (`LLM: anthropic` / `openai`); khi demo nên nói rõ LLM đang chạy qua bên thứ ba.
@@ -155,7 +155,7 @@ ollama create autoaws-qwen2.5:16k -f infra/ollama/Modelfile
 ```
 
 Biến thể dùng lại trọng số `qwen2.5:latest`, đặt temperature 0.2. Khi thử trên máy dev,
-context 4.096 không giữ được đầy đủ prompt và bộ tool (khoảng 5–6 nghìn token trước khi có lịch sử), khiến
+context 4.096 không giữ được đầy đủ prompt và định nghĩa công cụ (khoảng 5–6 nghìn token trước khi có lịch sử), khiến
 model bỏ qua chỉ thị ngay cả với lời chào. Tăng `OPENAI_MAX_TOKENS` chỉ tăng giới hạn
 đầu ra; context đầu vào được đặt bằng `num_ctx` trong Modelfile. Context 16.384 vẫn
 cần đủ chỗ cho lịch sử, kết quả tool và đầu ra; đây không phải bảo đảm chất lượng mọi lượt.
@@ -186,7 +186,7 @@ cd backend
 ```
 
 Chạy frontend với `VITE_USE_MOCK=false` (hoặc bỏ biến này), mở Chat trên kết nối AWS đã
-verify và hỏi bằng tiếng Việt. Timeline hiển thị các tool đọc AWS; model trả kết luận
+verify và hỏi bằng tiếng Việt. Timeline hiển thị các công cụ chẩn đoán; model trả kết luận
 qua `submit_diagnosis`, server kiểm bằng chứng và lưu lịch sử như các provider khác.
 Đây là chat chẩn đoán AWS: vẫn cần kết nối AWS đã verify. Ollama thay phần suy luận LLM,
 không thay DynamoDB, Cognito hay quyền AWS của backend. Không cần quyền Bedrock để gọi Ollama.
@@ -295,7 +295,7 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 | `app/api/` | Router REST: connections, conversations, jobs, proposals, tools |
 | `app/agent/` | Vòng lặp agent, prompt, schema câu trả lời, kiểm tra bằng chứng |
 | `app/aws/tools/` | 19 công cụ **đọc** (registry chỉ nhận action đọc, guard botocore chặn ghi lúc chạy) |
-| `app/aws/remediation/` | **Nơi duy nhất ghi**: danh mục 6 hành động + session ghi khoá theo hành động |
+| `app/aws/remediation/` | **Nơi duy nhất ghi**: công cụ khắc phục có phê duyệt (`actions/`, theo loại tài nguyên) + session ghi khoá theo hành động |
 | `app/remediation/` | Vòng đời đề xuất: duyệt / từ chối / góp ý / hết hạn / kiểm tra lại / thực thi / kiểm chứng |
 | `app/llm/` | Provider: mock, openai (Ollama/Chat Completions), bedrock + anthropic (`claude.py`), mcp (MCP client đóng vai LLM) |
 | `app/worker.py`, `app/handlers/`, `app/platform/` | Việc chạy nền (job chẩn đoán, verify), Lambda handler, điều phối `RUNTIME=local\|lambda` |

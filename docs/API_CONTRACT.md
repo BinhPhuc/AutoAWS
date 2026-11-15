@@ -215,7 +215,7 @@ Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Templat
                 "template_yaml": "AWSTemplateFormatVersion: '2010-09-09'\n..." } }
 ```
 Client hiển thị nút copy `template_yaml` + hướng dẫn tạo stack (link "Launch Stack" sau).
-Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của danh mục hành động (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` (và `DELETE` để hoàn tác bản ghi do AutoAWS tạo) cho bản ghi `A` / `AAAA` / `CNAME` / `TXT`; Deny tường minh IAM, Organizations, stop / terminate instance và các API xoá tài nguyên), output `RemediationRoleArn`.
+Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của công cụ khắc phục có phê duyệt (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` (và `DELETE` để hoàn tác bản ghi do AutoAWS tạo) cho bản ghi `A` / `AAAA` / `CNAME` / `TXT`; Deny tường minh IAM, Organizations, stop / terminate instance và các API xoá tài nguyên), output `RemediationRoleArn`.
 
 ---
 
@@ -262,7 +262,7 @@ DiagnosisAnswer {
     { "text": "sshd có đang chạy trong máy không", "how_to_check": "sudo systemctl status sshd" }
   ],
   "confidence": "high" | "medium" | "low",   // độ tin cậy chung của cả câu trả lời
-  "proposals": [ProposalRef],       // đề xuất sửa trong danh mục (mục 7); [] nếu không có
+  "proposals": [ProposalRef],       // đề xuất dùng công cụ khắc phục có phê duyệt (mục 7); [] nếu không có
   "limit_reached": null | "max_iterations" | "time" | "tokens" | "tool_calls"   // khác null: agent phải chốt sớm, phần chưa kiểm tra nằm trong unverified
 }
 
@@ -345,7 +345,7 @@ Các `events` của job (thứ tự điển hình: `status` → (`tool_call` →
 
 ---
 
-## 4. Tools — danh sách công cụ đọc AWS
+## 4. Tools — công cụ chẩn đoán chỉ đọc
 
 ### `GET /api/tools`
 ```json
@@ -391,7 +391,7 @@ Chỉ bật khi `LLM_PROVIDER=mcp`. Dùng khi chưa có quyền gọi Bedrock/An
 
 ## 7. Khắc phục có phê duyệt (human-in-the-loop)
 
-Agent **không có công cụ ghi**: nó chỉ đưa `proposals` vào câu trả lời. Server kiểm tra từng đề xuất (schema, kiểm tra trước, snapshot tài nguyên) bằng session **chỉ đọc** rồi lưu thành `Proposal` chờ duyệt. Chỉ khi người dùng bấm Duyệt, executor mới gọi đúng API ghi của hành động đó bằng session ghi riêng, rồi kiểm chứng lại bằng session chỉ đọc.
+Agent **không gọi trực tiếp công cụ khắc phục**: nó chỉ đưa `proposals` vào câu trả lời. Server kiểm tra từng đề xuất (schema, kiểm tra trước, snapshot tài nguyên) bằng session **chỉ đọc** rồi lưu thành `Proposal` chờ duyệt. Chỉ khi người dùng bấm Duyệt, executor mới gọi đúng API ghi của hành động đó bằng session ghi riêng, rồi kiểm chứng lại bằng session chỉ đọc.
 
 ### Schema `Proposal`
 ```json
@@ -467,9 +467,9 @@ Người dùng muốn quay lại một thay đổi đã áp dụng (đề xuất
 - Trên AWS (`RUNTIME=lambda`), bước đọc chạy trong agent-worker, giống `revise`.
 
 ### `GET /api/remediation/actions`
-Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp (session ghi của một đề xuất chỉ gọi được đúng các API này).
+Danh sách công cụ khắc phục có phê duyệt: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp (session ghi của một đề xuất chỉ gọi được đúng các API này).
 
-Danh mục **cố định nhưng tổng quát**: chia theo loại tài nguyên và thao tác, không theo kịch bản. Tham số phẳng (string / integer / enum) để form sửa đề xuất sinh được từ `input_schema`. Mọi ID phải đọc được bằng role chỉ đọc lúc snapshot; tài nguyên đích phải cùng VPC.
+Công cụ khắc phục **cố định nhưng tổng quát**: chia theo loại tài nguyên và thao tác, không theo kịch bản. Tham số phẳng (string / integer / enum) để form sửa đề xuất sinh được từ `input_schema`. Mọi ID phải đọc được bằng role chỉ đọc lúc snapshot; tài nguyên đích phải cùng VPC.
 
 | Nhóm | name | API ghi | Kiểm tra trước (từ chối nếu sai) | Kiểm chứng | Hoàn tác |
 |---|---|---|---|---|---|

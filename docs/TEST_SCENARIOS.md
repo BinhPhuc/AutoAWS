@@ -30,12 +30,12 @@ Trong tài liệu, ID ở dạng `<...>` thay đổi theo mỗi lần dựng. ID
 
 | KB | Lớp lỗi | Câu hỏi (tóm tắt) | Nguyên nhân | AutoAWS đề xuất sửa |
 |---|---|---|---|---|
-| KB1 | Định tuyến | Không SSH được, SG đã mở 22 | Subnet gắn route table không có `0.0.0.0/0 → igw` | `associate_route_table` |
-| KB2 | DNS + Security Group | Trỏ tên miền về EC2 mà không vào được app 8080 | Bản ghi A trỏ IP cũ; SG chưa mở 8080 | `upsert_a_record`, `authorize_sg_ingress` |
-| KB3 | Load balancer | Alarm UnHealthyHostCount, web vẫn chạy | Health check `/health`, bản mới chỉ có `/api/health` | `modify_health_check_path` |
-| KB4 | Network ACL | SSH treo rồi timeout | NACL chặn cổng tạm 1024–65535 chiều ra | — (hướng dẫn sửa tay) |
-| KB5 | Địa chỉ IP | Instance mới không SSH được | Instance không có public IP | `allocate_and_associate_eip` |
-| KB6 | Security Group | Ở công ty SSH được, về nhà thì không | SG chỉ mở 22 cho IP công ty cũ | `authorize_sg_ingress` (IP nhà /32) |
+| KB1 | Định tuyến | Không SSH được, SG đã mở 22 | Subnet gắn route table không có `0.0.0.0/0 → igw` | `route_table_associate` |
+| KB2 | DNS + Security Group | Trỏ tên miền về EC2 mà không vào được app 8080 | Bản ghi A trỏ IP cũ; SG chưa mở 8080 | `eip_allocate_and_associate` (nếu cần IP cố định), `dns_upsert_record`, `sg_add_rule` |
+| KB3 | Load balancer | Alarm UnHealthyHostCount, web vẫn chạy | Health check `/health`, bản mới chỉ có `/api/health` | `tg_modify_health_check` (path) |
+| KB4 | Network ACL | SSH treo rồi timeout | NACL chặn cổng tạm 1024–65535 chiều ra | `nacl_associate` (về NACL mặc định) hoặc `nacl_add_entry` / `nacl_replace_entry` |
+| KB5 | Địa chỉ IP | Instance mới không SSH được | Instance không có public IP | `eip_allocate_and_associate` |
+| KB6 | Security Group | Ở công ty SSH được, về nhà thì không | SG chỉ mở 22 cho IP công ty cũ | `sg_add_rule` (IP nhà /32) |
 | KB7 | Ứng dụng / log | Sau deploy, API trả 500 cho mọi request | Bản v2.5.0 không kết nối được DB `10.70.9.15:5432` | — (rollback ứng dụng / sửa cấu hình DB) |
 
 ---
@@ -60,7 +60,7 @@ Trong tài liệu, ID ở dạng `<...>` thay đổi theo mỗi lần dựng. ID
   - Security Group đúng là có mở 22 nên không phải nguyên nhân, instance vẫn có public IP;
   - CloudTrail có sự kiện `ReplaceRouteTableAssociation`, cho biết ai đổi và lúc nào.
 - **Cách khắc phục:** gắn subnet lại route table public `rtb-<public>` (đang có `0.0.0.0/0 → igw`), hoặc thêm route `0.0.0.0/0 → igw-<...>` vào route table hiện tại.
-- **AutoAWS đề xuất:** `associate_route_table` (subnet → `rtb-<public>`), sau đó kiểm chứng route table mới của subnet. Ngoài ra có thể dùng `create_route_to_igw`.
+- **AutoAWS đề xuất:** `route_table_associate` (subnet → `rtb-<public>`), sau đó kiểm chứng route table mới của subnet. Ngoài ra có thể dùng `route_add` (0.0.0.0/0 → `igw-<...>` trên route table hiện tại).
 
 **Từ khoá chấm:** `rtb-<private>` hoặc "route table"; và `0.0.0.0/0` / "igw" / "internet gateway".
 
@@ -89,7 +89,7 @@ Cần một tên miền đã có public hosted zone trên Route 53.
    - Nguyên nhân: SG `sg-<...>` chỉ mở 22, 80 và 443, không có 8080.
    - Bằng chứng: `describe_security_groups`.
    - Khắc phục: thêm inbound TCP 8080 từ nguồn cần truy cập.
-- **AutoAWS đề xuất:** `upsert_a_record` (A `app.<domain>` → `<IP mới>`) và `authorize_sg_ingress` (TCP 8080).
+- **AutoAWS đề xuất:** `dns_upsert_record` (A `app.<domain>` → `<IP mới>`, hoặc `instance_id` sau `eip_allocate_and_associate` để IP không đổi nữa) và `sg_add_rule` (inbound TCP 8080).
 - **Điểm chưa xác nhận:** container có thật sự lắng nghe 8080 hay không. Agent không đọc được nội dung bên trong instance, nên phải ghi là chưa xác nhận và đưa lệnh để người dùng tự kiểm tra, ví dụ `docker ps`, `curl localhost:8080`.
 
 **Từ khoá chấm:** `<IP cũ>`; và `8080` cùng `sg-<...>` / "security group".
@@ -122,7 +122,7 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - CloudTrail có `SendCommand` (SSM), trùng thời điểm bắt đầu lỗi.
 - **Vì sao web vẫn chạy:** khi không còn target nào healthy, ALB fail-open và vẫn chuyển request tới mọi target.
 - **Cách khắc phục:** đổi health check path của target group sang `/api/health`, hoặc rollback ứng dụng về v1.
-- **AutoAWS đề xuất:** `modify_health_check_path` → `/api/health`, rồi kiểm chứng bằng cách đợi target healthy trở lại.
+- **AutoAWS đề xuất:** `tg_modify_health_check` với `path` = `/api/health`, rồi kiểm chứng bằng cách đợi target healthy trở lại.
   - Nếu agent chưa tìm thấy đường dẫn mới trong log, nó phải hỏi lại hoặc ghi là chưa xác nhận, không được đoán.
   - Người dùng có thể nói thêm "bản mới dùng /api/health" để agent đề xuất.
 
@@ -150,7 +150,7 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - Security Group và route table đều đúng;
   - CloudTrail có `ReplaceNetworkAclAssociation`.
 - **Cách khắc phục:** gắn subnet lại NACL mặc định của VPC, hoặc thêm rule outbound ALLOW TCP 1024–65535 với số rule nhỏ hơn rule deny.
-- **AutoAWS:** danh mục khắc phục chưa có hành động NACL, nên chỉ hướng dẫn sửa tay, kèm lệnh CLI cụ thể. Không có đề xuất chờ duyệt.
+- **AutoAWS đề xuất:** `nacl_associate` (subnet → NACL mặc định `acl-<default>`), hoặc `nacl_add_entry` (egress ALLOW TCP 1024–65535, số rule nhỏ hơn rule deny) / `nacl_replace_entry` (đổi rule deny thành allow). Hoàn tác đưa NACL về như trước.
 
 **Từ khoá chấm:** `acl-<...>` / "network acl" / "nacl"; và `1024` / "ephemeral" / "cổng tạm" / "outbound".
 
@@ -174,7 +174,7 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - `describe_subnets`: `MapPublicIpOnLaunch=false`;
   - route table có `0.0.0.0/0 → igw` và Security Group mở 22, tức các lớp này đều ổn.
 - **Cách khắc phục:** cấp một Elastic IP rồi gắn vào instance. Về lâu dài, bật auto-assign public IP cho subnet hoặc đi qua bastion / SSM Session Manager.
-- **AutoAWS đề xuất:** `allocate_and_associate_eip` cho `i-<...>`. Hoàn tác (Undo change) sẽ gỡ và trả lại Elastic IP.
+- **AutoAWS đề xuất:** `eip_allocate_and_associate` cho `i-<...>`. Hoàn tác (Undo change) sẽ gỡ và trả lại Elastic IP.
 
 **Từ khoá chấm:** "public ip" / "ip public" / "ip công khai" / "elastic ip".
 
@@ -197,7 +197,7 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - instance có public IP, route table và NACL đều ổn.
 - **Cách khắc phục:** thêm rule inbound 22 cho **đúng IP nhà dạng /32**. Người dùng xem IP nhà bằng `curl https://checkip.amazonaws.com`. Cách khác là dùng VPN công ty hoặc SSM Session Manager.
 - **Không được** đề xuất mở 22 cho `0.0.0.0/0` (ràng buộc cứng #1).
-- **AutoAWS đề xuất:** `authorize_sg_ingress` (TCP 22, `<IP nhà>/32`).
+- **AutoAWS đề xuất:** `sg_add_rule` (inbound TCP 22, `<IP nhà>/32`).
   - Agent không biết IP nhà, nên phải hỏi lại hoặc để người dùng nói thêm, ví dụ "IP nhà tôi là x.x.x.x". Không được tự điền một IP.
   - Người dùng cũng có thể sửa tham số đề xuất trước khi duyệt.
 
@@ -228,7 +228,7 @@ Cần một tên miền đã có public hosted zone trên Route 53.
   - rollback về v2.4.3;
   - hoặc sửa cấu hình DB của bản mới (`DB_HOST` / `DB_PORT`) cho đúng máy chủ database;
   - nếu database thật sự ở `10.70.9.15`, kiểm tra nó có đang chạy không và Security Group của nó có mở 5432 cho instance không.
-- **AutoAWS:** danh mục khắc phục không có hành động cho lỗi tầng ứng dụng, nên chỉ hướng dẫn. Không có đề xuất chờ duyệt.
+- **AutoAWS:** không có công cụ khắc phục nào cho lỗi tầng ứng dụng, nên chỉ hướng dẫn. Không có đề xuất chờ duyệt.
 - **Điểm chưa xác nhận:** database đúng ra phải ở đâu. Agent chỉ thấy địa chỉ trong log, nên ghi là chưa xác nhận.
 
 **Từ khoá chấm:** `5432` / "orders-db" / "operationalerror" / "database" / "cơ sở dữ liệu".
@@ -239,4 +239,4 @@ Cần một tên miền đã có public hosted zone trên Route 53.
 
 - **Hỏi lại sau khi sửa** (ví dụ KB1, sau khi duyệt đề xuất): "Giờ SSH được chưa?" Agent phải đọc lại cấu hình, không trả lời theo trí nhớ. Có thể bấm `refresh` để bỏ cache.
 - **Lời chào hoặc cảm ơn:** "cảm ơn" chỉ được trả lời ngắn và không gọi AWS.
-- **Ngoài phạm vi:** hỏi nội dung một S3 object hoặc secret. Agent phải từ chối, vì nó không có tool đọc dữ liệu nghiệp vụ.
+- **Ngoài phạm vi:** hỏi nội dung một S3 object hoặc secret. Agent phải từ chối, vì không có công cụ chẩn đoán nào đọc dữ liệu nghiệp vụ.
