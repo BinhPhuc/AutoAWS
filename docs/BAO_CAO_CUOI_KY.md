@@ -987,10 +987,10 @@ Bảng 3.6 tổng hợp phần việc của từng thành viên theo các hạng
 
 | Thành viên | Vai trò | Công việc chính | Nỗ lực |
 |---|---|---|---|
-| Trần Phúc Khánh | Lõi agent, kịch bản kiểm thử | Vòng lặp agent và lớp LLMClient; system prompt chẩn đoán; định dạng câu trả lời và kiểm tra bằng chứng; bộ kịch bản kiểm thử KB1–KB7, môi trường kiểm thử và đối chiếu kết quả | 25% |
-| Phạm Phúc Bình | Bộ tool AWS: chẩn đoán và khắc phục | Công cụ chẩn đoán chỉ đọc (máy chủ, mạng, DNS, load balancer, chỉ số, log, CloudTrail); công cụ khắc phục có phê duyệt (sinh đề xuất, snapshot, kiểm tra trước, DryRun, thực thi, kiểm chứng, hoàn tác); bộ lọc dữ liệu nhạy cảm; session STS cho tài khoản người dùng | 25% |
-| Dương Đình Minh (nhóm trưởng) | Hạ tầng, API, tài liệu | Khởi tạo hạ tầng CDK và phân quyền IAM; mẫu CloudFormation phía người dùng; DynamoDB; API Gateway và api-handler, luồng kết nối và External ID; Step Functions remediation-flow, SNS; triển khai lên AWS; tài liệu và báo cáo | 25% |
-| Lê Minh Đạt | Checklist, giao diện, hạ tầng | Giao diện web (đăng nhập, kết nối tài khoản, chat, đề xuất khắc phục, trang Admin); checklist; triển khai stack dữ liệu, xác thực, giao diện (DynamoDB, Cognito, S3, CloudFront); giám sát vận hành và CI/CD; kiểm tra an toàn; phương án EC2 + Docker | 25% |
+| Trần Phúc Khánh | Lõi agent | Cách agent suy luận và trả lời; trang 404; thử kết nối trên bản triển khai | 25% |
+| Phạm Phúc Bình | Công cụ đọc AWS | Khung dự án; agent trên Bedrock; các mô hình AI khác (Ollama, DeepSeek); đăng nhập; form kết nối; triển khai bản demo | 27% |
+| Dương Đình Minh (nhóm trưởng) | Hạ tầng, API, kiểm thử | Hoàn thiện chẩn đoán; sửa lỗi có duyệt; serverless và CDK; bảo mật External ID; chạy thật các kịch bản | 27% |
+| Lê Minh Đạt | Tài khoản AWS, kiểm thử, báo cáo | Tài khoản và phân quyền cho nhóm; mạng demo; role chỉ đọc; báo cáo, slide; chạy thử các kịch bản | 21% |
 
 *Bảng 3.6. Phân công và nỗ lực của thành viên.*
 
