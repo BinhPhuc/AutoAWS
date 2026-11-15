@@ -205,7 +205,7 @@ Server lấy credentials (trực tiếp hoặc `AssumeRole`), gọi `sts:GetCall
 ```
 
 ### `GET /api/connections/{id}/cloudformation`
-Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Template YAML tạo IAM role chỉ đọc có trust policy tới tài khoản nền tảng + `sts:ExternalId` = `external_id` của connection.
+Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Template YAML tạo IAM role chỉ đọc có trust policy tới tài khoản triển khai hệ thống AutoAWS + `sts:ExternalId` = `external_id` của connection.
 ```json
 200 { "status_code": 200, "message": "OK",
       "data": { "stack_name": "AutoAWSReadOnlyRole",

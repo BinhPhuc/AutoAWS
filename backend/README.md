@@ -48,7 +48,7 @@ Mẫu đủ các biến: [`.env.example`](.env.example). Key chỉ để trong `
 | `LLM_PROVIDER` | Dùng khi | Biến cần điền |
 |---|---|---|
 | `mock` (mặc định) | Chạy thử giao diện / luồng, không cần key (không suy luận) | — |
-| `bedrock` | Bản đích theo báo cáo: Claude trên Amazon Bedrock | `BEDROCK_MODEL_ID`, `BEDROCK_REGION`, credentials tài khoản nền tảng |
+| `bedrock` | Bản đích theo báo cáo: Claude trên Amazon Bedrock | `BEDROCK_MODEL_ID`, `BEDROCK_REGION`, credentials tài khoản triển khai hệ thống AutoAWS |
 | `anthropic` | Key Claude API (`sk-ant-…`) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
 | `anthropic` + gateway | Key `sk-…` của một **gateway định dạng Anthropic** — loại được hướng dẫn cấu hình cho Claude Code bằng `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` (có thể chạy model khác phía sau) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` |
 | `openai` | Máy chủ **định dạng OpenAI** (`/v1/chat/completions`): Ollama local, OpenAI, gateway tương thích | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` (mục Ollama bên dưới) |
@@ -241,7 +241,7 @@ trong `.env`). Backend tự khởi
 log Docker. Healthcheck chỉ kiểm tra API còn phản hồi, không kiểm tra AWS/LLM và
 không tự restart container chỉ vì trạng thái `unhealthy`.
 
-Dữ liệu nằm trong DynamoDB của tài khoản nền tảng; không cần volume database trên EC2.
+Dữ liệu nằm trong DynamoDB của tài khoản triển khai; không cần volume database trên EC2.
 `.env` nằm ngoài image và không được commit.
 
 File Compose này không mount `~/.aws` từ máy host. Nếu dùng named profile, cần tự
@@ -315,7 +315,7 @@ curl -s localhost:8000/api/proposals                    # đề xuất khắc ph
 
 ## Lưu trữ: DynamoDB
 
-`STORAGE_BACKEND=dynamodb` là mặc định. Bảng `DYNAMODB_TABLE` trong tài khoản nền tảng
+`STORAGE_BACKEND=dynamodb` là mặc định. Bảng `DYNAMODB_TABLE` trong tài khoản triển khai
 được tạo trước bằng [CloudFormation](../infra/cloudformation/README.md).
 Điền `DYNAMODB_REGION`, để trống `DYNAMODB_ENDPOINT_URL` khi dùng endpoint AWS chuẩn
 hoặc điền URL tuỳ chọn; giữ `DYNAMODB_CREATE_TABLE=false` khi dùng bảng đã tạo.

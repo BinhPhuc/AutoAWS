@@ -58,7 +58,9 @@ Các nhóm này có chung một điểm: họ sở hữu tài khoản AWS, đồ
 
 Người dùng truy cập AutoAWS qua ứng dụng web. Quy trình sử dụng gồm bốn giai đoạn: kết nối tài khoản AWS một lần (A), sau đó chẩn đoán sự cố (B), chạy checklist (C) hoặc khắc phục có phê duyệt (D) nhiều lần (Hình 1.1). Người dùng không cài phần mềm nào vào tài khoản AWS của mình; thứ duy nhất được tạo trong tài khoản là các IAM role do mẫu CloudFormation của AutoAWS sinh ra.
 
-**[Hình 1.1. Quy trình sử dụng: kết nối tài khoản một lần (A), sau đó chẩn đoán (B), chạy checklist (C) hoặc khắc phục có phê duyệt (D) — chèn hình từ báo cáo lần 2]**
+![Hình 1.1. Quy trình sử dụng: kết nối tài khoản một lần (A), sau đó chẩn đoán (B), chạy checklist (C) hoặc khắc phục có phê duyệt (D)](images/quy-trinh-su-dung.png)
+
+*Hình 1.1. Quy trình sử dụng: kết nối tài khoản một lần (A), sau đó chẩn đoán (B), chạy checklist (C) hoặc khắc phục có phê duyệt (D)*
 
 **Giai đoạn A – Kết nối tài khoản AWS (thực hiện một lần)**
 
@@ -246,7 +248,9 @@ Chương này trình bày giải pháp cho toàn bộ hệ thống AutoAWS khi h
 
 Hệ thống gồm mười một khối chức năng, chia thành bốn nhóm: tương tác người dùng, lõi xử lý, luồng đọc dữ liệu và luồng khắc phục (Hình 2.1). Nguyên tắc xuyên suốt là: mô hình ngôn ngữ chỉ quyết định cần đọc gì và đề xuất gì; dữ liệu luôn được lấy trực tiếp từ tài khoản người dùng qua bộ công cụ cố định; mọi thay đổi trên tài khoản người dùng đều phải qua bước duyệt của con người.
 
-**[Hình 2.1. Kiến trúc tính năng của AutoAWS — chèn hình từ báo cáo lần 2]**
+![Hình 2.1. Kiến trúc tính năng của AutoAWS](images/kien-truc-tinh-nang.png)
+
+*Hình 2.1. Kiến trúc tính năng của AutoAWS*
 
 Vai trò của từng khối và thành phần triển khai tương ứng (mục 2.2) được mô tả trong Bảng 2.1.
 
@@ -290,13 +294,15 @@ Luồng đọc và luồng ghi được tách hoàn toàn. Lõi agent không có
 
 AutoAWS triển khai theo mô hình SaaS và serverless, trên hai ranh giới tài khoản (Hình 2.2):
 
-- Tài khoản nền tảng AutoAWS chứa toàn bộ ứng dụng.
+- Tài khoản triển khai hệ thống AutoAWS chứa toàn bộ ứng dụng.
 
 - Tài khoản của người dùng chỉ được truy cập qua hai IAM role, bằng quyền tạm thời do STS cấp: AutoAWS-ReadOnly (bắt buộc) dùng cho mọi thao tác đọc, và AutoAWS-Remediation (tuỳ chọn) chỉ dùng cho các hành động khắc phục đã được duyệt.
 
 Không có máy chủ nào phải quản trị, và hệ thống không lưu khoá truy cập dài hạn của người dùng. Các đường nối đánh số I1–I22 trên hình (trang tiếp theo) là giao diện tương tác giữa các thành phần, được mô tả chi tiết ở Bảng 2.4.
 
-**[Hình 2.2. Kiến trúc triển khai trên AWS, hai tài khoản, giao diện I1–I22 — chèn hình từ báo cáo lần 2]**
+![Hình 2.2. Kiến trúc triển khai trên AWS, hai tài khoản, giao diện I1–I22](images/kien-truc-trien-khai.png)
+
+*Hình 2.2. Kiến trúc triển khai trên AWS, hai tài khoản, giao diện I1–I22*
 
 Luồng chẩn đoán: trình duyệt tải giao diện từ CloudFront (I1), đăng nhập qua Cognito (I2) và gọi API Gateway kèm JWT (I3). Lambda api-handler nhận yêu cầu (I4), ghi một bản ghi công việc rồi giao cho Lambda agent-worker xử lý bất đồng bộ (I5) và trả về ngay mã công việc; giao diện hỏi lại kết quả theo mã này. Agent-worker gọi mô hình trên Bedrock (I8) và xin quyền tạm thời qua STS (I9). Với quyền này, nó đọc cấu hình (I10), tra DNS công khai (I14), đọc log và chỉ số (I15), lịch sử thay đổi (I16) từ tài khoản người dùng, rồi ghi kết quả vào DynamoDB (I11).
 
@@ -353,7 +359,7 @@ Bảng 2.4 mô tả các giao diện tương tác giữa các thành phần tron
 
 ## 2.3. Chi tiết sử dụng các dịch vụ AWS
 
-Các dịch vụ AWS trong hệ thống chia thành hai nhóm. Nhóm A là các dịch vụ dùng để xây dựng nền tảng AutoAWS, chạy trong tài khoản nền tảng. Nhóm B là các dịch vụ trong tài khoản người dùng mà AutoAWS đọc (và trong luồng khắc phục, sửa) để chẩn đoán. Với mỗi dịch vụ nhóm A, mục này nêu vai trò, lý do chọn, cấu hình chính và giao diện liên quan; các phương án đã cân nhắc được tổng hợp ở Bảng 2.5.
+Các dịch vụ AWS trong hệ thống chia thành hai nhóm. Nhóm A là các dịch vụ dùng để xây dựng nền tảng AutoAWS, chạy trong tài khoản triển khai. Nhóm B là các dịch vụ trong tài khoản người dùng mà AutoAWS đọc (và trong luồng khắc phục, sửa) để chẩn đoán. Với mỗi dịch vụ nhóm A, mục này nêu vai trò, lý do chọn, cấu hình chính và giao diện liên quan; các phương án đã cân nhắc được tổng hợp ở Bảng 2.5.
 
 ### 2.3.1. Dịch vụ xây dựng nền tảng
 
@@ -415,7 +421,7 @@ Các dịch vụ AWS trong hệ thống chia thành hai nhóm. Nhóm A là các 
 
 - Cấu hình chính: mặc định dùng một model Claude cỡ nhỏ qua inference profile; model ID đặt trong cấu hình nên đổi được sang model khác (ví dụ Amazon Nova) mà không sửa mã, nhờ lớp LLMClient dùng chung. Tài khoản cần nộp biểu mẫu sử dụng lần đầu của Anthropic một lần. Guardrail dùng bộ lọc thông tin nhạy cảm để che email, số điện thoại, AWS access key và secret key; không che địa chỉ IP vì đó là dữ liệu chẩn đoán.
 
-- Tuỳ chọn khoá API tự quản lý: mặc định agent-worker gọi Bedrock bằng IAM role của chính nó. Quản trị viên nền tảng (nhóm admin trong Cognito) có thể tuỳ chọn cấu hình cách khác trên trang Admin: Bedrock API key, access key, assume role sang một tài khoản khác có Bedrock, hoặc khoá API của nhà cung cấp mô hình (Claude API, dịch vụ tương thích OpenAI). Khoá chỉ ghi vào, không bao giờ hiển thị lại, được lưu trong một secret của AWS Secrets Manager (mã hoá KMS) trong tài khoản nền tảng; api-handler đọc và ghi secret này, agent-worker chỉ đọc. Lớp LLMClient giữ nguyên vòng lặp agent, danh sách công cụ và bộ lọc dữ liệu với mọi lựa chọn.
+- Tuỳ chọn khoá API tự quản lý: mặc định agent-worker gọi Bedrock bằng IAM role của chính nó. Quản trị viên nền tảng (nhóm admin trong Cognito) có thể tuỳ chọn cấu hình cách khác trên trang Admin: Bedrock API key, access key, assume role sang một tài khoản khác có Bedrock, hoặc khoá API của nhà cung cấp mô hình (Claude API, dịch vụ tương thích OpenAI). Khoá chỉ ghi vào, không bao giờ hiển thị lại, được lưu trong một secret của AWS Secrets Manager (mã hoá KMS) trong tài khoản triển khai; api-handler đọc và ghi secret này, agent-worker chỉ đọc. Lớp LLMClient giữ nguyên vòng lặp agent, danh sách công cụ và bộ lọc dữ liệu với mọi lựa chọn.
 
 - Giao diện: I8.
 
@@ -620,7 +626,7 @@ Hệ thống dùng sáu bảng DynamoDB (Bảng 2.8). Mã người dùng luôn �
 
 ### 2.6.1. Role trong tài khoản người dùng
 
-Cả hai role được tạo bằng một mẫu CloudFormation duy nhất, có tham số EnableRemediation; role khắc phục chỉ được tạo khi tham số này bật. Trust policy của mỗi role chỉ tin cậy đúng một role trong tài khoản nền tảng, kèm điều kiện ExternalId:
+Cả hai role được tạo bằng một mẫu CloudFormation duy nhất, có tham số EnableRemediation; role khắc phục chỉ được tạo khi tham số này bật. Trust policy của mỗi role chỉ tin cậy đúng một role trong tài khoản triển khai, kèm điều kiện ExternalId:
 
 ```json
 {
@@ -656,11 +662,11 @@ Trust policy của role khắc phục trỏ tới role của action-executor tha
 | Thành phần | Quyền chính | Không có |
 |---|---|---|
 | api-handler | DynamoDB trên các bảng; lambda:InvokeFunction agent-worker; states:StartExecution checklist-runner; states:SendTaskSuccess, states:SendTaskFailure | Quyền vào tài khoản người dùng |
-| agent-worker | bedrock:InvokeModel trên inference profile đã chọn và model đích; bedrock:ApplyGuardrail; sts:AssumeRole chỉ trên arn:aws:iam::*:role/AutoAWS-ReadOnly; DynamoDB; states:StartExecution remediation-flow | Quyền assume role khắc phục; quyền đọc EC2/VPC của tài khoản nền tảng |
+| agent-worker | bedrock:InvokeModel trên inference profile đã chọn và model đích; bedrock:ApplyGuardrail; sts:AssumeRole chỉ trên arn:aws:iam::*:role/AutoAWS-ReadOnly; DynamoDB; states:StartExecution remediation-flow | Quyền assume role khắc phục; quyền đọc EC2/VPC của tài khoản triển khai |
 | action-executor | sts:AssumeRole chỉ trên arn:aws:iam::*:role/AutoAWS-Remediation; dynamodb:GetItem, dynamodb:UpdateItem trên bảng Actions | Quyền gọi Bedrock |
 | State machine | lambda:InvokeFunction agent-worker, action-executor; sns:Publish trên topic; DynamoDB trên bảng Actions, ChecklistRuns | Quyền vào tài khoản người dùng |
 
-*Bảng 2.10. Quyền của các thành phần trong tài khoản nền tảng.*
+*Bảng 2.10. Quyền của các thành phần trong tài khoản triển khai.*
 
 ### 2.6.3. Các lớp bảo vệ
 
@@ -708,7 +714,9 @@ Với hành động sửa bản ghi DNS, bộ kiểm chứng chỉ xác nhận p
 
 Luồng khắc phục do state machine remediation-flow điều phối (Hình 2.3).
 
-**[Hình 2.3. Luồng khắc phục có phê duyệt trong state machine remediation-flow — chèn hình từ báo cáo lần 2]**
+![Hình 2.3. Luồng khắc phục có phê duyệt trong state machine remediation-flow](images/luong-khac-phuc.png)
+
+*Hình 2.3. Luồng khắc phục có phê duyệt trong state machine remediation-flow*
 
 - Lưu đề xuất. agent-worker ghi vào bảng Actions: hành động, tham số, bản xem trước, snapshot các thuộc tính liên quan của tài nguyên đích và mã băm SHA-256 của snapshot; sau đó khởi động state machine (I17).
 
@@ -754,9 +762,9 @@ Toàn bộ mã nằm trong một repository gồm các thư mục: infra/ (ứng
 | AutoAws-Frontend | Bucket giao diện, CloudFront, bucket mẫu CloudFormation |
 | AutoAws-Ops | CloudWatch alarm, dashboard, AWS Budgets |
 
-*Bảng 2.12. Các stack CDK của tài khoản nền tảng.*
+*Bảng 2.12. Các stack CDK của tài khoản triển khai.*
 
-Hệ thống có hai môi trường: dev cho phát triển và demo cho đánh giá và trình bày, phân biệt bằng tiền tố tên stack trong cùng tài khoản nền tảng. Pipeline GitHub Actions:
+Hệ thống có hai môi trường: dev cho phát triển và demo cho đánh giá và trình bày, phân biệt bằng tiền tố tên stack trong cùng tài khoản triển khai. Pipeline GitHub Actions:
 
 - Khi mở pull request: kiểm tra mã (ruff), chạy unit test, cdk synth, kiểm tra mẫu CloudFormation bằng cfn-lint, kiểm tra các IAM policy bằng IAM Access Analyzer (validate-policy).
 
@@ -790,7 +798,7 @@ Bedrock là khoản chi phí lớn nhất. Vì vậy nhóm dùng model rẻ (ví
 
 ### 2.10.1. Môi trường kiểm thử
 
-Hệ thống được kiểm thử trên hai tài khoản AWS: tài khoản nền tảng chạy AutoAWS và tài khoản khách chứa tài nguyên bị lỗi, đúng mô hình hai ranh giới tài khoản ở mục 2.2 (Hình 2.2). Tài khoản khách gồm VPC hai public subnet ở hai Availability Zone, Internet Gateway, route table, instance EC2 chạy ứng dụng trong Docker (có SSM Agent và CloudWatch Logs), Application Load Balancer và hosted zone Route 53. Mọi tài nguyên được gắn tag `Project=autoaws-demo`, dựng và xoá bằng script.
+Hệ thống được kiểm thử trên hai tài khoản AWS: tài khoản triển khai chạy AutoAWS và tài khoản khách chứa tài nguyên bị lỗi, đúng mô hình hai ranh giới tài khoản ở mục 2.2 (Hình 2.2). Tài khoản khách gồm VPC hai public subnet ở hai Availability Zone, Internet Gateway, route table, instance EC2 chạy ứng dụng trong Docker (có SSM Agent và CloudWatch Logs), Application Load Balancer và hosted zone Route 53. Mọi tài nguyên được gắn tag `Project=autoaws-demo`, dựng và xoá bằng script.
 
 ### 2.10.2. Bộ kịch bản kiểm thử
 
@@ -832,7 +840,7 @@ Chương này trình bày kết quả hiện thực kiến trúc ở Chương 2 
 
 ## 3.1. Hạ tầng đã triển khai
 
-Hệ thống được triển khai trên hai tài khoản AWS thật: một **tài khoản nền tảng** chạy AutoAWS và một **tài khoản khách** được chẩn đoán. Cùng một mã nguồn, nhóm đã triển khai theo hai phương án.
+Hệ thống được triển khai trên hai tài khoản AWS thật: một **tài khoản triển khai** chạy AutoAWS và một **tài khoản khách** được chẩn đoán. Cùng một mã nguồn, nhóm đã triển khai theo hai phương án.
 
 | | Phương án A — Serverless | Phương án B — EC2 + Docker |
 |---|---|---|
@@ -887,7 +895,7 @@ Sau triển khai, hệ thống đạt các kiểm tra: giao diện tải qua HTT
 
 ### 3.3.1. Môi trường
 
-- Tài khoản khách tạo hai role `AutoAWSReadOnly` và `AutoAWSRemediation` bằng mẫu CloudFormation do nền tảng sinh ra; nền tảng truy cập bằng quyền tạm thời qua STS và External ID.
+- Tài khoản khách tạo hai role `AutoAWSReadOnly` và `AutoAWSRemediation` bằng mẫu CloudFormation do hệ thống sinh ra; tài khoản triển khai truy cập bằng quyền tạm thời qua STS và External ID.
 - Các kịch bản KB1–KB7 dựng bằng CloudFormation trên tài khoản khách; lỗi được cài bằng API thật nên CloudTrail ghi lại như một sự cố thật.
 - Mô hình được gọi qua lớp LLMClient, nên đổi mô hình không phải sửa vòng lặp agent. Nhóm đã thử nhiều mô hình; kết quả chẩn đoán phụ thuộc chủ yếu vào khả năng suy luận của mô hình.
 
@@ -949,7 +957,7 @@ Hướng dẫn chi tiết từng lệnh có trong `README.md` (mục *Triển kh
 
 | Bước | Nội dung |
 |---|---|
-| 0. Chuẩn bị | Tài khoản nền tảng có quyền admin, AWS CLI, Node, Python; quyền dùng model trên Bedrock ở Region đã chọn |
+| 0. Chuẩn bị | Tài khoản triển khai có quyền admin, AWS CLI, Node, Python; quyền dùng model trên Bedrock ở Region đã chọn |
 | 1. Cấu hình | Điền `infra/cdk/cdk.json`: tên môi trường, email thông báo, ngân sách, model |
 | 2. Build | Đóng gói mã backend cho Lambda (`build_lambda.sh`); build giao diện (`pnpm build`) |
 | 3. Triển khai | `cdk bootstrap` (một lần), `cdk deploy --all`; xác nhận đăng ký email SNS |

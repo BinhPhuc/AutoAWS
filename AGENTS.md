@@ -96,7 +96,7 @@ cd frontend && pnpm test && pnpm lint && pnpm build
 docker compose up --build                            # FE http://localhost:5173, BE :8000
 ```
 Máy dev tham chiếu: Node 24 + pnpm 11, Python 3.14, Docker. Không có AWS CLI / uv.
-Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thật cần Access Key (dev) hoặc Role ARN + tài khoản nền tảng (`PLATFORM_AWS_*` trong `backend/.env`).
+Chưa có tài khoản AWS? Test backend dùng **moto**; để chạy demo thật cần Access Key (dev) hoặc Role ARN + tài khoản triển khai hệ thống AutoAWS (`PLATFORM_AWS_*` trong `backend/.env`).
 
 ## Quyết định đã chốt (ADR mini)
 

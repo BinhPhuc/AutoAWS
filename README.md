@@ -23,6 +23,10 @@ Với các lỗi sửa được bằng **công cụ khắc phục có phê duy�
 
 ## Kiến trúc
 
+![Kiến trúc tính năng của AutoAWS](docs/images/kien-truc-tinh-nang.png)
+
+![Kiến trúc triển khai trên AWS: tài khoản triển khai hệ thống AutoAWS và tài khoản người dùng](docs/images/kien-truc-trien-khai.png)
+
 Cùng một mã nguồn chạy ở hai chế độ, chọn bằng biến `RUNTIME`. Logic (agent, công cụ, luồng duyệt, lưu trữ) giống hệt nhau; chỉ khác nơi chạy việc nền.
 
 **`RUNTIME=local`** — một tiến trình FastAPI. Dùng khi phát triển, demo, và cho phương án triển khai EC2:
@@ -75,7 +79,7 @@ Mặc định `LLM_PROVIDER=mock` (không suy luận, chỉ để thấy luồng
 |---|---|
 | Chỉ xem giao diện, không cần backend | `VITE_USE_MOCK=true pnpm dev` (dữ liệu giả lập bằng MSW) |
 | Chạy trọn luồng chẩn đoán + duyệt sửa, **không cần tài khoản AWS** | LocalStack bên dưới + một LLM thật ([Chọn LLM](#chọn-llm)) |
-| Chẩn đoán tài khoản AWS thật | Điền credentials tài khoản nền tảng trong `backend/.env`, rồi [kết nối tài khoản](#kết-nối-tài-khoản-aws) |
+| Chẩn đoán tài khoản AWS thật | Điền credentials tài khoản triển khai trong `backend/.env`, rồi [kết nối tài khoản](#kết-nối-tài-khoản-aws) |
 
 ### Thử trọn luồng với LocalStack
 
@@ -116,7 +120,7 @@ cd infra/cdk && .venv/bin/pytest                         # test template CDK (c�
 | `LLM_PROVIDER` | Dùng khi | Biến cần điền |
 |---|---|---|
 | `mock` (mặc định) | Chạy thử luồng, không cần key | — |
-| `bedrock` | Bản đích: Claude trên Amazon Bedrock | `BEDROCK_MODEL_ID`, `BEDROCK_REGION` + credentials tài khoản nền tảng |
+| `bedrock` | Bản đích: Claude trên Amazon Bedrock | `BEDROCK_MODEL_ID`, `BEDROCK_REGION` + credentials tài khoản triển khai |
 | `anthropic` | Key Claude API | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
 | `anthropic` + gateway | Key của một gateway định dạng Anthropic (loại cấu hình cho Claude Code) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` |
 | `openai` | Máy chủ định dạng OpenAI: Ollama local (Qwen), OpenAI, gateway tương thích | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` |
@@ -127,7 +131,7 @@ Model phải gọi được tool.
 
 ## Kết nối tài khoản AWS
 
-AutoAWS không nhận access key của người dùng. Người dùng tạo trong tài khoản của mình một IAM role tin tài khoản nền tảng AutoAWS, kèm điều kiện **ExternalId** riêng của kết nối; AutoAWS gọi `sts:AssumeRole` để lấy credentials tạm 15 phút mỗi khi cần đọc.
+AutoAWS không nhận access key của người dùng. Người dùng tạo trong tài khoản của mình một IAM role tin tài khoản triển khai, kèm điều kiện **ExternalId** riêng của kết nối; AutoAWS gọi `sts:AssumeRole` để lấy credentials tạm 15 phút mỗi khi cần đọc.
 
 | Role trong tài khoản người dùng | Khi nào có | Quyền |
 |---|---|---|
@@ -141,7 +145,7 @@ Các bước trên web:
 4. Nếu bật sửa lỗi: mở chi tiết kết nối, dán output `RemediationRoleArn` vào ô Remediation role.
 5. **Diagnose** → mô tả sự cố.
 
-Backend cần biết tài khoản nền tảng (`PLATFORM_AWS_ACCOUNT_ID`, và credentials của nó) thì form mới sinh được template.
+Backend cần biết tài khoản triển khai (`PLATFORM_AWS_ACCOUNT_ID`, và credentials của nó) thì form mới sinh được template.
 
 ## Kịch bản kiểm thử
 
@@ -240,12 +244,12 @@ Dựng CloudFront + S3, API Gateway, 3 Lambda, Step Functions, DynamoDB, Cognito
 
 | Cần | Ghi chú |
 |---|---|
-| Tài khoản AWS **nền tảng** | Nơi chạy AutoAWS. Tài khoản cần chẩn đoán là tài khoản khác, hoặc chính nó khi demo |
-| AWS CLI v2 + quyền admin trên tài khoản nền tảng | `aws configure sso` hoặc `aws configure --profile autoaws-platform`; kiểm tra: `aws sts get-caller-identity --profile autoaws-platform` |
+| **Tài khoản triển khai** | Nơi chạy AutoAWS. Tài khoản cần chẩn đoán là tài khoản khác, hoặc chính nó khi demo |
+| AWS CLI v2 + quyền admin trên tài khoản triển khai | `aws configure sso` hoặc `aws configure --profile autoaws-platform`; kiểm tra: `aws sts get-caller-identity --profile autoaws-platform` |
 | Node 20+ (để chạy `npx aws-cdk@2`), pnpm (`corepack enable`) | Không cần Docker |
 | Python ≥ 3.12 với `backend/.venv` đã cài | `build_lambda.sh` dùng nó để tải thư viện cho Lambda (Python 3.12, x86_64) |
 | Quyền dùng model Claude trên **Amazon Bedrock** ở region đã chọn | Lần đầu dùng model Anthropic phải gửi biểu mẫu use case trong console Bedrock. Model mặc định `anthropic.claude-opus-5-5` (dự phòng `anthropic.claude-opus-4-8`; đổi bằng `bedrockModelId` / `bedrockFallbackModel` trong `cdk.json`). |
-| Tài khoản AWS **khách** (tuỳ chọn) | Nơi được chẩn đoán và chạy kịch bản. Khi demo có thể là chính tài khoản nền tảng |
+| Tài khoản AWS **khách** (tuỳ chọn) | Nơi được chẩn đoán và chạy kịch bản. Khi demo có thể là chính tài khoản triển khai |
 
 Chọn region có Claude trên Bedrock (ví dụ `ap-southeast-2`). Mọi lệnh dưới dùng:
 ```bash
@@ -345,7 +349,7 @@ Trang **Admin** (cấu hình mô hình) chỉ hiện với người dùng trong 
 #### 7. Kết nối tài khoản khách
 
 1. Web → **Connections → Add connection**: đặt tên, chọn **region của tài nguyên cần chẩn đoán**, bật *remediation* nếu muốn sửa có duyệt. Form hiện sẵn External ID do server cấp.
-2. Tải template CloudFormation (đã điền External ID và principal là 2 role Lambda của nền tảng), tạo stack **trên tài khoản khách**:
+2. Tải template CloudFormation (đã điền External ID và principal là 2 role Lambda của tài khoản triển khai), tạo stack **trên tài khoản khách**:
    ```bash
    aws cloudformation create-stack --stack-name AutoAWS-roles --template-body file://autoaws-role.yaml \
      --parameters ParameterKey=EnableRemediation,ParameterValue=true \
