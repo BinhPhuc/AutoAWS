@@ -63,10 +63,10 @@ def test_a_revision_replaces_the_pending_proposal(client, connection, kb1, monke
 
 def test_failed_checks_leave_the_original_waiting(client, connection, kb1, monkeypatch):
     pid = _pending(client, connection, kb1, monkeypatch)
-    # pre-check: the private table has no route to an Internet gateway
+    # pre-check: the subnet already uses the private table (nothing would change)
     body = _revise(client, pid, {"subnet_id": kb1["subnet"], "route_table_id": kb1["private"]})
     assert body["status_code"] == 422 and body["error"] == "VALIDATION_ERROR"
-    assert "no active 0.0.0.0/0 route" in body["message"]
+    assert "already uses" in body["message"]
     # schema: not a route table id / missing field
     for params in (
         {"subnet_id": kb1["subnet"], "route_table_id": "not-a-table"},
@@ -118,7 +118,7 @@ def test_rollbacks_cannot_be_edited(store, connection):
             user_id="local",
             conversation_id="conv_x",
             connection_id=connection["id"],
-            action="associate_route_table",
+            action="route_table_associate",
             kind="rollback",
             parent_id="prop_x",
             status="PENDING_APPROVAL",

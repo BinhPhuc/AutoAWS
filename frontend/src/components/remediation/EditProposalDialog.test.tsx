@@ -15,7 +15,7 @@ vi.mock('@/api/proposals', () => ({ proposalsApi: api }))
 
 const ACTIONS: RemediationAction[] = [
   {
-    name: 'associate_route_table',
+    name: 'route_table_associate',
     label: 'Associate route table',
     description: '',
     aws_actions: [],
@@ -29,7 +29,7 @@ const ACTIONS: RemediationAction[] = [
     },
   },
   {
-    name: 'authorize_sg_ingress',
+    name: 'sg_add_rule',
     label: 'Allow inbound port',
     description: '',
     aws_actions: [],
@@ -54,7 +54,7 @@ const base: Proposal = {
   connection_id: 'conn_1',
   kind: 'fix',
   parent_id: null,
-  action: 'associate_route_table',
+  action: 'route_table_associate',
   params: { subnet_id: 'subnet-0a1b', route_table_id: 'rtb-0c0d' },
   reason: '',
   status: 'PENDING_APPROVAL',
@@ -78,7 +78,7 @@ const base: Proposal = {
 const sg: Proposal = {
   ...base,
   id: 'prop_sg',
-  action: 'authorize_sg_ingress',
+  action: 'sg_add_rule',
   params: { group_id: 'sg-0a', protocol: 'tcp', port: 22, cidr: '<your-ip>/32' },
 }
 

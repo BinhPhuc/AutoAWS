@@ -282,6 +282,12 @@ def request_rollback(store: Store, proposal_id: str, by: str | None = None) -> P
             "A rollback of this proposal is already waiting or running",
         )
     spec = get_action(p.action)
+    if spec is not None and spec.undo is None:
+        raise AppError(
+            "PROPOSAL_NOT_ROLLBACKABLE",
+            409,
+            f"{spec.label} has no automatic undo: revert it yourself if needed",
+        )
     conn = store.get_connection(p.connection_id)
     if spec is None or conn is None or not remediation_enabled(conn):
         raise AppError(
@@ -429,7 +435,7 @@ def recheck_step(store: Store, proposal_id: str) -> dict:
         if spec is None or conn is None:
             transition(store, p, FAILED, "action or connection no longer exists")
             return {"ok": False, "status": FAILED}
-        if p.kind == "rollback" and parent is None:
+        if p.kind == "rollback" and (parent is None or spec.undo is None):
             transition(store, p, FAILED, "the proposal to roll back no longer exists")
             return {"ok": False, "status": FAILED}
         try:
@@ -521,7 +527,7 @@ def verify_step(store: Store, proposal_id: str) -> dict:
             transition(
                 store, p, VERIFY_FAILED, "verification failed", verification_json=verification
             )
-            rollback = _propose_rollback(store, p, spec, read, params)
+            rollback = _propose_rollback(store, p, spec, read, params) if spec.undo else None
             return {"ok": False, "status": VERIFY_FAILED, "rollback_id": rollback}
         after = spec.snapshot(read, params)
         restored = snapshot_hash(after) == parent.snapshot_hash

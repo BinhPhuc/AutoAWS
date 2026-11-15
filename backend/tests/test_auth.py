@@ -167,7 +167,7 @@ def owned_by_a(client, cognito, aws):
                 user_id=a,
                 conversation_id=conv["id"],
                 connection_id=conn["id"],
-                action="authorize_sg_ingress",
+                action="sg_add_rule",
             )
         ).id
     return {"user": a, "conn": conn, "conv": conv, "job": job, "prop": prop, "ext_id": ext_id}

@@ -39,7 +39,7 @@ def test_undo_an_applied_fix_after_approval(client, connection, kb1, monkeypatch
     assert (body["status_code"], body["message"]) == (201, "Rollback proposed")
     rb = body["data"]
     assert (rb["kind"], rb["parent_id"], rb["status"]) == ("rollback", pid, "PENDING_APPROVAL")
-    assert rb["action"] == "associate_route_table"
+    assert rb["action"] == "route_table_associate"
     assert rb["preview"]["summary"].startswith(f"Undo {pid}:")
     assert rb["history"][0]["note"] == "rollback requested by the user"
     assert rb["history"][0]["by"] == "local"
@@ -155,3 +155,25 @@ def test_on_lambda_the_agent_worker_proposes_the_rollback(
     monkeypatch.setattr(settings, "runtime", "lambda")
     body = _rollback(client, pid)
     assert (body["status_code"], body["error"]) == (409, "PROPOSAL_NOT_ROLLBACKABLE")
+
+
+def test_action_without_automatic_undo_cannot_be_rolled_back(client, connection, kb1, monkeypatch):
+    """Starting an instance has no undo: AutoAWS never stops instances."""
+    ec2 = kb1["ec2"]
+    instance = ec2.run_instances(
+        ImageId="ami-12345678", MinCount=1, MaxCount=1, SubnetId=kb1["subnet"]
+    )["Instances"][0]["InstanceId"]
+    ec2.stop_instances(InstanceIds=[instance])
+    start = {"action": "instance_start", "params": {"instance_id": instance}, "reason": "Bật lại"}
+    _, answer, _ = _ask(client, connection, monkeypatch, [start])
+    pid = answer["proposals"][0]["proposal_id"]
+    assert "No automatic undo" in _get(client, pid)["preview"]["rollback"]
+    _decide(client, pid, "approve")
+    assert _get(client, pid)["status"] == "SUCCEEDED"
+    state = ec2.describe_instances(InstanceIds=[instance])["Reservations"][0]["Instances"][0]
+    assert state["State"]["Name"] == "running"
+
+    body = _rollback(client, pid)
+    assert (body["status_code"], body["error"]) == (409, "PROPOSAL_NOT_ROLLBACKABLE")
+    assert "no automatic undo" in body["message"]
+    assert _get(client, pid)["status"] == "SUCCEEDED"

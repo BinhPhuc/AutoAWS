@@ -176,3 +176,29 @@ def test_guarded_session_blocks_writes_at_runtime(aws):
     assert not aws.client("ec2").describe_vpcs(
         Filters=[{"Name": "cidr", "Values": ["10.9.0.0/16"]}]
     )["Vpcs"]
+
+
+def test_remediation_role_limits_dns_changes_and_denies_deletes():
+    from app.aws.cloudformation import REMEDIATION_DENIED, render_template
+    from app.aws.remediation.catalog import all_write_actions
+
+    remediation = render_template("123456789012", "autoaws-x").split("  AutoAWSRemediationRole:")[1]
+    assert "route53:ChangeResourceRecordSetsActions: ['UPSERT', 'DELETE']" in remediation
+    assert (
+        "route53:ChangeResourceRecordSetsRecordTypes: ['A', 'AAAA', 'CNAME', 'TXT']" in remediation
+    )
+    deny = remediation.split("DenyDangerous")[1]
+    for action in (
+        "iam:*",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances",
+        "ec2:DeleteVpc",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteRouteTable",
+        "ec2:DeleteNetworkAcl",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "route53:DeleteHostedZone",
+    ):
+        assert action in deny
+    # nothing the catalogue needs is denied (Deny would override the Allow)
+    assert not set(all_write_actions()) & set(REMEDIATION_DENIED)

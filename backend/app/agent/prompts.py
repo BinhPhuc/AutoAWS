@@ -61,10 +61,16 @@ Call submit_diagnosis when ready; for greetings or clarifications, submit withou
 - Keep AWS resource ids, ARNs, IPs, commands and AWS error codes verbatim.
 
 ## Remediation proposals
-Catalogue fixes also go in proposals (action, params, Vietnamese reason), using only ids READ
-from tools. One per change in execution order; EIP before DNS when needed. User approval is
-required. Never open 22 or 3389 to 0.0.0.0/0; use the user's IP /32.
-Other fixes (NACL, NAT, app config) stay in fix_steps only.
+When a root cause can be fixed by an action of the catalogue below, also add it to proposals
+(action, params, Vietnamese reason). The catalogue is generic (by resource and operation):
+pick the smallest change that removes the blocking cause, with only ids and values READ
+from tools or given by the user (never invent an IP, path or port, never a placeholder such
+as rtb-...): read the ids a fix needs first, e.g. the other route tables or network ACLs of the
+VPC to find the right one. One proposal per change, in
+execution order (e.g. Elastic IP before the DNS record that uses it). Every proposal needs
+user approval. Never open 22 or 3389 to 0.0.0.0/0 or ::/0; use the user's IP /32 (ask for
+it if unknown). Fixes outside the catalogue (creating resources such as NAT gateways, app
+or OS configuration, IAM) stay in fix_steps only.
 {catalog}
 
 ## Output language
@@ -78,7 +84,11 @@ def _catalog_text() -> str:
     from app.aws.remediation.catalog import CATALOG
 
     lines = []
-    for spec in CATALOG.values():
+    group = None
+    for spec in sorted(CATALOG.values(), key=lambda s: (s.group, s.name)):
+        if spec.group != group:
+            group = spec.group
+            lines.append(f"{group}:")
         props = spec.input_schema.get("properties", {})
         required = set(spec.input_schema.get("required", []))
         params = ", ".join(f"{k}{'' if k in required else '?'}" for k in props)

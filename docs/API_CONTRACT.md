@@ -215,7 +215,7 @@ Chỉ với `type=role` (với `access_key` → `400 VALIDATION_ERROR`). Templat
                 "template_yaml": "AWSTemplateFormatVersion: '2010-09-09'\n..." } }
 ```
 Client hiển thị nút copy `template_yaml` + hướng dẫn tạo stack (link "Launch Stack" sau).
-Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của danh mục hành động (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` bản ghi `A`), output `RemediationRoleArn`.
+Template có tham số `EnableRemediation` (mặc định `false`); `true` tạo thêm role `AutoAWSRemediation` chỉ có đúng các API ghi của danh mục hành động (mục 7, giới hạn Region; Route 53 chỉ `UPSERT` (và `DELETE` để hoàn tác bản ghi do AutoAWS tạo) cho bản ghi `A` / `AAAA` / `CNAME` / `TXT`; Deny tường minh IAM, Organizations, stop / terminate instance và các API xoá tài nguyên), output `RemediationRoleArn`.
 
 ---
 
@@ -279,7 +279,7 @@ Evidence {
 Mọi chuỗi văn xuôi trong `DiagnosisAnswer` là **tiếng Việt** (system prompt ép model trả lời tiếng Việt); tên tài nguyên, lệnh, mã lỗi AWS giữ nguyên gốc.
 
 ProposalRef {
-  "action": "associate_route_table", "params": { "subnet_id": "subnet-0a1b", "route_table_id": "rtb-01aa" },
+  "action": "route_table_associate", "params": { "subnet_id": "subnet-0a1b", "route_table_id": "rtb-01aa" },
   "reason": "Gắn subnet về route table public",   // tiếng Việt, do model viết
   "proposal_id": "prop_..." | null,               // SERVER gán: đã tạo đề xuất chờ duyệt
   "error": null | "..."                           // SERVER gán khi không tạo được (tham số sai, kiểm tra trước không đạt, connection không bật sửa)
@@ -399,7 +399,7 @@ Agent **không có công cụ ghi**: nó chỉ đưa `proposals` vào câu trả
   "id": "prop_...", "conversation_id": "conv_...", "message_id": "msg_...", "connection_id": "conn_...",
   "kind": "fix" | "rollback",
   "parent_id": null | "prop_...",            // rollback: đề xuất gốc; fix đề xuất lại sau góp ý: đề xuất bị thay
-  "action": "associate_route_table", "params": { ... }, "reason": "...",
+  "action": "route_table_associate", "params": { ... }, "reason": "...",
   "status": "PENDING_APPROVAL" | "APPROVED" | "EXECUTING" | "SUCCEEDED"
           | "REJECTED" | "EXPIRED" | "SUPERSEDED" | "STALE" | "FAILED" | "VERIFY_FAILED" | "ROLLED_BACK",
   "preview": {
@@ -423,7 +423,7 @@ Văn bản trong `preview` là tiếng Anh do server sinh (nhãn) + ID tài nguy
 - Trước khi ghi, các hành động EC2 chạy thử với `DryRun=True` (chỉ trên AWS thật, `REMEDIATION_DRY_RUN=true`): AWS trả `DryRunOperation` thì mới ghi thật (lịch sử có ghi chú `dry run passed`); bị từ chối quyền → `FAILED` (`error` bắt đầu bằng `Permission:`); endpoint không trả `DryRunOperation` (trình giả lập) → `FAILED`, không ghi tiếp. Route 53 và ELB không có DryRun.
 - Lỗi khi gọi API ghi → `FAILED` (kèm `error`).
 - `RUNTIME=local`, backend khởi động lại giữa chừng: `APPROVED` (chưa ghi) được chạy tiếp; `EXECUTING` đã có `result` được kiểm chứng; `EXECUTING` chưa có `result` → `FAILED` với `error` `"Interrupted: …"` (không ghi lại lần hai — người dùng kiểm tra tài nguyên rồi hỏi lại).
-- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt). Người dùng cũng tự yêu cầu hoàn tác một đề xuất đã `SUCCEEDED` (`POST /api/proposals/{id}/rollback`). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
+- Kiểm chứng sau khi sửa không đạt → `VERIFY_FAILED` + tạo đề xuất `kind: "rollback"` (cũng phải duyệt; hành động không có hoàn tác tự động thì không tạo). Người dùng cũng tự yêu cầu hoàn tác một đề xuất đã `SUCCEEDED` (`POST /api/proposals/{id}/rollback`). Hoàn tác xong → đề xuất gốc `ROLLED_BACK`.
 - Thực thi chạy nền: response của quyết định trả `APPROVED`; client hỏi lại `GET /api/proposals/{id}` tới khi hết `APPROVED` / `EXECUTING`.
 - Trên AWS (`RUNTIME=lambda`, mục 9): mỗi đề xuất là một lượt chạy state machine `remediation-flow` (Step Functions): gửi email SNS → chờ duyệt `.waitForTaskToken` (24 giờ, hết hạn → `EXPIRED`) → agent-worker kiểm tra lại (role chỉ đọc) → action-executor thực thi (role `AutoAWSRemediation`) → agent-worker kiểm chứng → email kết quả. Quyết định của người dùng được chuyển vào state machine bằng `SendTaskSuccess` / `SendTaskFailure`. Chạy local (`RUNTIME=local`) thì các bước này chạy nền trong backend, cùng trạng thái và API.
 
@@ -447,7 +447,7 @@ Lỗi: `PROPOSAL_NOT_PENDING` (409), `REMEDIATION_DISABLED` (400, khi duyệt).
 ### `POST /api/proposals/{id}/revise`
 Người dùng sửa tham số của một đề xuất (ví dụ CIDR, port). Không sửa tại chỗ: server tạo **đề xuất mới** từ cùng hành động với tham số mới, kiểm lại đủ như đề xuất của agent (schema của hành động, luật cứng như không mở 22/3389 cho `0.0.0.0/0`, đọc lại tài nguyên, xem trước + snapshot mới), rồi người dùng duyệt đề xuất mới. Nhờ vậy chỉ thực thi đúng thứ đã xem trước.
 ```json
-{ "params": { "group_id": "sg-0abc", "port": 8080, "cidr": "203.0.113.0/24" } }   // đầy đủ tham số của hành động
+{ "params": { "group_id": "sg-0abc", "direction": "ingress", "protocol": "tcp", "from_port": 8080, "to_port": 8080, "cidr": "203.0.113.0/24" } }   // đầy đủ tham số của hành động
 201 { "status_code": 201, "message": "Proposal revised", "data": Proposal }     // đề xuất mới: PENDING_APPROVAL, parent_id = id cũ
 ```
 - Sửa được đề xuất `kind = fix` ở trạng thái chưa ghi gì: `PENDING_APPROVAL`, `REJECTED`, `EXPIRED`, `STALE`, `SUPERSEDED`. Đề xuất cũ đang `PENDING_APPROVAL` → `SUPERSEDED` (ghi chú `edited by the user`, `by` = người sửa); trạng thái khác giữ nguyên.
@@ -463,20 +463,39 @@ Người dùng muốn quay lại một thay đổi đã áp dụng (đề xuất
 - Lúc duyệt, nếu tài nguyên đã đổi khác snapshot (ai đó sửa tiếp sau thay đổi của AutoAWS) → `STALE`, không ghi đè.
 - Hoàn tác chỉ đưa tài nguyên về trạng thái trước thay đổi của chính đề xuất đó (`preview.summary` = `Undo prop_…: …`); kiểm chứng: tài nguyên khớp snapshot trước khi sửa. Xong → đề xuất gốc `ROLLED_BACK`.
 - Lịch sử: `PENDING_APPROVAL` với ghi chú `rollback requested by the user`, `by` = người yêu cầu.
-- Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_ROLLBACKABLE` (409: chưa áp dụng / là rollback / đã có rollback đang chờ hoặc chạy / tài nguyên đã bị xoá, không đọc được), `REMEDIATION_DISABLED` (400), `AWS_AUTH_FAILED` (400: không assume được role).
+- Lỗi: `PROPOSAL_NOT_FOUND` (404), `PROPOSAL_NOT_ROLLBACKABLE` (409: chưa áp dụng / là rollback / đã có rollback đang chờ hoặc chạy / tài nguyên đã bị xoá, không đọc được / hành động không có hoàn tác tự động, ví dụ `instance_start` vì AutoAWS không bao giờ stop instance), `REMEDIATION_DISABLED` (400), `AWS_AUTH_FAILED` (400: không assume được role).
 - Trên AWS (`RUNTIME=lambda`), bước đọc chạy trong agent-worker, giống `revise`.
 
 ### `GET /api/remediation/actions`
-Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp.
+Danh mục hành động: `[{ "name", "label", "description", "input_schema", "aws_actions" }]` — `aws_actions` là API **ghi** mà role `AutoAWSRemediation` cấp (session ghi của một đề xuất chỉ gọi được đúng các API này).
 
-| name | Sửa | API ghi | Kiểm tra trước | Kiểm chứng | Hoàn tác |
+Danh mục **cố định nhưng tổng quát**: chia theo loại tài nguyên và thao tác, không theo kịch bản. Tham số phẳng (string / integer / enum) để form sửa đề xuất sinh được từ `input_schema`. Mọi ID phải đọc được bằng role chỉ đọc lúc snapshot; tài nguyên đích phải cùng VPC.
+
+| Nhóm | name | API ghi | Kiểm tra trước (từ chối nếu sai) | Kiểm chứng | Hoàn tác |
 |---|---|---|---|---|---|
-| `associate_route_table` | KB1 | ec2:AssociateRouteTable / ReplaceRouteTableAssociation | Route table đích cùng VPC, có 0.0.0.0/0 → igw đang active | Route table hiệu lực của subnet có tuyến tới IGW | Gắn lại route table cũ (hoặc về main) |
-| `create_route_to_igw` | KB1 | ec2:CreateRoute | Chưa có 0.0.0.0/0; IGW đã gắn vào VPC | Tuyến active | ec2:DeleteRoute đúng tuyến vừa tạo |
-| `authorize_sg_ingress` | KB2 | ec2:AuthorizeSecurityGroupIngress | Quy tắc chưa có; **từ chối 22 / 3389 từ 0.0.0.0/0 hoặc ::/0** | Quy tắc có trong SG | ec2:RevokeSecurityGroupIngress |
-| `allocate_and_associate_eip` | KB2 | ec2:AllocateAddress, AssociateAddress | Instance đang chạy, chưa có Elastic IP | Public IP của instance = Elastic IP | DisassociateAddress + ReleaseAddress |
-| `upsert_a_record` | KB2 | route53:ChangeResourceRecordSets (UPSERT A) | Bản ghi A **đã có** trong hosted zone của tài khoản; IP mới là IP của tài khoản (hoặc `instance_id` → IP hiện tại lúc thực thi) | Route 53 trả giá trị mới, thay đổi INSYNC | UPSERT lại giá trị cũ |
-| `modify_health_check_path` | KB3 | elasticloadbalancing:ModifyTargetGroup | Đường dẫn bắt đầu bằng `/` | Mọi target healthy (chờ tối đa ~5 chu kỳ) | Đặt lại đường dẫn cũ |
+| Security Group | `sg_add_rule` (group_id, direction `ingress`/`egress`, protocol `tcp`/`udp`/`icmp`/`all`, from_port, to_port, cidr **hoặc** source_group_id, description) | ec2:AuthorizeSecurityGroupIngress/Egress | Rule chưa có; **ingress từ `0.0.0.0/0` / `::/0` mà dải cổng chứa 22 hoặc 3389 (kể cả `all`) → từ chối** | Rule có trong SG | Revoke đúng rule |
+| | `sg_remove_rule` (cùng tham số nhận diện rule) | ec2:RevokeSecurityGroupIngress/Egress | Rule đang có | Rule không còn | Authorize lại (giữ description) |
+| Route | `route_add` (route_table_id, destination_cidr IPv4/IPv6, target_type `internet_gateway`/`nat_gateway`/`transit_gateway`/`vpc_peering_connection`/`network_interface`, target_id) | ec2:CreateRoute | Chưa có route cho đích đó; target tồn tại, IGW gắn vào VPC, NAT `available` cùng VPC | Route `active` tới target | ec2:DeleteRoute đúng route vừa tạo |
+| | `route_replace` (như trên) | ec2:ReplaceRoute | Route đã có, không phải `local`, target khác hiện tại | Route `active` tới target mới | ReplaceRoute về target cũ |
+| | `route_delete` (route_table_id, destination_cidr) | ec2:DeleteRoute | Route đã có, không phải `local` | Route không còn | CreateRoute lại target cũ |
+| | `route_table_associate` (subnet_id, route_table_id) | ec2:AssociateRouteTable / ReplaceRouteTableAssociation | Cùng VPC, subnet chưa dùng bảng đó (preview cảnh báo nếu bảng mới không có 0.0.0.0/0) | Route table hiệu lực của subnet là bảng mới | Gắn lại bảng cũ (hoặc về main) |
+| Network ACL | `nacl_add_entry` (network_acl_id, rule_number, direction, rule_action `allow`/`deny`, protocol, from_port, to_port, cidr) | ec2:CreateNetworkAclEntry | Số rule còn trống ở chiều đó; ingress `allow` từ world chứa 22 / 3389 → từ chối | Entry có đúng giá trị | DeleteNetworkAclEntry |
+| | `nacl_replace_entry` (như trên) | ec2:ReplaceNetworkAclEntry | Entry đã có và khác giá trị mới; cùng luật 22 / 3389 | Entry có giá trị mới | Replace về entry cũ |
+| | `nacl_delete_entry` (network_acl_id, rule_number, direction) | ec2:DeleteNetworkAclEntry | Entry đã có, không phải rule mặc định `*` (32767) | Entry không còn | CreateNetworkAclEntry lại entry cũ |
+| | `nacl_associate` (subnet_id, network_acl_id) | ec2:ReplaceNetworkAclAssociation | Cùng VPC, subnet chưa dùng NACL đó | NACL của subnet là NACL mới | Gắn lại NACL cũ |
+| Subnet / instance | `subnet_set_auto_public_ip` (subnet_id, value `enable`/`disable`) | ec2:ModifySubnetAttribute | Giá trị khác hiện tại | Thuộc tính đúng giá trị mới | Đặt lại giá trị cũ |
+| | `instance_start` (instance_id) | ec2:StartInstances | Instance đang `stopped` | Instance `running` | **Không có** (AutoAWS không stop instance) |
+| | `instance_attach_security_group` (instance_id, group_id) | ec2:ModifyInstanceAttribute | SG cùng VPC, chưa gắn, tối đa 5 SG | Instance có SG đó | Trả danh sách SG cũ |
+| | `instance_detach_security_group` (instance_id, group_id) | ec2:ModifyInstanceAttribute | SG đang gắn và không phải SG cuối cùng | Instance không còn SG đó | Trả danh sách SG cũ |
+| Elastic IP | `eip_allocate_and_associate` (instance_id) | ec2:AllocateAddress, AssociateAddress | Instance `running`, chưa có Elastic IP | Public IP = Elastic IP | DisassociateAddress + ReleaseAddress (EIP do AutoAWS cấp) |
+| | `eip_associate` (allocation_id, instance_id) | ec2:AssociateAddress | EIP của tài khoản, chưa gắn; instance `running`, chưa có EIP | Public IP = EIP | DisassociateAddress (không release) |
+| Route 53 | `dns_upsert_record` (record_name, type `A`/`AAAA`/`CNAME`/`TXT`, đúng một trong value / instance_id / load_balancer, ttl, zone_id) | route53:ChangeResourceRecordSets (UPSERT; DELETE chỉ để hoàn tác bản ghi do AutoAWS tạo) | Tên thuộc hosted zone của tài khoản; A / AAAA là IP của instance / EIP trong tài khoản (`instance_id` → IP lúc thực thi; `load_balancer` → alias A tới ALB/NLB của tài khoản); CNAME chỉ trỏ endpoint AWS (`*.amazonaws.com`, `*.cloudfront.net`) hoặc tên trong hosted zone của tài khoản, không đặt ở apex; TXT ≤ 255 ký tự; giá trị khác hiện tại | Route 53 trả giá trị mới, thay đổi INSYNC | UPSERT lại bản ghi cũ; bản ghi mới tạo thì DELETE |
+| ELB | `tg_modify_health_check` (target_group, path, port, protocol, matcher, interval_seconds, timeout_seconds, healthy_threshold, unhealthy_threshold — ít nhất một) | elasticloadbalancing:ModifyTargetGroup | Có thay đổi; path bắt đầu bằng `/`; path / matcher chỉ cho HTTP(S) | Thông số mới; mọi target healthy (chờ tối đa ~5 chu kỳ) | Đặt lại mọi thông số cũ |
+| | `tg_register_target` (target_group, target_id, port) | elasticloadbalancing:RegisterTargets | Target cùng VPC, chưa đăng ký | Target có trong nhóm, không `unused` | DeregisterTargets |
+| | `tg_deregister_target` (target_group, target_id, port) | elasticloadbalancing:DeregisterTargets | Target đang đăng ký | Target `draining` hoặc đã ra khỏi nhóm | RegisterTargets lại |
+
+Mọi hành động EC2 chạy thử `DryRun` trước khi ghi, trừ `subnet_set_auto_public_ip` (API không có DryRun). Không hành động nào xoá tài nguyên (VPC, subnet, instance, SG, route table, NACL, EIP không do AutoAWS cấp, hosted zone, load balancer, target group), đụng IAM hay stop / terminate instance; gỡ một rule / route / entry / target là thay đổi cấu hình, có snapshot và hoàn tác.
+
 
 ---
 

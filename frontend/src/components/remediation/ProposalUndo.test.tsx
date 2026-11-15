@@ -18,7 +18,7 @@ const applied: Proposal = {
   connection_id: 'conn_1',
   kind: 'fix',
   parent_id: null,
-  action: 'associate_route_table',
+  action: 'route_table_associate',
   params: { subnet_id: 'subnet-0a1b', route_table_id: 'rtb-0c0d' },
   reason: '',
   status: 'SUCCEEDED',

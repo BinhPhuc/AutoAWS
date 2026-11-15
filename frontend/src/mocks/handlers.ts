@@ -596,7 +596,7 @@ Outputs:
 `
 }
 
-/** KB1 answers carry one proposal (associate_route_table) stored in the mock db. */
+/** KB1 answers carry one proposal (route_table_associate) stored in the mock db. */
 function withMockProposals(answer: DiagnosisAnswer, conversationId: string, messageId: string) {
   if (!answer.fix_steps.some((f) => f.includes('subnet-0a1b'))) return answer
   const p: Proposal = {
@@ -606,7 +606,7 @@ function withMockProposals(answer: DiagnosisAnswer, conversationId: string, mess
     connection_id: db.connections[0]?.id ?? '',
     kind: 'fix',
     parent_id: null,
-    action: 'associate_route_table',
+    action: 'route_table_associate',
     params: { subnet_id: 'subnet-0a1b', route_table_id: 'rtb-public' },
     reason: 'Gắn subnet-0a1b về route table public có tuyến 0.0.0.0/0 → igw-0f3c.',
     status: 'PENDING_APPROVAL',
@@ -667,8 +667,8 @@ let llm: LlmConfig = structuredClone(LLM_ENV)
 /** Two catalogue actions with the server's input schemas (backend catalog.py). */
 const remediationActions = [
   {
-    name: 'associate_route_table',
-    label: 'Associate route table',
+    name: 'route_table_associate',
+    label: 'Change subnet route table',
     description: 'Make a subnet use another route table of its VPC.',
     aws_actions: ['ec2:AssociateRouteTable', 'ec2:ReplaceRouteTableAssociation'],
     input_schema: {
@@ -681,20 +681,29 @@ const remediationActions = [
     },
   },
   {
-    name: 'authorize_sg_ingress',
-    label: 'Allow inbound port',
-    description: 'Add ONE inbound rule (one port, one CIDR) to a security group.',
-    aws_actions: ['ec2:AuthorizeSecurityGroupIngress'],
+    name: 'sg_add_rule',
+    label: 'Add security group rule',
+    description:
+      'Add ONE rule (inbound or outbound, one port range, one source) to a security group.',
+    aws_actions: [
+      'ec2:AuthorizeSecurityGroupIngress',
+      'ec2:AuthorizeSecurityGroupEgress',
+      'ec2:RevokeSecurityGroupIngress',
+      'ec2:RevokeSecurityGroupEgress',
+    ],
     input_schema: {
       type: 'object',
       properties: {
         group_id: { type: 'string', pattern: '^sg-[0-9a-f]+$' },
-        protocol: { type: 'string', enum: ['tcp', 'udp'] },
-        port: { type: 'integer', minimum: 1, maximum: 65535 },
+        direction: { type: 'string', enum: ['ingress', 'egress'] },
+        protocol: { type: 'string', enum: ['tcp', 'udp', 'icmp', 'all'] },
+        from_port: { type: 'integer', minimum: -1, maximum: 65535 },
+        to_port: { type: 'integer', minimum: -1, maximum: 65535 },
         cidr: { type: 'string', description: 'e.g. 0.0.0.0/0 or 203.0.113.7/32' },
+        source_group_id: { type: 'string', pattern: '^sg-[0-9a-f]+$' },
         description: { type: 'string', maxLength: 255 },
       },
-      required: ['group_id', 'port', 'cidr'],
+      required: ['group_id'],
     },
   },
 ]

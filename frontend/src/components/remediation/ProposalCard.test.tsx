@@ -16,7 +16,7 @@ const pending: Proposal = {
   connection_id: 'conn_1',
   kind: 'fix',
   parent_id: null,
-  action: 'associate_route_table',
+  action: 'route_table_associate',
   params: { subnet_id: 'subnet-0a1b', route_table_id: 'rtb-public' },
   reason: 'Gắn subnet về route table public',
   status: 'PENDING_APPROVAL',
@@ -57,14 +57,14 @@ describe('ProposalList', () => {
         <ProposalList
           refs={[
             {
-              action: 'associate_route_table',
+              action: 'route_table_associate',
               params: {},
               reason: '',
               proposal_id: 'prop_1',
               error: null,
             },
             {
-              action: 'authorize_sg_ingress',
+              action: 'sg_add_rule',
               params: {},
               reason: '',
               proposal_id: null,
@@ -98,7 +98,7 @@ describe('ProposalList', () => {
         <ProposalList
           refs={[
             {
-              action: 'associate_route_table',
+              action: 'route_table_associate',
               params: {},
               reason: '',
               proposal_id: 'prop_1',
